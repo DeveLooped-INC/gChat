@@ -1,4 +1,3 @@
-// ... (imports remain the same)
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Layout from './components/Layout';
 import Onboarding from './components/Onboarding';
@@ -11,7 +10,7 @@ import ToastContainer from './components/Toast';
 import HelpModal from './components/HelpModal';
 import { AppRoute, UserProfile, Post, Message, Contact, ToastMessage, NetworkPacket, EncryptedPayload, Group, MediaMetadata, NodePeer, ConnectionRequest, Comment, AvailablePeer, NotificationItem } from './types';
 import { networkService } from './services/networkService';
-import { decryptMessage, verifySignature, encryptMessage, generateTripcode } from './services/cryptoService';
+import { decryptMessage, verifySignature, encryptMessage, generateTripcode, signData } from './services/cryptoService';
 import { calculatePostHash, formatUserIdentity } from './utils';
 import { Loader2 } from 'lucide-react';
 import UserInfoModal, { UserInfoTarget } from './components/UserInfoModal';
@@ -19,6 +18,8 @@ import UserInfoModal, { UserInfoTarget } from './components/UserInfoModal';
 const USER_STORAGE_KEY = 'gchat_user_profile';
 const NODE_CONFIG_KEY = 'gchat_node_config';
 const MAX_GOSSIP_HOPS = 6;
+
+// --- HELPERS ---
 
 // Helper to reconstruct post payload for verification
 const createPostPayload = (post: Post) => ({
@@ -60,6 +61,8 @@ const findCommentInTree = (comments: Comment[], targetId: string): Comment | und
 const appendReply = (comments: Comment[], parentId: string, newComment: Comment): Comment[] => {
     return comments.map(c => {
         if (c.id === parentId) {
+            // Idempotency check for replies
+            if (c.replies && c.replies.some(r => r.id === newComment.id)) return c;
             return { ...c, replies: [...(c.replies || []), newComment] };
         }
         if (c.replies && c.replies.length > 0) {
@@ -323,6 +326,28 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       }
   };
 
+  // --- HELPER: Broadcast Post State (Ensures propagation of edits/comments) ---
+  const broadcastPostState = useCallback((post: Post) => {
+      if (post.privacy !== 'public') return;
+      
+      // Calculate fresh hash representing current state (content + comments + votes)
+      const hash = calculatePostHash(post);
+      
+      const packet: NetworkPacket = {
+          id: crypto.randomUUID(),
+          type: 'INVENTORY_ANNOUNCE',
+          senderId: userRef.current.homeNodeOnion,
+          payload: {
+              postId: post.id,
+              contentHash: hash,
+              authorId: post.authorId,
+              timestamp: post.timestamp
+          }
+      };
+      // Broadcast to all connected peers so they know the state has changed
+      networkService.broadcast(packet, peersRef.current.map(p => p.onionAddress));
+  }, []);
+
   // --- DAISY CHAIN GOSSIP (LEGACY) ---
   const daisyChainPacket = useCallback(async (packet: NetworkPacket, sourceNodeId?: string) => {
       const currentHops = packet.hops || 0;
@@ -344,12 +369,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       });
 
       if (recipients.length === 0) {
-          // Debug why it stopped
-          // networkService.log('DEBUG', 'NETWORK', `Gossip chain stopped for ${packet.type}. No valid recipients. (Peers: ${allPeers.length}, Source: ${sourceNodeId?.substring(0,8)})`);
           return;
       }
-
-      networkService.log('DEBUG', 'NETWORK', `Daisy-chaining packet ${packet.type} to ${recipients.length} peers. Hops left: ${currentHops-1}`);
 
       recipients.forEach(async (recipient) => {
           await new Promise(r => setTimeout(r, Math.random() * 200));
@@ -503,22 +524,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                           addNotification('New Broadcast', `${handle} posted: ${post.content.substring(0, 30)}...`, 'info', AppRoute.FEED, post.authorId);
                       }
 
-                      const announcePacket: NetworkPacket = {
-                          id: crypto.randomUUID(),
-                          type: 'INVENTORY_ANNOUNCE',
-                          senderId: currentUser.homeNodeOnion,
-                          payload: { 
-                              postId: post.id, 
-                              contentHash: calculatedHash,
-                              authorId: post.authorId,
-                              timestamp: post.timestamp
-                          }
-                      };
-                      const recipients = peersRef.current
-                          .map(p => p.onionAddress)
-                          .filter(addr => addr !== senderNodeId);
-                      
-                      networkService.broadcast(announcePacket, recipients);
+                      // CRITICAL: If we updated our state, we MUST announce it to our peers
+                      // This ensures that if Node A updates Node B, Node B then updates Node C.
+                      broadcastPostState(postWithHash);
                   }
               }
               break;
@@ -848,18 +856,33 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               daisyChainPacket(packet, senderNodeId);
               break;
 
+          // --- PUBLIC INTERACTION HANDLERS (ENHANCED) ---
           case 'EDIT_POST':
               const { postId: editPostId, newContent } = packet.payload;
-              setPosts(prev => prev.map(p => 
-                  p.id === editPostId ? { ...p, content: newContent, isEdited: true, contentHash: calculatePostHash({...p, content: newContent, isEdited: true}) } : p
-              ));
+              let editedPost: Post | undefined;
+              setPosts(prev => prev.map(p => {
+                  if (p.id === editPostId) {
+                      const updated = { ...p, content: newContent, isEdited: true, contentHash: calculatePostHash({...p, content: newContent, isEdited: true}) };
+                      editedPost = updated;
+                      return updated;
+                  }
+                  return p;
+              }));
+              // Propagate the change via new sync logic
+              if(editedPost) broadcastPostState(editedPost);
               daisyChainPacket(packet, senderNodeId);
               break;
 
           case 'COMMENT':
               const { postId, comment: newComment, parentCommentId } = packet.payload;
+              let postAfterComment: Post | undefined;
+              
               setPosts(prev => prev.map(p => {
                   if (p.id !== postId) return p;
+                  
+                  // Idempotency: Check if comment already exists
+                  if (findCommentInTree(p.commentsList, newComment.id)) return p;
+
                   let updatedPost = p;
                   if (!parentCommentId) {
                       updatedPost = { ...p, comments: p.comments + 1, commentsList: [...p.commentsList, newComment] };
@@ -868,6 +891,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                   }
                   // Recalculate hash because state changed
                   updatedPost.contentHash = calculatePostHash(updatedPost);
+                  postAfterComment = updatedPost;
                   return updatedPost;
               }));
               
@@ -889,11 +913,14 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               }
               // --------------------------
 
+              // Broadcast new state to ensure neighbors sync up even if they missed the packet
+              if (postAfterComment) broadcastPostState(postAfterComment);
               daisyChainPacket(packet, senderNodeId);
               break;
 
           case 'COMMENT_VOTE':
               const { postId: cvPostId, commentId: cvCommentId, userId: cvUserId, type: cvType } = packet.payload;
+              let postAfterCV: Post | undefined;
               setPosts(prev => prev.map(p => {
                   if (p.id !== cvPostId) return p;
                   const updatedPost = {
@@ -904,6 +931,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                       }))
                   };
                   updatedPost.contentHash = calculatePostHash(updatedPost);
+                  postAfterCV = updatedPost;
                   return updatedPost;
               }));
 
@@ -919,11 +947,13 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               }
               // --------------------------
 
+              if(postAfterCV) broadcastPostState(postAfterCV);
               daisyChainPacket(packet, senderNodeId);
               break;
 
           case 'COMMENT_REACTION':
               const { postId: crPostId, commentId: crCommentId, userId: crUserId, emoji: crEmoji } = packet.payload;
+              let postAfterCR: Post | undefined;
               setPosts(prev => prev.map(p => {
                   if (p.id !== crPostId) return p;
                   const updatedPost = {
@@ -936,6 +966,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                       })
                   };
                   updatedPost.contentHash = calculatePostHash(updatedPost);
+                  postAfterCR = updatedPost;
                   return updatedPost;
               }));
 
@@ -951,15 +982,18 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               }
               // --------------------------
 
+              if(postAfterCR) broadcastPostState(postAfterCR);
               daisyChainPacket(packet, senderNodeId);
               break;
 
           case 'VOTE':
               const { postId: vPostId, userId: vUserId, type: vType } = packet.payload;
+              let postAfterVote: Post | undefined;
               setPosts(prev => prev.map(p => {
                   if (p.id !== vPostId) return p;
                   const updatedPost = { ...p, votes: { ...p.votes, [vUserId]: vType } };
                   updatedPost.contentHash = calculatePostHash(updatedPost);
+                  postAfterVote = updatedPost;
                   return updatedPost;
               }));
 
@@ -972,11 +1006,13 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               }
               // --------------------------
 
+              if(postAfterVote) broadcastPostState(postAfterVote);
               daisyChainPacket(packet, senderNodeId);
               break;
 
           case 'REACTION': {
               const { postId: rPostId, userId: rUserId, emoji } = packet.payload;
+              let postAfterReaction: Post | undefined;
               setPosts(prev => prev.map(p => {
                   if (p.id !== rPostId) return p;
                   const currentReactions = { ...(p.reactions || {}) };
@@ -986,6 +1022,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                   }
                   const updatedPost = { ...p, reactions: currentReactions };
                   updatedPost.contentHash = calculatePostHash(updatedPost);
+                  postAfterReaction = updatedPost;
                   return updatedPost;
               }));
 
@@ -998,18 +1035,18 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               }
               // --------------------------
 
+              if(postAfterReaction) broadcastPostState(postAfterReaction);
               daisyChainPacket(packet, senderNodeId);
               break;
           }
       }
-  }, [addNotification, daisyChainPacket, maxSyncAgeHours, onUpdateUser, activeChatId]);
+  }, [addNotification, daisyChainPacket, maxSyncAgeHours, onUpdateUser, activeChatId, broadcastPostState]);
 
   // Update the ref whenever handlePacket changes (which is often, due to dependency arrays)
   useEffect(() => {
       handlePacketRef.current = handlePacket;
   }, [handlePacket]);
 
-  // ... (Rest of App component remains the same)
   // --- GRACEFUL SHUTDOWN ---
   const performGracefulShutdown = useCallback(async () => {
       if(isShuttingDown) return;
@@ -1079,7 +1116,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
           // Send to direct peers
           const peerAddrs = peersRef.current.map(p => p.onionAddress);
           if (peerAddrs.length > 0) {
-              networkService.log('DEBUG', 'NETWORK', `Broadcasting ANNOUNCE_PEER to: ${peerAddrs.join(', ')}`);
+              // networkService.log('DEBUG', 'NETWORK', `Broadcasting ANNOUNCE_PEER to: ${peerAddrs.join(', ')}`);
               networkService.broadcast(packet, peerAddrs);
           }
       };
@@ -1201,9 +1238,10 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       };
 
       return () => unsubscribe();
-  }, [maxSyncAgeHours, performGracefulShutdown]); // Removed handlePacket from dependency array here
+  }, [maxSyncAgeHours, performGracefulShutdown]); 
 
-  // ... (Rest of actions remain the same) ...
+  // --- ACTIONS ---
+
   const handleAddPeer = useCallback((onion: string) => {
       const cleanOnion = onion.trim().toLowerCase();
       if (!cleanOnion.endsWith('.onion')) {
@@ -1228,7 +1266,6 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       addNotification('Peer Added', 'Connection initiated', 'success');
   }, [addNotification]);
 
-  // ... (rest of the file remains unchanged)
   const handleRemovePeer = useCallback((onion: string) => {
       setPeers(prev => prev.filter(p => p.onionAddress !== onion));
       addNotification('Peer Removed', 'Node forgotten.', 'info');
@@ -1326,9 +1363,6 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       addNotification('Request Sent', `Handshake sent to ${name}`, 'success');
   }, [handleAddPeer, addNotification]);
 
-  // ... (rest of the action handlers are same as previous, just ensure return statement is there)
-  // (Assuming no other logic changes needed for the rest of file)
-  
   const handleAcceptRequest = useCallback((req: ConnectionRequest) => {
       const user = userRef.current;
       setConnectionRequests(prev => prev.filter(r => r.id !== req.id));
@@ -1468,6 +1502,21 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       if(success) setMessages(prev => prev.map(m => m.id === msgId ? { ...m, delivered: true } : m));
       else addNotification('Send Failed', 'Could not reach user home node', 'error');
   }, [addNotification]);
+
+  const handleSendTyping = useCallback((contactId: string) => {
+      const user = userRef.current;
+      const contact = contactsRef.current.find(c => c.id === contactId);
+      if (contact && contact.homeNodes[0]) {
+            const packet: NetworkPacket = {
+              id: crypto.randomUUID(),
+              type: 'TYPING',
+              senderId: user.homeNodeOnion,
+              targetUserId: contactId,
+              payload: { userId: user.id }
+          };
+          networkService.sendMessage(contact.homeNodes[0], packet);
+      }
+  }, []);
 
   const handleReadMessage = useCallback((contactId: string) => {
       setMessages(prev => {
@@ -1770,14 +1819,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       const postWithHash = { ...post, contentHash };
       setPosts(prev => [postWithHash, ...prev]);
       if (post.privacy === 'public') {
-          const announcePacket: NetworkPacket = {
-              id: crypto.randomUUID(),
-              type: 'INVENTORY_ANNOUNCE',
-              senderId: userRef.current.homeNodeOnion,
-              payload: { postId: post.id, contentHash, authorId: post.authorId, timestamp: post.timestamp }
-          };
-          const peerAddrs = peersRef.current.map(p => p.onionAddress);
-          networkService.broadcast(announcePacket, peerAddrs);
+          // New: Also trigger announce to ensure immediate propagation
+          broadcastPostState(postWithHash);
       } else if (post.privacy === 'friends') {
           const targetNodes = new Set<string>();
           contactsRef.current.forEach(c => { if (c.homeNodes[0]) targetNodes.add(c.homeNodes[0]); });
@@ -1791,7 +1834,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               networkService.sendMessage(onion, packet);
           });
       }
-  }, []);
+  }, [broadcastPostState]);
 
   const handleEditPost = useCallback((postId: string, newContent: string) => {
       let updatedPost: Post | null = null;
@@ -1802,27 +1845,23 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
           }
           return p;
       }));
-      if (updatedPost && (updatedPost as Post).privacy === 'public') {
-          const announcePacket: NetworkPacket = {
-              id: crypto.randomUUID(),
-              type: 'INVENTORY_ANNOUNCE',
-              senderId: userRef.current.homeNodeOnion,
-              payload: { postId: (updatedPost as Post).id, contentHash: (updatedPost as Post).contentHash, authorId: (updatedPost as Post).authorId, timestamp: (updatedPost as Post).timestamp }
-          };
-          const peerAddrs = peersRef.current.map(p => p.onionAddress);
-          networkService.broadcast(announcePacket, peerAddrs);
-      } else {
-          const packet: NetworkPacket = {
-              id: crypto.randomUUID(),
-              hops: MAX_GOSSIP_HOPS,
-              type: 'EDIT_POST',
-              senderId: userRef.current.homeNodeOnion,
-              payload: { postId, newContent }
-          };
-          processedPacketIds.current.add(packet.id!);
-          networkService.broadcast(packet, peersRef.current.map(p => p.onionAddress));
+      
+      if (updatedPost) {
+          if ((updatedPost as Post).privacy === 'public') {
+              broadcastPostState(updatedPost);
+          } else {
+              const packet: NetworkPacket = {
+                  id: crypto.randomUUID(),
+                  hops: MAX_GOSSIP_HOPS,
+                  type: 'EDIT_POST',
+                  senderId: userRef.current.homeNodeOnion,
+                  payload: { postId, newContent }
+              };
+              processedPacketIds.current.add(packet.id!);
+              networkService.broadcast(packet, peersRef.current.map(p => p.onionAddress));
+          }
       }
-  }, []);
+  }, [broadcastPostState]);
 
   const handleDeletePost = useCallback((postId: string) => {
       setPosts(prev => prev.filter(p => p.id !== postId));
@@ -1840,6 +1879,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
   const handleComment = useCallback((postId: string, content: string, parentCommentId?: string) => {
       const user = userRef.current;
       const newComment = { id: crypto.randomUUID(), authorId: user.id, authorName: user.displayName, content, timestamp: Date.now(), votes: {}, reactions: {}, replies: [] };
+      let updatedPostForBroadcast: Post | null = null;
+
       setPosts(prev => prev.map(post => {
           if (post.id !== postId) return post;
           let updatedPost = post;
@@ -1850,28 +1891,38 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
           }
           // Recalculate hash because state changed
           updatedPost.contentHash = calculatePostHash(updatedPost);
+          updatedPostForBroadcast = updatedPost;
           return updatedPost;
       }));
+      
+      // 1. Send the specific comment packet
       const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'COMMENT', senderId: user.homeNodeOnion, payload: { postId, comment: newComment, parentCommentId } };
       processedPacketIds.current.add(packet.id!);
       networkService.broadcast(packet, peersRef.current.map(p => p.onionAddress));
-  }, []);
+
+      // 2. Broadcast the NEW STATE (Sync Reinforcement)
+      if (updatedPostForBroadcast) broadcastPostState(updatedPostForBroadcast);
+  }, [broadcastPostState]);
 
   const handleVote = useCallback((postId: string, type: 'up' | 'down') => {
       const user = userRef.current;
+      let updatedPostForBroadcast: Post | null = null;
       setPosts(prev => prev.map(post => {
           if (post.id !== postId) return post;
           const updatedPost = { ...post, votes: { ...post.votes, [user.id]: type } };
           updatedPost.contentHash = calculatePostHash(updatedPost);
+          updatedPostForBroadcast = updatedPost;
           return updatedPost;
       }));
       const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'VOTE', senderId: user.homeNodeOnion, payload: { postId, userId: user.id, type } };
       processedPacketIds.current.add(packet.id!);
       networkService.broadcast(packet, peersRef.current.map(p => p.onionAddress));
-  }, []);
+      if (updatedPostForBroadcast) broadcastPostState(updatedPostForBroadcast);
+  }, [broadcastPostState]);
 
   const handlePostReaction = useCallback((postId: string, emoji: string) => {
       const user = userRef.current;
+      let updatedPostForBroadcast: Post | null = null;
       setPosts(prev => prev.map(p => {
           if (p.id !== postId) return p;
           const currentReactions = { ...(p.reactions || {}) };
@@ -1879,33 +1930,37 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
           if (!currentReactions[emoji].includes(user.id)) currentReactions[emoji] = [...currentReactions[emoji], user.id];
           const updatedPost = { ...p, reactions: currentReactions };
           updatedPost.contentHash = calculatePostHash(updatedPost);
+          updatedPostForBroadcast = updatedPost;
           return updatedPost;
       }));
       const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'REACTION', senderId: user.homeNodeOnion, payload: { postId, userId: user.id, emoji } };
       processedPacketIds.current.add(packet.id!);
       networkService.broadcast(packet, peersRef.current.map(p => p.onionAddress));
-  }, []);
+      if (updatedPostForBroadcast) broadcastPostState(updatedPostForBroadcast);
+  }, [broadcastPostState]);
 
   const handleCommentVote = useCallback((postId: string, commentId: string, type: 'up' | 'down') => {
       const user = userRef.current;
+      let updatedPostForBroadcast: Post | null = null;
       setPosts(prev => prev.map(p => {
           if (p.id !== postId) return p;
           const updatedPost = { ...p, commentsList: updateCommentTree(p.commentsList, commentId, (c) => ({ ...c, votes: { ...c.votes, [user.id]: type } })) };
           updatedPost.contentHash = calculatePostHash(updatedPost);
+          updatedPostForBroadcast = updatedPost;
           return updatedPost;
       }));
       const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'COMMENT_VOTE', senderId: user.homeNodeOnion, payload: { postId, commentId, userId: user.id, type } };
       processedPacketIds.current.add(packet.id!);
       networkService.broadcast(packet, peersRef.current.map(p => p.onionAddress));
-  }, []);
+      if (updatedPostForBroadcast) broadcastPostState(updatedPostForBroadcast);
+  }, [broadcastPostState]);
 
   const handleCommentReaction = useCallback((postId: string, commentId: string, emoji: string) => {
       const user = userRef.current;
+      let updatedPostForBroadcast: Post | null = null;
       setPosts(prev => prev.map(p => {
           if (p.id !== postId) return p;
-          const updatedPost = { 
-              ...p,
-              commentsList: updateCommentTree(p.commentsList, commentId, (c) => {
+          const updatedPost = { ...p, commentsList: updateCommentTree(p.commentsList, commentId, (c) => {
                   const currentReactions = { ...(c.reactions || {}) };
                   if (!currentReactions[emoji]) currentReactions[emoji] = [];
                   if (!currentReactions[emoji].includes(user.id)) currentReactions[emoji] = [...currentReactions[emoji], user.id];
@@ -1913,6 +1968,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               })
           };
           updatedPost.contentHash = calculatePostHash(updatedPost);
+          updatedPostForBroadcast = updatedPost;
           return updatedPost;
       }));
       const packet: NetworkPacket = { 
@@ -1924,22 +1980,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       };
       processedPacketIds.current.add(packet.id!);
       networkService.broadcast(packet, peersRef.current.map(p => p.onionAddress));
-  }, []);
-
-  const handleSendTyping = useCallback((contactId: string) => {
-      const user = userRef.current;
-      const contact = contactsRef.current.find(c => c.id === contactId);
-      if (contact && contact.homeNodes[0]) {
-            const packet: NetworkPacket = {
-              id: crypto.randomUUID(),
-              type: 'TYPING',
-              senderId: user.homeNodeOnion,
-              targetUserId: contactId,
-              payload: { userId: user.id }
-          };
-          networkService.sendMessage(contact.homeNodes[0], packet);
-      }
-  }, []);
+      if (updatedPostForBroadcast) broadcastPostState(updatedPostForBroadcast);
+  }, [broadcastPostState]);
 
   const handleExportKeys = useCallback(() => {
       const user = userRef.current;
