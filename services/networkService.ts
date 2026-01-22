@@ -392,8 +392,15 @@ export class NetworkService {
       if (this._isShuttingDown) return; // Halt serving media during shutdown
 
       const { mediaId, chunkIndex } = payload;
+      
+      // LOGGING FOR DIAGNOSIS
+      this.log('DEBUG', 'NETWORK', `Serving chunk ${chunkIndex} for ${mediaId} request from ${senderId}`);
+
       const blob = await getMedia(mediaId);
-      if (!blob) return;
+      if (!blob) {
+          this.log('WARN', 'NETWORK', `Incoming Media Request for ${mediaId} FAILED: File not found locally.`);
+          return;
+      }
 
       const { chunkSize } = getTransferConfig(blob.size);
       const totalChunks = Math.ceil(blob.size / chunkSize);
@@ -412,6 +419,10 @@ export class NetworkService {
               senderId: this._myOnionAddress || 'system',
               payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
           }, mediaId);
+          // Only log success for first and last chunk to reduce spam, or if debugging is critical
+          if (chunkIndex === 0 || chunkIndex === totalChunks - 1) {
+              this.log('DEBUG', 'NETWORK', `Sent chunk ${chunkIndex}/${totalChunks} to ${senderId}`);
+          }
       };
       reader.readAsDataURL(chunkBlob);
   }
