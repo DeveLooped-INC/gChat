@@ -69,13 +69,10 @@ export interface TransferConfig {
 
 export const getTransferConfig = (bytes: number): TransferConfig => {
     // Tor favors fewer, larger cells over many small interactions due to RTT.
-    // Small Files (< 5MB): 256KB chunks.
-    if (bytes <= 5 * 1024 * 1024) { 
-        return { chunkSize: 256 * 1024, concurrency: 2 };
-    } 
-    // Medium/Large Files: 512KB chunks.
-    // We rely on the NetworkService's AIMD logic to scale concurrency up/down.
-    return { chunkSize: 512 * 1024, concurrency: 2 };
+    // We use 256KB across the board to be safe against timeouts on slow circuits.
+    // The previous 512KB was occasionally causing timeouts on 2min connection limits.
+    // With AIMD concurrency, 256KB parallel requests will saturate the link effectively.
+    return { chunkSize: 256 * 1024, concurrency: 2 };
 };
 
 // --- EMOTICONS ---
