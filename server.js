@@ -11,6 +11,8 @@ import axios from 'axios';
 import net from 'net';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
+import https from 'https';
+import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -172,7 +174,7 @@ process.stdin.on('keypress', (str, key) => {
 // --- EXPRESS ---
 app.use(cors());
 // Replaced body-parser with native express implementation
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' })); // Increased limit for larger chunks if needed
 
 app.get('/gchat/health', (req, res) => {
   res.status(200).send({ status: 'online', nodeId: myOnionAddress });
@@ -221,17 +223,43 @@ function waitForPort(port, retries = 20) {
     });
 }
 
+// --- OPTIMIZED NETWORK AGENT ---
+// We reuse this agent to keep the Tor circuit open for multiple requests
+// This drastically reduces latency for file transfers
+let _sharedSocksAgent = null;
+
+function getSocksAgent() {
+    if (!_sharedSocksAgent) {
+        _sharedSocksAgent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`, {
+            keepAlive: true,
+            keepAliveMsecs: 10000,
+            timeout: 60000
+        });
+    }
+    return _sharedSocksAgent;
+}
+
 async function fetchWithRetry(url, options, streamId = null, retries = 3) {
     for (let i = 0; i < retries; i++) {
         if (isShuttingDown && i > 0) return; 
 
-        let isolationKey = streamId ? (i === 0 ? streamId : `${streamId}_retry_${i}`) : Math.random().toString(36).substring(2, 10);
-        const agent = new SocksProxyAgent(`socks5h://${isolationKey}:${isolationKey}@127.0.0.1:${TOR_SOCKS_PORT}`);
+        // Use shared agent for streams (like media) to reuse circuits
+        // Use fresh agent for control packets to ensure reachability if circuit dies
+        const agent = streamId ? getSocksAgent() : new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`);
+        
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT_MS);
         
         try {
-            const headers = { ...(options.headers || {}), 'Connection': 'close' };
+            const headers = { ...(options.headers || {}) };
+            
+            // Critical: Close connection for one-off packets, Keep-Alive for streams
+            if (!streamId) {
+                headers['Connection'] = 'close';
+            } else {
+                headers['Connection'] = 'keep-alive';
+            }
+
             const config = {
                 url,
                 method: options.method || 'GET',
@@ -239,14 +267,16 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
                 httpAgent: agent,
                 httpsAgent: agent,
                 signal: controller.signal,
-                validateStatus: () => true, // Accept all status codes to behave like fetch
-                data: options.body // Axios uses 'data', fetch uses 'body'
+                validateStatus: () => true,
+                data: options.body,
+                // Increase max content length for large chunks
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity
             };
 
             const res = await axios(config);
             clearTimeout(timeout);
             
-            // Map Axios response to a fetch-like interface for compatibility
             return {
                 ok: res.status >= 200 && res.status < 300,
                 status: res.status
@@ -254,6 +284,12 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
         } catch (err) {
             clearTimeout(timeout);
             if (isShuttingDown) return;
+            
+            // If stream failed, force refresh the shared agent for next retry
+            if (streamId && _sharedSocksAgent) {
+                _sharedSocksAgent = null;
+            }
+
             if (i === retries - 1) throw err;
             const delay = 2000 * Math.pow(2, i);
             await new Promise(r => setTimeout(r, delay));
