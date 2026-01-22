@@ -34,6 +34,7 @@ interface ActiveDownload {
     metadata: MediaMetadata;
     status: 'active' | 'paused' | 'completed' | 'error' | 'recovering';
     lastActivity: number;
+    lastRetryTime: number; // Added to prevent spamming retries
     retryCount: number;
     listeners: DownloadListener[];
 }
@@ -97,7 +98,9 @@ export class NetworkService {
             if (sender.endsWith('.onion')) {
                 this._knownPeers.add(sender);
             }
-            this.log('DEBUG', 'FRONTEND', `Received Packet [${packet.type}] from ${sender}`);
+            
+            // Check if we need to resume downloads for this peer
+            this.resumeDownloadsForPeer(sender);
 
             if (packet.type === 'MEDIA_REQUEST') {
                 this.handleMediaRequest(sender, packet.payload);
@@ -108,6 +111,10 @@ export class NetworkService {
             } else if (packet.type === 'MEDIA_RECOVERY_FOUND') {
                 this.handleRecoveryFound(sender, packet.payload);
             } else {
+                // Log non-media packets for debugging
+                if (packet.type !== 'MEDIA_CHUNK') {
+                    this.log('DEBUG', 'FRONTEND', `Received Packet [${packet.type}] from ${sender}`);
+                }
                 if (this.onMessage) {
                     this.onMessage(packet, sender);
                 }
@@ -149,30 +156,75 @@ export class NetworkService {
     setInterval(() => {
         if (this._isShuttingDown) return; // Halt background activity during shutdown
 
+        const now = Date.now();
+
         this._activeDownloads.forEach((download, mediaId) => {
-            const timeSinceActivity = Date.now() - download.lastActivity;
+            const timeSinceActivity = now - download.lastActivity;
             
             // Case 1: Active but stalled
-            // Timeout logic: Larger files usually have stricter pacing, so we tolerate longer silence.
-            if (download.status === 'active' && timeSinceActivity > 60000) {
-                this.log('WARN', 'NETWORK', `Download ${mediaId} stalled (${Math.round(timeSinceActivity/1000)}s). Retrying batch...`);
-                download.retryCount++;
-                const firstMissing = download.chunks.findIndex(c => c === null);
-                if (firstMissing !== -1) {
-                    // Reduce concurrency for retries to 1 to force recovery
-                    this.requestChunksBatch(download.peerOnion, mediaId, firstMissing, 1, download.totalChunks);
-                } else {
-                    this.finishDownload(mediaId);
+            if (download.status === 'active') {
+                // Stalled for > 30 seconds
+                if (timeSinceActivity > 30000) {
+                    const timeSinceRetry = now - download.lastRetryTime;
+                    
+                    // Don't retry too often (every 30s max)
+                    if (timeSinceRetry > 30000) {
+                        
+                        // GIVE UP CONDITION: Max 10 retries
+                        if (download.retryCount >= 10) {
+                             this.log('ERROR', 'NETWORK', `Download ${mediaId} failed after ${download.retryCount} retries. Pausing until peer reconnects.`);
+                             download.status = 'paused';
+                             download.listeners.forEach(l => l.onError("Connection unstable. Download paused."));
+                             return;
+                        }
+
+                        this.log('WARN', 'NETWORK', `Download ${mediaId} stalled (${Math.round(timeSinceActivity/1000)}s). Retrying... (Attempt ${download.retryCount + 1}/10)`);
+                        
+                        download.retryCount++;
+                        download.lastRetryTime = now;
+                        
+                        const firstMissing = download.chunks.findIndex(c => c === null);
+                        if (firstMissing !== -1) {
+                            // Reduce concurrency for retries to 1 to force recovery
+                            const batchSize = 1;
+                            this.requestChunksBatch(download.peerOnion, mediaId, firstMissing, batchSize, download.totalChunks);
+                        } else {
+                            this.finishDownload(mediaId);
+                        }
+                    }
                 }
             }
 
-            // Case 2: Recovering/Searching but silent (30s no peers)
-            if (download.status === 'recovering' && timeSinceActivity > 30000) {
-                this.log('WARN', 'NETWORK', `Still searching for source for ${mediaId}... Re-broadcasting.`);
-                this.attemptMeshRecovery(mediaId);
+            // Case 2: Recovering/Searching but silent (45s no peers)
+            if (download.status === 'recovering' && timeSinceActivity > 45000) {
+                const timeSinceRetry = now - download.lastRetryTime;
+                if (timeSinceRetry > 45000) {
+                    this.log('WARN', 'NETWORK', `Still searching for source for ${mediaId}... Re-broadcasting.`);
+                    download.lastRetryTime = now;
+                    this.attemptMeshRecovery(mediaId);
+                }
             }
         });
     }, 5000);
+  }
+
+  // --- AUTO-RESUME LOGIC ---
+  private resumeDownloadsForPeer(peerId: string) {
+      this._activeDownloads.forEach((dl, id) => {
+          if (dl.peerOnion === peerId && dl.status === 'paused') {
+              this.log('INFO', 'NETWORK', `Resuming paused download ${id} from ${peerId} due to new activity.`);
+              dl.status = 'active';
+              dl.retryCount = 0; // Reset retry count
+              dl.lastActivity = Date.now();
+              dl.lastRetryTime = 0;
+              
+              // Trigger immediate fetch of missing chunks
+              const firstMissing = dl.chunks.findIndex(c => c === null);
+              if (firstMissing !== -1) {
+                   this.requestChunksBatch(peerId, id, firstMissing, 2, dl.totalChunks);
+              }
+          }
+      });
   }
 
   // --- FUNCTION 1: ANNOUNCE EXIT (The UI Triggered Action) ---
@@ -371,6 +423,11 @@ export class NetworkService {
       const download = this._activeDownloads.get(mediaId);
       if (!download) return; 
 
+      // Logging for troubleshooting
+      if (chunkIndex % 5 === 0 || chunkIndex === totalChunks - 1) {
+          this.log('DEBUG', 'NETWORK', `Received chunk ${chunkIndex}/${totalChunks} for ${mediaId}`);
+      }
+
       // Update metadata if sender corrects us (important if resizing occurred)
       if (totalChunks !== download.totalChunks) {
           download.totalChunks = totalChunks;
@@ -384,7 +441,7 @@ export class NetworkService {
           download.chunks[chunkIndex] = data;
           download.receivedCount++;
           download.lastActivity = Date.now(); // Reset watchdog
-          download.retryCount = 0; 
+          download.retryCount = 0; // Success resets retry count
       }
 
       const progress = Math.round((download.receivedCount / download.totalChunks) * 100);
@@ -396,7 +453,7 @@ export class NetworkService {
           } else {
               const missingIndex = download.chunks.indexOf(null);
               if (missingIndex !== -1) {
-                  // Retry the missing one immediately, but assume batch size 1 for safety
+                  // Retry the missing one immediately
                   this.requestChunksBatch(senderId, mediaId, missingIndex, 1, download.totalChunks);
               }
           }
@@ -457,6 +514,7 @@ export class NetworkService {
           download.status = 'active';
           download.retryCount = 0;
           download.lastActivity = Date.now();
+          download.lastRetryTime = 0;
           const firstMissing = download.chunks.findIndex(c => c === null);
           if (firstMissing !== -1) {
               const { batchSize } = getTransferConfig(download.metadata.size);
@@ -546,6 +604,7 @@ export class NetworkService {
               status: 'active',
               retryCount: 0,
               lastActivity: Date.now(),
+              lastRetryTime: 0,
               listeners: [{ onProgress, onComplete: resolve, onError: reject }]
           });
           
@@ -559,6 +618,8 @@ export class NetworkService {
       const download = this._activeDownloads.get(mediaId);
       if(!download) return;
       if (!this.socket.connected) return;
+
+      this.log('DEBUG', 'NETWORK', `Requesting chunks ${startIndex}-${Math.min(startIndex+batchSize, total)} for ${mediaId} from ${targetOnion}`);
 
       const { pacingDelay } = getTransferConfig(download.metadata.size);
 
