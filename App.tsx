@@ -69,6 +69,41 @@ const appendReply = (comments: Comment[], parentId: string, newComment: Comment)
     });
 };
 
+// Helper to merge posts (Union of comments, votes, reactions)
+const mergePosts = (local: Post, incoming: Post): Post => {
+    // 1. Merge Comments (Union by ID)
+    const allComments = [...local.commentsList, ...incoming.commentsList];
+    const uniqueCommentsMap = new Map();
+    allComments.forEach(c => uniqueCommentsMap.set(c.id, c));
+    const uniqueComments = Array.from(uniqueCommentsMap.values()) as Comment[];
+    uniqueComments.sort((a, b) => a.timestamp - b.timestamp);
+
+    // 2. Merge Votes (Incoming overwrites local if conflict, but preserving unique keys)
+    const mergedVotes = { ...local.votes, ...incoming.votes };
+
+    // 3. Merge Reactions (Union of user IDs per emoji)
+    const mergedReactions: Record<string, string[]> = { ...local.reactions };
+    Object.entries(incoming.reactions || {}).forEach(([emoji, users]) => {
+        const existing = mergedReactions[emoji] || [];
+        // Unique user IDs
+        const combined = Array.from(new Set([...existing, ...users]));
+        mergedReactions[emoji] = combined;
+    });
+
+    // 4. Determine Content (Prefer the one with newer 'isEdited' or just incoming)
+    // For simplicity in this version, we trust the incoming sync response as "authoritative" for content
+    // but we MUST ensure signature validity (checked before calling this).
+    
+    return {
+        ...local, // Keep local ephemeral props if any
+        ...incoming, // Apply content updates
+        comments: uniqueComments.length,
+        commentsList: uniqueComments,
+        votes: mergedVotes,
+        reactions: mergedReactions
+    };
+};
+
 // --- AUTHENTICATED APP ---
 const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile, onLogout: () => void, onUpdateUser: (u: UserProfile) => void }) => {
   const [activeRoute, setActiveRoute] = useState<AppRoute>(AppRoute.FEED);
@@ -391,7 +426,11 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
           case 'INVENTORY_ANNOUNCE': {
               const { postId, contentHash, authorId, timestamp } = packet.payload;
               const existingPost = postsRef.current.find(p => p.id === postId);
-              if (!existingPost || existingPost.contentHash !== contentHash) {
+              // CRITICAL FIX: Calculate local hash fresh to ensure we catch updates (comments/votes)
+              const localHash = existingPost ? calculatePostHash(existingPost) : null;
+              
+              if (!existingPost || localHash !== contentHash) {
+                  networkService.log('DEBUG', 'NETWORK', `[SYNC] Detected stale/missing post ${postId.substring(0,8)}. Requesting update...`);
                   const reqPacket: NetworkPacket = {
                       id: crypto.randomUUID(),
                       type: 'FETCH_POST',
@@ -423,6 +462,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               const payload = createPostPayload(post);
               
               if (verifySignature(payload, post.truthHash, post.authorPublicKey)) {
+                  // NOTE: Incoming post might have new comments, so its calculated hash depends on its current state
+                  // We accept it if signature is valid.
                   const calculatedHash = calculatePostHash(post);
                   const postWithHash = { ...post, contentHash: calculatedHash };
 
@@ -435,9 +476,16 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                           return [postWithHash, ...prev];
                       } else {
                           const existing = prev[idx];
-                          if (existing.contentHash !== calculatedHash) {
+                          const existingHash = calculatePostHash(existing);
+                          if (existingHash !== calculatedHash) {
                               isNewOrUpdated = true;
-                              return prev.map(p => p.id === post.id ? postWithHash : p);
+                              // MERGE LOGIC instead of replace
+                              const merged = mergePosts(existing, postWithHash);
+                              merged.contentHash = calculatePostHash(merged); // Recalc hash of merged result
+                              
+                              const next = [...prev];
+                              next[idx] = merged;
+                              return next;
                           }
                       }
                       return prev;
@@ -479,15 +527,25 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
           case 'INVENTORY_SYNC_REQUEST': {
               const { inventory, since } = packet.payload;
               const theirInv = inventory as { id: string, hash: string }[];
+              // 1. Get my public posts from the requested timeframe
               const myPosts = postsRef.current.filter(p => p.timestamp > since && p.privacy === 'public');
               
+              // 2. Identify which of MY posts the OTHER node is missing or has an outdated version of
               const missingOrUpdatedOnTheirSide = myPosts.filter(myP => {
                   const theirEntry = theirInv.find(i => i.id === myP.id);
-                  if (!theirEntry) return true;
-                  return theirEntry.hash !== (myP.contentHash || calculatePostHash(myP));
+                  if (!theirEntry) return true; // They don't have it -> Send
+                  
+                  // CRITICAL FIX: Calculate my hash freshly to ensure we include recent comments
+                  const myCurrentHash = calculatePostHash(myP);
+                  const different = theirEntry.hash !== myCurrentHash;
+                  if (different) {
+                      // networkService.log('DEBUG', 'NETWORK', `[SYNC] Peer has old version of ${myP.id.substring(0,8)}. Theirs: ${theirEntry.hash.substring(0,6)}, Mine: ${myCurrentHash.substring(0,6)}`);
+                  }
+                  return different;
               });
 
               if (missingOrUpdatedOnTheirSide.length > 0) {
+                  networkService.log('INFO', 'NETWORK', `[SYNC] Sending ${missingOrUpdatedOnTheirSide.length} updates to ${senderNodeId}`);
                   const respPacket: NetworkPacket = {
                       id: crypto.randomUUID(),
                       type: 'INVENTORY_SYNC_RESPONSE',
@@ -522,9 +580,14 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                                   }
                               }
                           } else {
-                              if (next[idx].contentHash !== calculatedHash) {
+                              const existing = next[idx];
+                              const existingHash = calculatePostHash(existing);
+                              if (existingHash !== calculatedHash) {
                                   if (verifySignature(createPostPayload(inc), inc.truthHash, inc.authorPublicKey)) {
-                                      next[idx] = incWithHash;
+                                      // MERGE LOGIC
+                                      const merged = mergePosts(existing, incWithHash);
+                                      merged.contentHash = calculatePostHash(merged);
+                                      next[idx] = merged;
                                       addedCount++;
                                   }
                               }
@@ -788,7 +851,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
           case 'EDIT_POST':
               const { postId: editPostId, newContent } = packet.payload;
               setPosts(prev => prev.map(p => 
-                  p.id === editPostId ? { ...p, content: newContent, isEdited: true } : p
+                  p.id === editPostId ? { ...p, content: newContent, isEdited: true, contentHash: calculatePostHash({...p, content: newContent, isEdited: true}) } : p
               ));
               daisyChainPacket(packet, senderNodeId);
               break;
@@ -797,11 +860,15 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               const { postId, comment: newComment, parentCommentId } = packet.payload;
               setPosts(prev => prev.map(p => {
                   if (p.id !== postId) return p;
+                  let updatedPost = p;
                   if (!parentCommentId) {
-                      return { ...p, comments: p.comments + 1, commentsList: [...p.commentsList, newComment] };
+                      updatedPost = { ...p, comments: p.comments + 1, commentsList: [...p.commentsList, newComment] };
                   } else {
-                      return { ...p, comments: p.comments + 1, commentsList: appendReply(p.commentsList, parentCommentId, newComment) };
+                      updatedPost = { ...p, comments: p.comments + 1, commentsList: appendReply(p.commentsList, parentCommentId, newComment) };
                   }
+                  // Recalculate hash because state changed
+                  updatedPost.contentHash = calculatePostHash(updatedPost);
+                  return updatedPost;
               }));
               
               // --- NOTIFICATION LOGIC ---
@@ -829,13 +896,15 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               const { postId: cvPostId, commentId: cvCommentId, userId: cvUserId, type: cvType } = packet.payload;
               setPosts(prev => prev.map(p => {
                   if (p.id !== cvPostId) return p;
-                  return {
+                  const updatedPost = {
                       ...p,
                       commentsList: updateCommentTree(p.commentsList, cvCommentId, (c) => ({
                           ...c,
                           votes: { ...c.votes, [cvUserId]: cvType }
                       }))
                   };
+                  updatedPost.contentHash = calculatePostHash(updatedPost);
+                  return updatedPost;
               }));
 
               // --- NOTIFICATION LOGIC ---
@@ -857,7 +926,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               const { postId: crPostId, commentId: crCommentId, userId: crUserId, emoji: crEmoji } = packet.payload;
               setPosts(prev => prev.map(p => {
                   if (p.id !== crPostId) return p;
-                  return {
+                  const updatedPost = {
                       ...p,
                       commentsList: updateCommentTree(p.commentsList, crCommentId, (c) => {
                           const currentReactions = { ...(c.reactions || {}) };
@@ -866,6 +935,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                           return { ...c, reactions: currentReactions };
                       })
                   };
+                  updatedPost.contentHash = calculatePostHash(updatedPost);
+                  return updatedPost;
               }));
 
               // --- NOTIFICATION LOGIC ---
@@ -887,7 +958,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
               const { postId: vPostId, userId: vUserId, type: vType } = packet.payload;
               setPosts(prev => prev.map(p => {
                   if (p.id !== vPostId) return p;
-                  return { ...p, votes: { ...p.votes, [vUserId]: vType } };
+                  const updatedPost = { ...p, votes: { ...p.votes, [vUserId]: vType } };
+                  updatedPost.contentHash = calculatePostHash(updatedPost);
+                  return updatedPost;
               }));
 
               // --- NOTIFICATION LOGIC ---
@@ -911,7 +984,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                   if (!currentReactions[emoji].includes(rUserId)) {
                       currentReactions[emoji] = [...currentReactions[emoji], rUserId];
                   }
-                  return { ...p, reactions: currentReactions };
+                  const updatedPost = { ...p, reactions: currentReactions };
+                  updatedPost.contentHash = calculatePostHash(updatedPost);
+                  return updatedPost;
               }));
 
               // --- NOTIFICATION LOGIC ---
@@ -969,7 +1044,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
       const myInventory = postsRef.current
           .filter(p => p.timestamp > since && p.privacy === 'public')
-          .map(p => ({ id: p.id, hash: p.contentHash || calculatePostHash(p) }));
+          // CRITICAL FIX: Calculate local hash fresh here too!
+          .map(p => ({ id: p.id, hash: calculatePostHash(p) }));
 
       const packet: NetworkPacket = {
           id: crypto.randomUUID(),
@@ -1047,7 +1123,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                   const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
                   const myInventory = postsRef.current
                       .filter(p => p.timestamp > since && p.privacy === 'public')
-                      .map(p => ({ id: p.id, hash: p.contentHash || calculatePostHash(p) }));
+                      // CRITICAL FIX: Calculate local hash fresh
+                      .map(p => ({ id: p.id, hash: calculatePostHash(p) }));
 
                   const packet: NetworkPacket = {
                       id: crypto.randomUUID(),
@@ -1075,7 +1152,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                       const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
                       const myInventory = postsRef.current
                           .filter(pt => pt.timestamp > since && pt.privacy === 'public')
-                          .map(pt => ({ id: pt.id, hash: pt.contentHash || calculatePostHash(pt) }));
+                          .map(pt => ({ id: pt.id, hash: calculatePostHash(pt) })); // FRESH HASH
 
                       const packet: NetworkPacket = {
                           id: crypto.randomUUID(),
@@ -1170,7 +1247,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
       const myInventory = postsRef.current
           .filter(p => p.timestamp > since && p.privacy === 'public')
-          .map(p => ({ id: p.id, hash: p.contentHash || calculatePostHash(p) }));
+          .map(p => ({ id: p.id, hash: calculatePostHash(p) })); // FRESH HASH
 
       const packet: NetworkPacket = {
           id: crypto.randomUUID(),
@@ -1720,8 +1797,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       let updatedPost: Post | null = null;
       setPosts(prev => prev.map(p => {
           if (p.id === postId) {
-              updatedPost = { ...p, content: newContent, isEdited: true };
-              updatedPost.contentHash = calculatePostHash(updatedPost);
+              updatedPost = { ...p, content: newContent, isEdited: true, contentHash: calculatePostHash({...p, content: newContent, isEdited: true}) };
               return updatedPost;
           }
           return p;
@@ -1766,8 +1842,15 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       const newComment = { id: crypto.randomUUID(), authorId: user.id, authorName: user.displayName, content, timestamp: Date.now(), votes: {}, reactions: {}, replies: [] };
       setPosts(prev => prev.map(post => {
           if (post.id !== postId) return post;
-          if (!parentCommentId) return { ...post, comments: post.comments + 1, commentsList: [...post.commentsList, newComment] };
-          else return { ...post, comments: post.comments + 1, commentsList: appendReply(post.commentsList, parentCommentId, newComment) };
+          let updatedPost = post;
+          if (!parentCommentId) {
+              updatedPost = { ...post, comments: post.comments + 1, commentsList: [...post.commentsList, newComment] };
+          } else {
+              updatedPost = { ...post, comments: post.comments + 1, commentsList: appendReply(post.commentsList, parentCommentId, newComment) };
+          }
+          // Recalculate hash because state changed
+          updatedPost.contentHash = calculatePostHash(updatedPost);
+          return updatedPost;
       }));
       const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'COMMENT', senderId: user.homeNodeOnion, payload: { postId, comment: newComment, parentCommentId } };
       processedPacketIds.current.add(packet.id!);
@@ -1778,7 +1861,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       const user = userRef.current;
       setPosts(prev => prev.map(post => {
           if (post.id !== postId) return post;
-          return { ...post, votes: { ...post.votes, [user.id]: type } };
+          const updatedPost = { ...post, votes: { ...post.votes, [user.id]: type } };
+          updatedPost.contentHash = calculatePostHash(updatedPost);
+          return updatedPost;
       }));
       const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'VOTE', senderId: user.homeNodeOnion, payload: { postId, userId: user.id, type } };
       processedPacketIds.current.add(packet.id!);
@@ -1792,7 +1877,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
           const currentReactions = { ...(p.reactions || {}) };
           if (!currentReactions[emoji]) currentReactions[emoji] = [];
           if (!currentReactions[emoji].includes(user.id)) currentReactions[emoji] = [...currentReactions[emoji], user.id];
-          return { ...p, reactions: currentReactions };
+          const updatedPost = { ...p, reactions: currentReactions };
+          updatedPost.contentHash = calculatePostHash(updatedPost);
+          return updatedPost;
       }));
       const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'REACTION', senderId: user.homeNodeOnion, payload: { postId, userId: user.id, emoji } };
       processedPacketIds.current.add(packet.id!);
@@ -1803,7 +1890,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       const user = userRef.current;
       setPosts(prev => prev.map(p => {
           if (p.id !== postId) return p;
-          return { ...p, commentsList: updateCommentTree(p.commentsList, commentId, (c) => ({ ...c, votes: { ...c.votes, [user.id]: type } })) };
+          const updatedPost = { ...p, commentsList: updateCommentTree(p.commentsList, commentId, (c) => ({ ...c, votes: { ...c.votes, [user.id]: type } })) };
+          updatedPost.contentHash = calculatePostHash(updatedPost);
+          return updatedPost;
       }));
       const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'COMMENT_VOTE', senderId: user.homeNodeOnion, payload: { postId, commentId, userId: user.id, type } };
       processedPacketIds.current.add(packet.id!);
@@ -1814,13 +1903,17 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       const user = userRef.current;
       setPosts(prev => prev.map(p => {
           if (p.id !== postId) return p;
-          return { ...p, commentsList: updateCommentTree(p.commentsList, commentId, (c) => {
+          const updatedPost = { 
+              ...p,
+              commentsList: updateCommentTree(p.commentsList, commentId, (c) => {
                   const currentReactions = { ...(c.reactions || {}) };
                   if (!currentReactions[emoji]) currentReactions[emoji] = [];
                   if (!currentReactions[emoji].includes(user.id)) currentReactions[emoji] = [...currentReactions[emoji], user.id];
                   return { ...c, reactions: currentReactions };
               })
           };
+          updatedPost.contentHash = calculatePostHash(updatedPost);
+          return updatedPost;
       }));
       const packet: NetworkPacket = { 
           id: crypto.randomUUID(), 
