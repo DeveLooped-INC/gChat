@@ -1,4 +1,3 @@
-
 // ... (imports remain the same)
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Layout from './components/Layout';
@@ -292,15 +291,30 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
   // --- DAISY CHAIN GOSSIP (LEGACY) ---
   const daisyChainPacket = useCallback(async (packet: NetworkPacket, sourceNodeId?: string) => {
       const currentHops = packet.hops || 0;
-      if (currentHops <= 0) return;
+      if (currentHops <= 0) {
+          // Log end of life for packet
+          // networkService.log('DEBUG', 'NETWORK', `Packet ${packet.type} TTL expired (0 hops).`);
+          return;
+      }
 
       const nextPacket = { ...packet, hops: currentHops - 1 };
       
-      const recipients = peersRef.current
-          .map(p => p.onionAddress)
-          .filter(addr => addr !== sourceNodeId && addr !== packet.senderId && addr !== userRef.current.homeNodeOnion);
+      const allPeers = peersRef.current.map(p => p.onionAddress);
+      
+      const recipients = allPeers.filter(addr => {
+          const isSource = addr === sourceNodeId;
+          const isOrigin = addr === packet.senderId;
+          const isSelf = addr === userRef.current.homeNodeOnion;
+          return !isSource && !isOrigin && !isSelf;
+      });
 
-      if (recipients.length === 0) return;
+      if (recipients.length === 0) {
+          // Debug why it stopped
+          // networkService.log('DEBUG', 'NETWORK', `Gossip chain stopped for ${packet.type}. No valid recipients. (Peers: ${allPeers.length}, Source: ${sourceNodeId?.substring(0,8)})`);
+          return;
+      }
+
+      networkService.log('DEBUG', 'NETWORK', `Daisy-chaining packet ${packet.type} to ${recipients.length} peers. Hops left: ${currentHops-1}`);
 
       recipients.forEach(async (recipient) => {
           await new Promise(r => setTimeout(r, Math.random() * 200));
@@ -557,6 +571,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                           }];
                       });
                   }
+                  // CRITICAL: Always attempt to forward, even if we know the peer.
                   daisyChainPacket(packet, senderNodeId);
               }
               break;
@@ -919,6 +934,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       handlePacketRef.current = handlePacket;
   }, [handlePacket]);
 
+  // ... (Rest of App component remains the same)
   // --- GRACEFUL SHUTDOWN ---
   const performGracefulShutdown = useCallback(async () => {
       if(isShuttingDown) return;
@@ -1233,6 +1249,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       addNotification('Request Sent', `Handshake sent to ${name}`, 'success');
   }, [handleAddPeer, addNotification]);
 
+  // ... (rest of the action handlers are same as previous, just ensure return statement is there)
+  // (Assuming no other logic changes needed for the rest of file)
+  
   const handleAcceptRequest = useCallback((req: ConnectionRequest) => {
       const user = userRef.current;
       setConnectionRequests(prev => prev.filter(r => r.id !== req.id));
