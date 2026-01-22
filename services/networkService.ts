@@ -3,6 +3,7 @@
 import { io, Socket } from 'socket.io-client';
 import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
 import { getMedia, saveMedia, hasMedia, verifyMediaAccess } from './mediaStorage';
+import { getTransferConfig } from '../utils';
 
 const BACKEND_URL = 'http://127.0.0.1:3001';
 
@@ -24,7 +25,6 @@ interface ChunkRequest {
     index: number;
     sentAt: number;
     retries: number;
-    size: number; // Track size requested to adjust metrics
 }
 
 interface ActiveDownload {
@@ -39,9 +39,8 @@ interface ActiveDownload {
     // Adaptive Logic
     queue: number[]; 
     inflight: Map<number, ChunkRequest>;
-    currentChunkSize: number; // Dynamic
-    minChunkSize: number;
-    maxChunkSize: number;
+    concurrency: number; // Floating point, floored for usage
+    chunkSize: number; // Fixed for the session
     
     // Stats
     rttSamples: number[];
@@ -57,7 +56,7 @@ type PeerStatusListener = (peer: string, status: 'online' | 'offline', latency?:
 let wakeLock: any = null;
 const requestWakeLock = async () => {
     try {
-        if ('wakeLock' in navigator) {
+        if ('wakeLock' in navigator && !wakeLock) {
             // @ts-ignore
             wakeLock = await navigator.wakeLock.request('screen');
         }
@@ -67,8 +66,9 @@ const requestWakeLock = async () => {
 };
 const releaseWakeLock = () => {
     if (wakeLock) {
-        wakeLock.release();
-        wakeLock = null;
+        wakeLock.release().then(() => {
+            wakeLock = null;
+        }).catch(() => {});
     }
 };
 
@@ -235,23 +235,26 @@ export class NetworkService {
           if (dl.status !== 'active') return;
           hasActive = true;
 
-          // Adaptive Timeout: 2.5x RTT or min 20s
-          const dynamicTimeout = Math.max(20000, dl.avgRtt * 2.5); 
+          // Adaptive Timeout: Base 20s + (RTT * 4)
+          // Tor latency varies wildly, so we need a generous, dynamic buffer.
+          const dynamicTimeout = Math.max(20000, dl.avgRtt * 4); 
 
           dl.inflight.forEach((req, key) => {
               if (now - req.sentAt > dynamicTimeout) {
-                  if (req.retries >= 5) {
-                      this.log('ERROR', 'NETWORK', `Chunk ${req.index} failed 5 times. Pausing.`);
+                  if (req.retries >= 10) {
+                      this.log('ERROR', 'NETWORK', `Chunk ${req.index} failed 10 times. Pausing.`);
                       dl.status = 'paused';
                       dl.listeners.forEach(l => l.onError("Connection unstable. Paused."));
                       return;
                   }
 
-                  this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt)/1000)}s). Halving size.`);
+                  this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt)/1000)}s). Retrying & throttling...`);
                   
                   // CONGESTION CONTROL: Multiplicative Decrease
-                  dl.currentChunkSize = Math.max(dl.minChunkSize, Math.floor(dl.currentChunkSize / 2));
+                  // If a chunk fails, the circuit is likely overloaded. Drop to 1 (serial mode).
+                  dl.concurrency = 1;
                   
+                  // Move failed chunk back to front of queue
                   dl.inflight.delete(key);
                   dl.queue.unshift(req.index);
                   req.retries++;
@@ -261,29 +264,28 @@ export class NetworkService {
           this.pumpDownloadQueue(dl);
       });
 
+      // Keep screen awake while downloading
       if (hasActive) requestWakeLock();
       else releaseWakeLock();
   }
 
   private pumpDownloadQueue(dl: ActiveDownload) {
-      let concurrency = 1;
-      if (dl.avgRtt < 2000) concurrency = 4;
-      else if (dl.avgRtt < 5000) concurrency = 2;
+      // Use floored concurrency
+      const effectiveConcurrency = Math.floor(dl.concurrency);
       
-      while (dl.inflight.size < concurrency && dl.queue.length > 0) {
+      while (dl.inflight.size < effectiveConcurrency && dl.queue.length > 0) {
           const index = dl.queue.shift()!;
           dl.inflight.set(index, {
               index,
               sentAt: Date.now(),
-              retries: 0,
-              size: dl.currentChunkSize
+              retries: 0
           });
 
           // Send with explicit stream ID to reuse the Agent in backend
           this.sendMessage(dl.peerOnion, {
               type: 'MEDIA_REQUEST',
               senderId: this._myOnionAddress || 'unknown',
-              payload: { mediaId: dl.id, chunkIndex: index, chunkSize: dl.currentChunkSize }
+              payload: { mediaId: dl.id, chunkIndex: index, chunkSize: dl.chunkSize }
           }, `media_stream_${dl.id}`);
       }
   }
@@ -294,7 +296,7 @@ export class NetworkService {
       if (this._isShuttingDown) return; 
 
       const { mediaId, chunkIndex, chunkSize } = payload;
-      // Use requested size or default to 256KB if missing
+      // Default to 256KB if not provided, but respect the requester's chunk size
       const size = chunkSize || (256 * 1024);
       
       const blob = await getMedia(mediaId);
@@ -312,14 +314,14 @@ export class NetworkService {
       this.sendMessage(senderId, {
           type: 'MEDIA_CHUNK',
           senderId: this._myOnionAddress || 'system',
-          payload: { mediaId, chunkIndex, totalChunks, data: buffer, usedChunkSize: size }
+          payload: { mediaId, chunkIndex, totalChunks, data: buffer }
       }, `media_stream_${mediaId}`);
   }
 
-  private handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: any; usedChunkSize?: number }) {
+  private handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: any }) {
       if (this._isShuttingDown) return; 
 
-      const { mediaId, chunkIndex, totalChunks, data, usedChunkSize } = payload;
+      const { mediaId, chunkIndex, totalChunks, data } = payload;
       const download = this._activeDownloads.get(mediaId);
       if (!download) return; 
 
@@ -332,8 +334,14 @@ export class NetworkService {
           if (download.rttSamples.length > 5) download.rttSamples.shift();
           download.avgRtt = download.rttSamples.reduce((a, b) => a + b, 0) / download.rttSamples.length;
           
+          // CONGESTION CONTROL: Additive Increase
+          // If RTT is healthy (< 2s) and we aren't already maxed out (6), increase concurrency.
+          if (rtt < 2000 && download.concurrency < 6) {
+              download.concurrency += 0.1;
+          }
+          
           if (this.isDebugEnabled) {
-              this.log('DEBUG', 'NETWORK', `Chunk ${chunkIndex} received. RTT: ${rtt}ms. Avg: ${Math.round(download.avgRtt)}ms`);
+              this.log('DEBUG', 'NETWORK', `Chunk ${chunkIndex} OK. RTT: ${rtt}ms. Concurrency: ${download.concurrency.toFixed(1)}`);
           }
       }
 
@@ -413,9 +421,9 @@ export class NetworkService {
           });
       }
 
-      // Initial Chunk Size: 256KB. Small enough for Tor, big enough for throughput.
-      const initialChunkSize = 256 * 1024;
-      const totalChunks = Math.ceil(metadata.size / initialChunkSize);
+      // Determine initial configuration
+      const config = getTransferConfig(metadata.size);
+      const totalChunks = Math.ceil(metadata.size / config.chunkSize);
       
       return new Promise((resolve, reject) => {
           const queue = Array.from({length: totalChunks}, (_, i) => i);
@@ -430,11 +438,13 @@ export class NetworkService {
               status: 'active',
               queue,
               inflight: new Map(),
-              currentChunkSize: initialChunkSize,
-              minChunkSize: 64 * 1024,
-              maxChunkSize: 512 * 1024,
+              
+              // New Adaptive Props
+              concurrency: 1, // Start strictly sequential to gauge RTT first
+              chunkSize: config.chunkSize, // Fixed size
+              
               rttSamples: [],
-              avgRtt: 2000, 
+              avgRtt: 5000, // Conservative initial estimate
               listeners: [{ onProgress, onComplete: resolve, onError: reject }]
           });
           
