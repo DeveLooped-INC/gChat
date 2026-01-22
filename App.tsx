@@ -17,8 +17,7 @@ import { Loader2 } from 'lucide-react';
 import UserInfoModal from './components/UserInfoModal';
 import { useAppState } from './hooks/useAppState';
 import { useNetworkLayer } from './hooks/useNetworkLayer';
-import { calculatePostHash as calcHash, formatUserIdentity as formatID } from './utils';
-import { appendReply, updateCommentTree } from './utils/dataHelpers';
+import { appendReply, updateCommentTree, createPostPayload } from './utils/dataHelpers';
 
 const USER_STORAGE_KEY = 'gchat_user_profile';
 const MAX_GOSSIP_HOPS = 6;
