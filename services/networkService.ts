@@ -25,17 +25,30 @@ interface DownloadListener {
     onError: (e: string) => void;
 }
 
+interface ChunkRequest {
+    index: number;
+    sentAt: number;
+    retries: number;
+}
+
 interface ActiveDownload {
     id: string;
     peerOnion: string;
-    chunks: (string | null)[];
+    // Chunks can now hold ArrayBuffer (binary) directly, not string
+    chunks: (ArrayBuffer | null)[];
     receivedCount: number;
     totalChunks: number;
     metadata: MediaMetadata;
     status: 'active' | 'paused' | 'completed' | 'error' | 'recovering';
-    lastActivity: number;
-    lastRetryTime: number; // Added to prevent spamming retries
-    retryCount: number;
+    
+    // Sliding Window Logic
+    queue: number[]; // Indices waiting to be requested
+    inflight: Map<number, ChunkRequest>; // Indices currently on the wire
+    
+    // Adaptive Timeout Logic
+    rttSamples: number[]; // Moving average of Round Trip Times
+    avgRtt: number;
+    
     listeners: DownloadListener[];
 }
 
@@ -82,8 +95,6 @@ export class NetworkService {
                 }
             });
         }
-        // Resume stalled downloads on reconnect
-        this.resumeAllDownloads();
     });
 
     this.socket.on('onion-address', (address: string) => {
@@ -99,9 +110,6 @@ export class NetworkService {
                 this._knownPeers.add(sender);
             }
             
-            // Check if we need to resume downloads for this peer
-            this.resumeDownloadsForPeer(sender);
-
             if (packet.type === 'MEDIA_REQUEST') {
                 this.handleMediaRequest(sender, packet.payload);
             } else if (packet.type === 'MEDIA_CHUNK') {
@@ -152,79 +160,70 @@ export class NetworkService {
         if(this.onShutdownRequest) this.onShutdownRequest();
     });
 
-    // --- BACKGROUND HEARTBEAT FOR DOWNLOADS ---
+    // --- SLIDING WINDOW MONITOR ---
     setInterval(() => {
-        if (this._isShuttingDown) return; // Halt background activity during shutdown
-
-        const now = Date.now();
-
-        this._activeDownloads.forEach((download, mediaId) => {
-            const timeSinceActivity = now - download.lastActivity;
-            
-            // Case 1: Active but stalled
-            if (download.status === 'active') {
-                // Stalled for > 30 seconds
-                if (timeSinceActivity > 30000) {
-                    const timeSinceRetry = now - download.lastRetryTime;
-                    
-                    // Don't retry too often (every 30s max)
-                    if (timeSinceRetry > 30000) {
-                        
-                        // GIVE UP CONDITION: Max 10 retries
-                        if (download.retryCount >= 10) {
-                             this.log('ERROR', 'NETWORK', `Download ${mediaId} failed after ${download.retryCount} retries. Pausing until peer reconnects.`);
-                             download.status = 'paused';
-                             download.listeners.forEach(l => l.onError("Connection unstable. Download paused."));
-                             return;
-                        }
-
-                        this.log('WARN', 'NETWORK', `Download ${mediaId} stalled (${Math.round(timeSinceActivity/1000)}s). Retrying... (Attempt ${download.retryCount + 1}/10)`);
-                        
-                        download.retryCount++;
-                        download.lastRetryTime = now;
-                        
-                        const firstMissing = download.chunks.findIndex(c => c === null);
-                        if (firstMissing !== -1) {
-                            // Reduce concurrency for retries to 1 to force recovery
-                            const batchSize = 1;
-                            this.requestChunksBatch(download.peerOnion, mediaId, firstMissing, batchSize, download.totalChunks);
-                        } else {
-                            this.finishDownload(mediaId);
-                        }
-                    }
-                }
-            }
-
-            // Case 2: Recovering/Searching but silent (45s no peers)
-            if (download.status === 'recovering' && timeSinceActivity > 45000) {
-                const timeSinceRetry = now - download.lastRetryTime;
-                if (timeSinceRetry > 45000) {
-                    this.log('WARN', 'NETWORK', `Still searching for source for ${mediaId}... Re-broadcasting.`);
-                    download.lastRetryTime = now;
-                    this.attemptMeshRecovery(mediaId);
-                }
-            }
-        });
-    }, 5000);
+        if (this._isShuttingDown) return;
+        this.maintainDownloads();
+    }, 1000); // Check every second
   }
 
-  // --- AUTO-RESUME LOGIC ---
-  private resumeDownloadsForPeer(peerId: string) {
-      this._activeDownloads.forEach((dl, id) => {
-          if (dl.peerOnion === peerId && dl.status === 'paused') {
-              this.log('INFO', 'NETWORK', `Resuming paused download ${id} from ${peerId} due to new activity.`);
-              dl.status = 'active';
-              dl.retryCount = 0; // Reset retry count
-              dl.lastActivity = Date.now();
-              dl.lastRetryTime = 0;
-              
-              // Trigger immediate fetch of missing chunks
-              const firstMissing = dl.chunks.findIndex(c => c === null);
-              if (firstMissing !== -1) {
-                   this.requestChunksBatch(peerId, id, firstMissing, 2, dl.totalChunks);
+  // --- DOWNLOAD MANAGER LOOP ---
+  private maintainDownloads() {
+      const now = Date.now();
+
+      this._activeDownloads.forEach((dl) => {
+          if (dl.status !== 'active') return;
+
+          // 1. Check for Timeouts
+          // Base timeout is 30s, but we adapt based on average RTT
+          const dynamicTimeout = Math.max(30000, dl.avgRtt * 4); 
+
+          dl.inflight.forEach((req, index) => {
+              if (now - req.sentAt > dynamicTimeout) {
+                  // TIMEOUT DETECTED
+                  if (req.retries >= 5) {
+                      // Critical failure for this chunk
+                      this.log('ERROR', 'NETWORK', `Chunk ${index} failed 5 times. Pausing download.`);
+                      dl.status = 'paused';
+                      dl.listeners.forEach(l => l.onError("Connection unstable. Paused."));
+                      return;
+                  }
+
+                  this.log('WARN', 'NETWORK', `Chunk ${index} timed out (${Math.round((now - req.sentAt)/1000)}s). Retrying...`);
+                  
+                  // Move back to queue to be re-processed
+                  dl.inflight.delete(index);
+                  dl.queue.unshift(index); // Priority retry
+                  req.retries++;
               }
-          }
+          });
+
+          // 2. Pump the Queue (Keep pipeline full)
+          this.pumpDownloadQueue(dl);
       });
+  }
+
+  private pumpDownloadQueue(dl: ActiveDownload) {
+      const { concurrency } = getTransferConfig(dl.metadata.size);
+      
+      // While we have room in the pipeline AND items in the queue
+      while (dl.inflight.size < concurrency && dl.queue.length > 0) {
+          const index = dl.queue.shift()!;
+          
+          // Add to inflight tracking
+          dl.inflight.set(index, {
+              index,
+              sentAt: Date.now(),
+              retries: 0
+          });
+
+          // Send Request
+          this.sendMessage(dl.peerOnion, {
+              type: 'MEDIA_REQUEST',
+              senderId: this._myOnionAddress || 'unknown',
+              payload: { mediaId: dl.id, chunkIndex: index }
+          });
+      }
   }
 
   // --- FUNCTION 1: ANNOUNCE EXIT (The UI Triggered Action) ---
@@ -235,9 +234,6 @@ export class NetworkService {
       
       this.log('WARN', 'NETWORK', 'Function 1: Stopping media & broadcasting exit...');
       
-      this._activeDownloads.forEach(dl => {
-          dl.listeners.forEach(l => l.onError("System Shutdown"));
-      });
       this._activeDownloads.clear();
 
       // 2. Prepare Packets
@@ -274,7 +270,6 @@ export class NetworkService {
       this.log('INFO', 'NETWORK', `Waiting for ${promises.length} ACKs or 90s Timeout...`);
 
       // 3. Wait with Timeout (90s)
-      // We use race to ensure we don't hang forever if a peer is stubborn
       const timeoutPromise = new Promise(resolve => setTimeout(() => {
           this.log('WARN', 'NETWORK', 'Shutdown announcement timed out. Proceeding anyway.');
           resolve('timeout');
@@ -386,22 +381,20 @@ export class NetworkService {
       });
   }
 
-  // --- MEDIA METHODS ---
+  // --- MEDIA METHODS (BINARY STREAMING OPTIMIZED) ---
 
   private async handleMediaRequest(senderId: string, payload: { mediaId: string; chunkIndex: number }) {
-      if (this._isShuttingDown) return; // Halt serving media during shutdown
+      if (this._isShuttingDown) return; 
 
       const { mediaId, chunkIndex } = payload;
       
-      // LOGGING FOR DIAGNOSIS
-      this.log('DEBUG', 'NETWORK', `Serving chunk ${chunkIndex} for ${mediaId} request from ${senderId}`);
-
       const blob = await getMedia(mediaId);
       if (!blob) {
-          this.log('WARN', 'NETWORK', `Incoming Media Request for ${mediaId} FAILED: File not found locally.`);
+          // Silent fail for now, peer will retry or timeout
           return;
       }
 
+      // Use transfer config for this file size
       const { chunkSize } = getTransferConfig(blob.size);
       const totalChunks = Math.ceil(blob.size / chunkSize);
       
@@ -411,35 +404,56 @@ export class NetworkService {
       const end = Math.min(start + chunkSize, blob.size);
       const chunkBlob = blob.slice(start, end);
       
-      const reader = new FileReader();
-      reader.onload = async () => {
-          const base64Data = (reader.result as string).split(',')[1];
-          await this.sendMessage(senderId, {
-              type: 'MEDIA_CHUNK',
-              senderId: this._myOnionAddress || 'system',
-              payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
-          }, mediaId);
-          // Only log success for first and last chunk to reduce spam, or if debugging is critical
-          if (chunkIndex === 0 || chunkIndex === totalChunks - 1) {
-              this.log('DEBUG', 'NETWORK', `Sent chunk ${chunkIndex}/${totalChunks} to ${senderId}`);
-          }
-      };
-      reader.readAsDataURL(chunkBlob);
+      // Send as ArrayBuffer directly (Binary)
+      const buffer = await chunkBlob.arrayBuffer();
+      
+      this.sendMessage(senderId, {
+          type: 'MEDIA_CHUNK',
+          senderId: this._myOnionAddress || 'system',
+          payload: { mediaId, chunkIndex, totalChunks, data: buffer }
+      });
   }
 
-  private handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: string }) {
-      if (this._isShuttingDown) return; // Halt receiving media during shutdown
+  private handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: any }) {
+      if (this._isShuttingDown) return; 
 
       const { mediaId, chunkIndex, totalChunks, data } = payload;
       const download = this._activeDownloads.get(mediaId);
       if (!download) return; 
 
-      // Logging for troubleshooting
-      if (chunkIndex % 5 === 0 || chunkIndex === totalChunks - 1) {
-          this.log('DEBUG', 'NETWORK', `Received chunk ${chunkIndex}/${totalChunks} for ${mediaId}`);
+      // 1. Remove from inflight (Stop Timeout Timer)
+      const requestInfo = download.inflight.get(chunkIndex);
+      download.inflight.delete(chunkIndex);
+
+      // 2. Adaptive RTT Calculation
+      if (requestInfo) {
+          const rtt = Date.now() - requestInfo.sentAt;
+          download.rttSamples.push(rtt);
+          if (download.rttSamples.length > 5) download.rttSamples.shift();
+          download.avgRtt = download.rttSamples.reduce((a, b) => a + b, 0) / download.rttSamples.length;
       }
 
-      // Update metadata if sender corrects us (important if resizing occurred)
+      // 3. Convert incoming data to ArrayBuffer
+      let chunkData: ArrayBuffer;
+      
+      // Handle the case where socket.io might have fallen back to JSON/Base64 in rare edge cases (polling)
+      // or if it arrived as a raw Buffer (Node.js/Socket.io behavior)
+      if (data instanceof ArrayBuffer) {
+          chunkData = data;
+      } else if (typeof data === 'string') {
+          // Fallback for legacy or encoded
+          const binary = atob(data);
+          const len = binary.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+          chunkData = bytes.buffer;
+      } else {
+          // Node Buffer to ArrayBuffer
+          chunkData = new Uint8Array(data).buffer;
+      }
+
+      // 4. Update Download State
+      // Sync total chunks if metadata was estimation
       if (totalChunks !== download.totalChunks) {
           download.totalChunks = totalChunks;
           if (download.chunks.length < totalChunks) {
@@ -449,25 +463,20 @@ export class NetworkService {
       }
 
       if (download.chunks[chunkIndex] === null) {
-          download.chunks[chunkIndex] = data;
+          download.chunks[chunkIndex] = chunkData;
           download.receivedCount++;
-          download.lastActivity = Date.now(); // Reset watchdog
-          download.retryCount = 0; // Success resets retry count
       }
 
+      // 5. Notify Progress
       const progress = Math.round((download.receivedCount / download.totalChunks) * 100);
       download.listeners.forEach(l => l.onProgress(progress));
 
+      // 6. Check Completion
       if (download.receivedCount >= download.totalChunks) {
-          if (!download.chunks.includes(null)) {
-              this.finishDownload(mediaId);
-          } else {
-              const missingIndex = download.chunks.indexOf(null);
-              if (missingIndex !== -1) {
-                  // Retry the missing one immediately
-                  this.requestChunksBatch(senderId, mediaId, missingIndex, 1, download.totalChunks);
-              }
-          }
+          this.finishDownload(mediaId);
+      } else {
+          // 7. Pump Queue to fetch next
+          this.pumpDownloadQueue(download);
       }
   }
 
@@ -479,11 +488,10 @@ export class NetworkService {
 
       if (download.status !== 'recovering') {
           download.status = 'recovering';
+          download.inflight.clear(); // Clear pending
           this.log('WARN', 'NETWORK', `Attempting mesh recovery for ${mediaId}...`);
       }
       
-      download.lastActivity = Date.now();
-
       const peersToAsk = Array.from(this._knownPeers).filter(p => p !== download.peerOnion && p !== this._myOnionAddress);
       
       if (peersToAsk.length === 0) {
@@ -523,14 +531,8 @@ export class NetworkService {
           this.log('INFO', 'NETWORK', `Found source for ${mediaId}: ${senderId}`);
           download.peerOnion = senderId;
           download.status = 'active';
-          download.retryCount = 0;
-          download.lastActivity = Date.now();
-          download.lastRetryTime = 0;
-          const firstMissing = download.chunks.findIndex(c => c === null);
-          if (firstMissing !== -1) {
-              const { batchSize } = getTransferConfig(download.metadata.size);
-              this.requestChunksBatch(senderId, mediaId, firstMissing, batchSize, download.totalChunks);
-          }
+          // Restart queue pump
+          this.pumpDownloadQueue(download);
       }
   }
 
@@ -539,15 +541,7 @@ export class NetworkService {
       if (!download || download.chunks.includes(null)) return;
 
       try {
-          const byteArrays = download.chunks.map(b64 => {
-              const binary = atob(b64 || '');
-              const len = binary.length;
-              const bytes = new Uint8Array(len);
-              for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-              return bytes;
-          });
-
-          const blob = new Blob(byteArrays, { type: download.metadata.mimeType });
+          const blob = new Blob(download.chunks as BlobPart[], { type: download.metadata.mimeType });
           
           if (blob.size === 0) throw new Error("Empty Blob");
 
@@ -561,19 +555,6 @@ export class NetworkService {
       } finally {
           this._activeDownloads.delete(mediaId);
       }
-  }
-
-  private resumeAllDownloads() {
-      this._activeDownloads.forEach((download, mediaId) => {
-          if (download.status !== 'completed' && download.status !== 'error') {
-              this.log('INFO', 'NETWORK', `Resuming download for ${mediaId}`);
-              const firstMissing = download.chunks.findIndex(c => c === null);
-              if (firstMissing !== -1) {
-                  const { batchSize } = getTransferConfig(download.metadata.size);
-                  this.requestChunksBatch(download.peerOnion, mediaId, firstMissing, batchSize, download.totalChunks);
-              }
-          }
-      });
   }
 
   public getDownloadProgress(mediaId: string): number | null {
@@ -602,8 +583,8 @@ export class NetworkService {
 
       return new Promise((resolve, reject) => {
           const totalChunks = metadata.chunkCount;
-          // Determine optimal batch size for this file profile
-          const { batchSize } = getTransferConfig(metadata.size);
+          // Initial Queue: [0, 1, 2, ..., totalChunks-1]
+          const queue = Array.from({length: totalChunks}, (_, i) => i);
 
           this._activeDownloads.set(metadata.id, {
               id: metadata.id,
@@ -613,56 +594,16 @@ export class NetworkService {
               totalChunks,
               metadata,
               status: 'active',
-              retryCount: 0,
-              lastActivity: Date.now(),
-              lastRetryTime: 0,
+              queue,
+              inflight: new Map(),
+              rttSamples: [],
+              avgRtt: 5000, // Conservative start (5s)
               listeners: [{ onProgress, onComplete: resolve, onError: reject }]
           });
           
-          this.requestChunksBatch(peerOnionAddress, metadata.id, 0, batchSize, totalChunks);
+          // Kickoff
+          this.pumpDownloadQueue(this._activeDownloads.get(metadata.id)!);
       });
-  }
-
-  private async requestChunksBatch(targetOnion: string, mediaId: string, startIndex: number, batchSize: number, total: number) {
-      if (this._isShuttingDown) return;
-
-      const download = this._activeDownloads.get(mediaId);
-      if(!download) return;
-      if (!this.socket.connected) return;
-
-      this.log('DEBUG', 'NETWORK', `Requesting chunks ${startIndex}-${Math.min(startIndex+batchSize, total)} for ${mediaId} from ${targetOnion}`);
-
-      const { pacingDelay } = getTransferConfig(download.metadata.size);
-
-      const limit = Math.min(startIndex + batchSize, total);
-      for (let i = startIndex; i < limit; i++) {
-          if (download.chunks[i] === null) {
-              const streamId = download.retryCount > 0 ? `${mediaId}_retry` : mediaId;
-              this.sendMessage(targetOnion, {
-                  type: 'MEDIA_REQUEST',
-                  senderId: this._myOnionAddress || 'unknown',
-                  payload: { mediaId, chunkIndex: i }
-              }, streamId);
-              
-              // Dynamic pacing delay between chunks in a batch
-              await new Promise(r => setTimeout(r, pacingDelay)); 
-          }
-      }
-
-      if (limit < total) {
-          // If we haven't finished, queue next check/batch
-          setTimeout(() => {
-              const currentDownload = this._activeDownloads.get(mediaId);
-              if (!currentDownload) return;
-              
-              const nextMissing = currentDownload.chunks.findIndex(c => c === null);
-              if (nextMissing !== -1) {
-                  if (nextMissing >= limit) {
-                      this.requestChunksBatch(targetOnion, mediaId, nextMissing, batchSize, total);
-                  }
-              }
-          }, 2000); // 2s watchdog between batches
-      }
   }
 
   public init(nodeId: string) {
