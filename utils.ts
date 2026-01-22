@@ -64,18 +64,22 @@ export const formatDuration = (seconds: number) => {
 
 export interface TransferConfig {
     chunkSize: number;
-    batchSize: number;
-    pacingDelay: number;
+    concurrency: number;
 }
 
 export const getTransferConfig = (bytes: number): TransferConfig => {
+    // Tor favors fewer, larger cells over many small interactions due to RTT.
+    // Small Files (< 1MB): Small chunks, higher concurrency to race them.
     if (bytes <= 1 * 1024 * 1024) { 
-        return { chunkSize: 64 * 1024, batchSize: 4, pacingDelay: 50 };
+        return { chunkSize: 64 * 1024, concurrency: 4 };
     } 
-    if (bytes <= 5 * 1024 * 1024) { 
-        return { chunkSize: 256 * 1024, batchSize: 2, pacingDelay: 200 };
+    // Medium Files (< 10MB): 256KB chunks.
+    if (bytes <= 10 * 1024 * 1024) { 
+        return { chunkSize: 256 * 1024, concurrency: 3 };
     } 
-    return { chunkSize: 512 * 1024, batchSize: 1, pacingDelay: 500 };
+    // Large Files (> 10MB): 512KB chunks to maximize throughput per RTT.
+    // Lower concurrency to prevent congestion collapse on the circuit.
+    return { chunkSize: 512 * 1024, concurrency: 2 };
 };
 
 // --- EMOTICONS ---
