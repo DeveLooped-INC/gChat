@@ -102,6 +102,9 @@ export const calculateObjectSize = (obj: any): number => {
 };
 
 export const calculatePostHash = (post: any): string => {
+    // IMPORTANT: This payload must include mutable fields (comments/votes) 
+    // so that the hash changes when activity happens.
+    // This allows the Inventory Sync protocol to detect outdated posts.
     const payload = {
         id: post.id,
         content: post.content,
@@ -109,7 +112,14 @@ export const calculatePostHash = (post: any): string => {
         timestamp: post.timestamp,
         mediaId: post.media?.id,
         imageUrl: post.imageUrl?.length, 
-        isEdited: post.isEdited
+        isEdited: post.isEdited,
+        // --- Social Sync Fields ---
+        commentsCount: post.comments,
+        latestCommentTime: post.commentsList && post.commentsList.length > 0 
+            ? post.commentsList[post.commentsList.length-1].timestamp 
+            : 0,
+        votesCount: Object.keys(post.votes || {}).length,
+        reactionsCount: Object.keys(post.reactions || {}).length
     };
     return sha3_256(JSON.stringify(payload));
 };
