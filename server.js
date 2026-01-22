@@ -22,7 +22,8 @@ const PORT = 3001;
 const TOR_SOCKS_PORT = 9990; 
 const TOR_CONTROL_PORT = 9991;
 const INCOMING_PORT = 3456;
-const CONNECTION_TIMEOUT_MS = 120000; 
+// Increased timeout to 10 minutes for slow Tor circuits
+const CONNECTION_TIMEOUT_MS = 600000; 
 
 // Determine Data Directory (Default to System AppData)
 const USER_DATA_DIR = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share");
@@ -52,9 +53,13 @@ const TERMUX_BIN = path.join(TERMUX_PREFIX, 'bin');
 
 const app = express();
 const httpServer = createServer(app);
+
+// Increase Server Timeout to match client timeout
+httpServer.setTimeout(CONNECTION_TIMEOUT_MS);
+
 const io = new Server(httpServer, {
   cors: { origin: "*", methods: ["GET", "POST"] },
-  pingTimeout: 120000, 
+  pingTimeout: 60000, 
   pingInterval: 25000
 });
 
@@ -174,7 +179,24 @@ process.stdin.on('keypress', (str, key) => {
 // --- EXPRESS ---
 app.use(cors());
 // Replaced body-parser with native express implementation
-app.use(express.json({ limit: '50mb' })); // Increased limit for larger chunks if needed
+app.use(express.json({ limit: '50mb' })); 
+
+// Middleware to handle aborted requests (client disconnects)
+app.use((err, req, res, next) => {
+    if (err.type === 'aborted' || err.code === 'ECONNABORTED') {
+        // Quietly handle aborted requests without spamming logs
+        return;
+    }
+    if (err.status === 400 && err.type === 'entity.parse.failed') {
+        res.status(400).send({ status: 'error', code: 'invalid_json' });
+        return;
+    }
+    // Catch generic BadRequestError from body-parser when stream cuts
+    if (err.name === 'BadRequestError' && err.message === 'request aborted') {
+        return;
+    }
+    next(err);
+});
 
 app.get('/gchat/health', (req, res) => {
   res.status(200).send({ status: 'online', nodeId: myOnionAddress });
@@ -233,7 +255,7 @@ function getSocksAgent() {
         _sharedSocksAgent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`, {
             keepAlive: true,
             keepAliveMsecs: 10000,
-            timeout: 60000
+            timeout: CONNECTION_TIMEOUT_MS
         });
     }
     return _sharedSocksAgent;
@@ -271,7 +293,9 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
                 data: options.body,
                 // Increase max content length for large chunks
                 maxContentLength: Infinity,
-                maxBodyLength: Infinity
+                maxBodyLength: Infinity,
+                // Add axios timeout
+                timeout: CONNECTION_TIMEOUT_MS
             };
 
             const res = await axios(config);
