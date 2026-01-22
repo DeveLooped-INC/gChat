@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import https from 'https';
 import { fileURLToPath } from 'url';
-import tar from 'tar';
+import { x as tarExtract } from 'tar';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -127,7 +127,7 @@ const setupTor = async () => {
   // 4. Extract
   console.log('Extracting binary...');
   try {
-    await tar.x({
+    await tarExtract({
       file: tarPath,
       cwd: BIN_DIR,
       filter: (path) => {
