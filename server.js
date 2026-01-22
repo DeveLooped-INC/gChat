@@ -1,0 +1,429 @@
+
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
+import { spawn, exec, execSync } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import { SocksProxyAgent } from 'socks-proxy-agent';
+import axios from 'axios';
+import net from 'net';
+import { fileURLToPath } from 'url';
+import readline from 'readline';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// --- CONFIGURATION ---
+const PORT = 3001; 
+const TOR_SOCKS_PORT = 9990; 
+const TOR_CONTROL_PORT = 9991;
+const INCOMING_PORT = 3456;
+const CONNECTION_TIMEOUT_MS = 120000; 
+
+// Determine Data Directory (Default to System AppData)
+const USER_DATA_DIR = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share");
+const APP_DATA_ROOT = path.join(USER_DATA_DIR, 'gchat');
+
+const HIDDEN_SERVICE_DIR = path.join(APP_DATA_ROOT, 'tor', 'service');
+const TOR_DATA_DIR = path.join(APP_DATA_ROOT, 'tor', 'data');
+
+console.log(`[Server] Data Directory: ${APP_DATA_ROOT}`);
+
+// --- PREVENT EIO CRASHES ---
+const suppressStdinError = (err) => {
+    if (err.code === 'EIO') return;
+    console.error('Stdin Error:', err);
+};
+process.stdin.on('error', suppressStdinError);
+
+process.on('uncaughtException', (err) => {
+    if (err.code === 'EIO') return; 
+    console.error('Uncaught Exception:', err);
+    if (err.code !== 'EIO') process.exit(1); 
+});
+
+// --- TERMUX SPECIFIC SETUP ---
+const TERMUX_PREFIX = '/data/data/com.termux/files/usr';
+const TERMUX_BIN = path.join(TERMUX_PREFIX, 'bin');
+
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
+  pingTimeout: 120000, 
+  pingInterval: 25000
+});
+
+// --- GLOBAL STATE ---
+let isShuttingDown = false;
+
+// --- LOGGING HELPER ---
+function broadcastLog(level, area, message, details = null) {
+    if (isShuttingDown && (level === 'WARN' || level === 'ERROR') && area === 'NETWORK') {
+        return;
+    }
+
+    const entry = {
+        timestamp: Date.now(),
+        level,
+        area,
+        message,
+        details
+    };
+    try {
+        io.emit('debug-log', entry);
+    } catch(e) {}
+    
+    const color = level === 'ERROR' ? '\x1b[31m' : level === 'WARN' ? '\x1b[33m' : '\x1b[32m';
+    console.log(`${color}[${level}] [${area}] ${message}\x1b[0m`);
+    if (details) console.log(details);
+}
+
+// Fix PATH for Termux Environment
+if (process.platform === 'android' || fs.existsSync(TERMUX_BIN)) {
+    if (!process.env.PATH.includes(TERMUX_BIN)) {
+        process.env.PATH = `${TERMUX_BIN}:${process.env.PATH}`;
+    }
+}
+
+// --- BINARY DETECTION ---
+let TOR_CMD = 'tor'; 
+
+const localBinPath = path.join(__dirname, 'bin', process.platform === 'win32' ? 'tor.exe' : 'tor');
+const termuxTorPath = path.join(TERMUX_BIN, 'tor');
+
+if (process.platform === 'android' || fs.existsSync(TERMUX_BIN)) {
+    if (fs.existsSync(termuxTorPath)) {
+        TOR_CMD = termuxTorPath;
+    } else {
+         try {
+             execSync('pkg update -y && pkg install tor -y', { stdio: 'inherit' });
+             if (fs.existsSync(termuxTorPath)) TOR_CMD = termuxTorPath;
+         } catch (installErr) {
+             broadcastLog('ERROR', 'BACKEND', `❌ Auto-install failed: ${installErr.message}`);
+         }
+    }
+}
+else if (fs.existsSync(localBinPath)) {
+    TOR_CMD = localBinPath;
+} 
+else {
+    try {
+        const systemTor = execSync('which tor').toString().trim();
+        if (systemTor && fs.existsSync(systemTor)) {
+            TOR_CMD = systemTor;
+        }
+    } catch (e) {}
+}
+
+let torProcess = null;
+let myOnionAddress = null;
+let controlSocket = null;
+
+// --- EXIT HELPER ---
+function cleanupAndExit() {
+    isShuttingDown = true;
+    
+    try {
+        if (process.stdin.isTTY) {
+            process.stdin.setRawMode(false);
+        }
+        process.stdin.removeAllListeners();
+        process.stdin.pause();
+        process.stdin.destroy();
+        process.stdin.on('error', () => {});
+    } catch(e) {}
+
+    if (torProcess) {
+        // Force kill Tor to avoid hanging
+        torProcess.kill('SIGKILL');
+    }
+    
+    setTimeout(() => {
+        process.exit(0);
+    }, 100);
+}
+
+if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+}
+readline.emitKeypressEvents(process.stdin);
+
+process.stdin.on('keypress', (str, key) => {
+    if (key.ctrl && key.name === 'q') {
+        broadcastLog('WARN', 'BACKEND', 'Shutdown Sequence Initiated via Terminal...');
+        const connectedClients = io.engine.clientsCount;
+        if (connectedClients > 0) {
+            io.emit('system-shutdown-request');
+            setTimeout(() => {
+                cleanupAndExit();
+            }, 8000); // 8s timeout for manual keyboard exit
+        } else {
+            cleanupAndExit();
+        }
+    }
+    if (key.ctrl && key.name === 'c') {
+        cleanupAndExit();
+    }
+});
+
+// --- EXPRESS ---
+app.use(cors());
+// Replaced body-parser with native express implementation
+app.use(express.json({ limit: '10mb' }));
+
+app.get('/gchat/health', (req, res) => {
+  res.status(200).send({ status: 'online', nodeId: myOnionAddress });
+});
+
+app.post('/gchat/packet', (req, res) => {
+  broadcastLog('INFO', 'NETWORK', `Packet received from ${req.ip}`, { type: req.body?.type, sender: req.body?.senderId });
+  io.emit('tor-packet', req.body);
+  res.status(200).send({ status: 'received' });
+});
+
+// --- HELPER: Kill Ghost Processes ---
+function killGhostTor() {
+    return new Promise((resolve) => {
+        if (process.platform !== 'win32') {
+            const cmd = 'pkill -9 tor || killall -9 tor || killall tor';
+            exec(cmd, () => {
+                setTimeout(resolve, 500); 
+            });
+        } else {
+            resolve();
+        }
+    });
+}
+
+function waitForPort(port, retries = 20) {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const check = setInterval(() => {
+            attempts++;
+            const client = new net.Socket();
+            client.once('connect', () => {
+                client.destroy();
+                clearInterval(check);
+                resolve(true);
+            });
+            client.once('error', () => {
+                client.destroy();
+                if (attempts >= retries) {
+                    clearInterval(check);
+                    resolve(false);
+                }
+            });
+            client.connect(port, '127.0.0.1');
+        }, 1000);
+    });
+}
+
+async function fetchWithRetry(url, options, streamId = null, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        if (isShuttingDown && i > 0) return; 
+
+        let isolationKey = streamId ? (i === 0 ? streamId : `${streamId}_retry_${i}`) : Math.random().toString(36).substring(2, 10);
+        const agent = new SocksProxyAgent(`socks5h://${isolationKey}:${isolationKey}@127.0.0.1:${TOR_SOCKS_PORT}`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT_MS);
+        
+        try {
+            const headers = { ...(options.headers || {}), 'Connection': 'close' };
+            const config = {
+                url,
+                method: options.method || 'GET',
+                headers,
+                httpAgent: agent,
+                httpsAgent: agent,
+                signal: controller.signal,
+                validateStatus: () => true, // Accept all status codes to behave like fetch
+                data: options.body // Axios uses 'data', fetch uses 'body'
+            };
+
+            const res = await axios(config);
+            clearTimeout(timeout);
+            
+            // Map Axios response to a fetch-like interface for compatibility
+            return {
+                ok: res.status >= 200 && res.status < 300,
+                status: res.status
+            };
+        } catch (err) {
+            clearTimeout(timeout);
+            if (isShuttingDown) return;
+            if (i === retries - 1) throw err;
+            const delay = 2000 * Math.pow(2, i);
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+}
+
+function connectToControlPort() {
+    if (controlSocket) controlSocket.destroy();
+    controlSocket = new net.Socket();
+    controlSocket.connect(TOR_CONTROL_PORT, '127.0.0.1', () => {
+        controlSocket.write('AUTHENTICATE ""\r\n');
+        setInterval(() => {
+            if(controlSocket && !controlSocket.destroyed) controlSocket.write('GETINFO circuit-status\r\n');
+        }, 5000);
+    });
+    controlSocket.on('data', (data) => {
+        const str = data.toString();
+        if (str.includes('circuit-status=')) {
+            const builtCircuits = (str.match(/BUILT/g) || []).length;
+            const guards = (str.match(/GUARD/g) || []).length;
+            io.emit('tor-stats', { circuits: builtCircuits, guards: guards, status: 'Active' });
+        }
+    });
+    controlSocket.on('error', () => {});
+}
+
+async function startTor() {
+  await killGhostTor();
+  
+  if (!fs.existsSync(HIDDEN_SERVICE_DIR)) fs.mkdirSync(HIDDEN_SERVICE_DIR, { recursive: true });
+  if (!fs.existsSync(TOR_DATA_DIR)) fs.mkdirSync(TOR_DATA_DIR, { recursive: true });
+  if (process.platform !== 'win32') {
+      try { fs.chmodSync(TOR_DATA_DIR, 0o700); } catch(e){}
+      try { fs.chmodSync(HIDDEN_SERVICE_DIR, 0o700); } catch(e){}
+  }
+
+  const args = [
+    '--SocksPort', `${TOR_SOCKS_PORT}`,
+    '--ControlPort', `${TOR_CONTROL_PORT}`,
+    '--CookieAuthentication', '0', 
+    '--DataDirectory', TOR_DATA_DIR,
+    '--HiddenServiceDir', HIDDEN_SERVICE_DIR,
+    '--HiddenServicePort', `80 127.0.0.1:${INCOMING_PORT}`
+  ];
+
+  try {
+    torProcess = spawn(TOR_CMD, args, { env: process.env });
+    torProcess.stdout.on('data', (data) => {
+      const log = data.toString().trim();
+      if (log.includes('Bootstrapped 100%')) {
+        broadcastLog('INFO', 'TOR', 'Bootstrapped 100%');
+        waitForPort(TOR_SOCKS_PORT).then((isOpen) => {
+            if (isOpen) {
+                readOnionAddress();
+                io.emit('tor-status', 'connected');
+                connectToControlPort();
+            }
+        });
+      }
+    });
+    torProcess.stderr.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg.includes('Could not bind to 127.0.0.1:9990')) {
+             broadcastLog('ERROR', 'TOR', 'Port 9990 in use.');
+             setTimeout(startTor, 2000);
+        }
+    });
+    torProcess.on('close', (code) => {
+       io.emit('tor-status', 'disconnected');
+    });
+  } catch(e) {
+      broadcastLog('ERROR', 'TOR', `Exception during spawn: ${e.message}`);
+  }
+}
+
+function readOnionAddress() {
+  const hostnamePath = path.join(HIDDEN_SERVICE_DIR, 'hostname');
+  let attempts = 0;
+  const check = setInterval(() => {
+    attempts++;
+    if (fs.existsSync(hostnamePath)) {
+      try {
+          const address = fs.readFileSync(hostnamePath, 'utf-8').trim();
+          if (address) {
+            myOnionAddress = address;
+            broadcastLog('INFO', 'TOR', `Service Address Created: ${myOnionAddress}`);
+            io.emit('onion-address', myOnionAddress);
+            clearInterval(check);
+          }
+      } catch(e) {}
+    }
+    if (attempts > 30 && !myOnionAddress) clearInterval(check);
+  }, 1000);
+}
+
+io.on('connection', (socket) => {
+  if (myOnionAddress) {
+      socket.emit('onion-address', myOnionAddress);
+      socket.emit('tor-status', 'connected');
+  }
+  socket.on('get-onion-address', (cb) => { if(cb) cb(myOnionAddress); });
+  socket.on('get-tor-keys', (cb) => {
+      try {
+          const keys = {};
+          ['hostname', 'hs_ed25519_secret_key', 'hs_ed25519_public_key'].forEach(file => {
+              const filePath = path.join(HIDDEN_SERVICE_DIR, file);
+              if (fs.existsSync(filePath)) keys[file] = fs.readFileSync(filePath).toString('base64');
+          });
+          cb({ success: true, keys });
+      } catch (e) { cb({ success: false, error: e.message }); }
+  });
+  socket.on('restore-tor-keys', (keys, cb) => {
+      try {
+          if (!fs.existsSync(HIDDEN_SERVICE_DIR)) fs.mkdirSync(HIDDEN_SERVICE_DIR, { recursive: true });
+          if (process.platform !== 'win32') fs.chmodSync(HIDDEN_SERVICE_DIR, 0o700);
+          Object.entries(keys).forEach(([filename, contentBase64]) => {
+              const buffer = Buffer.from(contentBase64, 'base64');
+              const filePath = path.join(HIDDEN_SERVICE_DIR, filename);
+              fs.writeFileSync(filePath, buffer);
+              if (process.platform !== 'win32') fs.chmodSync(filePath, 0o600);
+          });
+          if (torProcess) torProcess.kill();
+          killGhostTor().then(() => startTor());
+          cb({ success: true });
+      } catch (e) { cb({ success: false, error: e.message }); }
+  });
+  socket.on('restart-tor', async () => {
+      if (torProcess) torProcess.kill();
+      await killGhostTor();
+      startTor();
+  });
+  socket.on('system-shutdown-prep', () => { isShuttingDown = true; });
+  socket.on('system-shutdown-confirm', () => {
+      isShuttingDown = true; 
+      broadcastLog('WARN', 'BACKEND', 'Graceful Shutdown Confirmed.');
+      // Give UI 2 seconds to show the red screen, then kill server
+      setTimeout(() => {
+          cleanupAndExit();
+      }, 2000);
+  });
+  socket.on('client-log', (entry) => {
+      const color = entry.level === 'ERROR' ? '\x1b[31m' : entry.level === 'WARN' ? '\x1b[33m' : '\x1b[36m';
+      console.log(`${color}[CLIENT][${entry.level}] [${entry.area}] ${entry.message}\x1b[0m`);
+  });
+  socket.on('ping-peer', async ({ targetOnion }, callback) => {
+    try {
+        const response = await fetchWithRetry(`http://${targetOnion}/gchat/health`, { method: 'GET' }, 'discovery');
+        callback({ success: response.ok, error: response.ok ? null : `HTTP ${response.status}` });
+    } catch (e) {
+        callback({ success: false, error: e.message });
+    }
+  });
+  socket.on('send-packet', async ({ targetOnion, payload, streamId }, callback) => {
+    try {
+        const response = await fetchWithRetry(`http://${targetOnion}/gchat/packet`, {
+            method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' }
+        }, streamId);
+        callback({ success: response.ok, error: response.ok ? null : `HTTP ${response.status}` });
+    } catch (e) {
+        callback({ success: false, error: e.message });
+    }
+  });
+});
+
+httpServer.listen(PORT, '127.0.0.1', () => {
+  console.log(`[Server] Backend running on http://127.0.0.1:${PORT}`);
+  app.listen(INCOMING_PORT, '127.0.0.1', () => {
+     startTor();
+  });
+});
+
+process.on('SIGINT', () => cleanupAndExit());
