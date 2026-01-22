@@ -68,9 +68,9 @@ server.on('close', (code) => {
 });
 
 // 3. Start Vite
+// FIX [DEP0190]: Combine command and args into a single string when using shell: true
 // We enable 'detached' on non-Windows to create a new Process Group.
-// This allows us to kill the whole group (shell + vite + esbuild) later.
-const vite = spawn('npm', ['run', 'web'], { 
+const vite = spawn('npm run web', { 
     stdio: ['ignore', 'inherit', 'inherit'], 
     shell: true,
     detached: process.platform !== 'win32'
