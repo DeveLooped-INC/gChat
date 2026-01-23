@@ -235,9 +235,9 @@ export class NetworkService {
           if (dl.status !== 'active') return;
           hasActive = true;
 
-          // Adaptive Timeout: Base 20s + (RTT * 4)
-          // Tor latency varies wildly, so we need a generous, dynamic buffer.
-          const dynamicTimeout = Math.max(20000, dl.avgRtt * 4); 
+          // Adaptive Timeout: Base 60s + (RTT * 4)
+          // Increased base timeout significantly to allow for Tor Circuit creation
+          const dynamicTimeout = Math.max(60000, dl.avgRtt * 4); 
 
           dl.inflight.forEach((req, key) => {
               if (now - req.sentAt > dynamicTimeout) {
