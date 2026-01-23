@@ -248,7 +248,7 @@ export class NetworkService {
                       return;
                   }
 
-                  this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt)/1000)}s). Retrying & throttling...`);
+                  this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt)/1000)}s). Retrying...`);
                   
                   // CONGESTION CONTROL: Multiplicative Decrease
                   // If a chunk fails, the circuit is likely overloaded. Drop to 1 (serial mode).
@@ -358,6 +358,14 @@ export class NetworkService {
           chunkData = new Uint8Array(data).buffer;
       }
 
+      // CRITICAL: Validate Chunk Data Size
+      if (chunkData.byteLength === 0) {
+          this.log('WARN', 'NETWORK', `Received empty chunk ${chunkIndex} for ${mediaId}. Ignoring.`);
+          // Put back in queue to retry
+          download.queue.unshift(chunkIndex);
+          return;
+      }
+
       if (download.chunks[chunkIndex] === null) {
           download.chunks[chunkIndex] = chunkData;
           download.receivedCount++;
@@ -384,7 +392,7 @@ export class NetworkService {
 
       try {
           const blob = new Blob(download.chunks as BlobPart[], { type: download.metadata.mimeType });
-          if (blob.size === 0) throw new Error("Empty Blob");
+          if (blob.size === 0) throw new Error("Empty Blob Data");
           await saveMedia(mediaId, blob, download.metadata.accessKey);
           download.status = 'completed';
           download.listeners.forEach(l => l.onComplete(blob));
