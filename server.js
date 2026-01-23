@@ -22,9 +22,7 @@ const PORT = 3001;
 const TOR_SOCKS_PORT = 9990; 
 const TOR_CONTROL_PORT = 9991;
 const INCOMING_PORT = 3456;
-// Critical: Tor circuits can take 30s+ to build. Large files need time.
-// We set a very generous timeout (10 minutes) to prevent "Request Aborted" errors.
-const CONNECTION_TIMEOUT_MS = 600000; 
+const CONNECTION_TIMEOUT_MS = 600000; // 10 Minutes
 
 // Determine Data Directory (Default to System AppData)
 const USER_DATA_DIR = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share");
@@ -145,7 +143,6 @@ function cleanupAndExit() {
     } catch(e) {}
 
     if (torProcess) {
-        // Force kill Tor to avoid hanging
         torProcess.kill('SIGKILL');
     }
     
@@ -167,7 +164,7 @@ process.stdin.on('keypress', (str, key) => {
             io.emit('system-shutdown-request');
             setTimeout(() => {
                 cleanupAndExit();
-            }, 8000); // 8s timeout for manual keyboard exit
+            }, 8000); 
         } else {
             cleanupAndExit();
         }
@@ -179,20 +176,16 @@ process.stdin.on('keypress', (str, key) => {
 
 // --- EXPRESS ---
 app.use(cors());
-// Replaced body-parser with native express implementation
 app.use(express.json({ limit: '50mb' })); 
 
-// Middleware to handle aborted requests (client disconnects)
 app.use((err, req, res, next) => {
     if (err.type === 'aborted' || err.code === 'ECONNABORTED') {
-        // Quietly handle aborted requests without spamming logs
         return;
     }
     if (err.status === 400 && err.type === 'entity.parse.failed') {
         res.status(400).send({ status: 'error', code: 'invalid_json' });
         return;
     }
-    // Catch generic BadRequestError from body-parser when stream cuts
     if (err.name === 'BadRequestError' && err.message === 'request aborted') {
         return;
     }
@@ -246,24 +239,59 @@ function waitForPort(port, retries = 20) {
     });
 }
 
-// --- NETWORK AGENT ---
-// We create a fresh agent for every request to avoid socket reuse issues.
-// Tor circuits can die unexpectedly; reusing agents often leads to "Socket Closed" errors.
+// --- NETWORK AGENTS ---
+// We use two separate agents:
+// 1. Control Agent: For small packets (Handshakes, Posts, Text). Fast, responsive.
+// 2. Data Agent: For large streams (Media). Persistent, handles backpressure.
+// Reusing agents with Keep-Alive prevents socket exhaustion on the local machine.
+
+let _controlAgent = null;
+let _dataAgent = null;
+
+function getControlAgent() {
+    if (!_controlAgent) {
+        _controlAgent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`, {
+            keepAlive: true,
+            keepAliveMsecs: 1000,
+            timeout: 30000 // 30s socket timeout
+        });
+    }
+    return _controlAgent;
+}
+
+function getDataAgent() {
+    if (!_dataAgent) {
+        _dataAgent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`, {
+            keepAlive: true,
+            keepAliveMsecs: 5000,
+            timeout: CONNECTION_TIMEOUT_MS // Long timeout for large files
+        });
+    }
+    return _dataAgent;
+}
+
 async function fetchWithRetry(url, options, streamId = null, retries = 3) {
-    for (let i = 0; i < retries; i++) {
+    // If it's a stream (media transfer), we reduce internal retries to avoid duplicate data pushing.
+    // The frontend handles the retry logic for media chunks more intelligently.
+    const effectiveRetries = streamId ? 1 : retries;
+    const isStream = !!streamId;
+
+    for (let i = 0; i < effectiveRetries; i++) {
         if (isShuttingDown && i > 0) return; 
 
-        const agent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`);
+        // Select appropriate agent to avoid blocking control traffic behind large downloads
+        const agent = isStream ? getDataAgent() : getControlAgent();
         
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT_MS);
+        // Use global timeout for data, shorter for control
+        const timeoutDuration = isStream ? CONNECTION_TIMEOUT_MS : 30000; 
+        const timeout = setTimeout(() => controller.abort(), timeoutDuration);
         
         try {
             const headers = { ...(options.headers || {}) };
             
-            // Force close connection to prevent Ghost Sockets. 
-            // In a high-latency Tor network, keep-alive often causes more problems than it solves.
-            headers['Connection'] = 'close'; 
+            // Allow Keep-Alive to reuse the Tor circuit connection
+            headers['Connection'] = 'keep-alive';
 
             const config = {
                 url,
@@ -276,7 +304,7 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
                 data: options.body,
                 maxContentLength: Infinity,
                 maxBodyLength: Infinity,
-                timeout: CONNECTION_TIMEOUT_MS
+                timeout: timeoutDuration
             };
 
             const res = await axios(config);
@@ -290,11 +318,14 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
             clearTimeout(timeout);
             if (isShuttingDown) return;
             
-            if (i === retries - 1) throw err;
+            if (i === effectiveRetries - 1) throw err;
             
-            // Exponential backoff with jitter
-            const delay = (2000 * Math.pow(2, i)) + (Math.random() * 1000);
-            broadcastLog('WARN', 'NETWORK', `Retry ${i+1}/${retries} for ${url} in ${Math.round(delay)}ms`);
+            // Backoff logic
+            const delay = (1000 * Math.pow(2, i)) + (Math.random() * 500);
+            if (!isStream) {
+                // Only log control packet retries to keep logs clean
+                broadcastLog('WARN', 'NETWORK', `Retry ${i+1}/${effectiveRetries} for ${url} in ${Math.round(delay)}ms`);
+            }
             await new Promise(r => setTimeout(r, delay));
         }
     }
@@ -429,7 +460,6 @@ io.on('connection', (socket) => {
   socket.on('system-shutdown-confirm', () => {
       isShuttingDown = true; 
       broadcastLog('WARN', 'BACKEND', 'Graceful Shutdown Confirmed.');
-      // Give UI 2 seconds to show the red screen, then kill server
       setTimeout(() => {
           cleanupAndExit();
       }, 2000);
