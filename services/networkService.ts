@@ -3,7 +3,7 @@
 import { io, Socket } from 'socket.io-client';
 import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
 import { getMedia, saveMedia, hasMedia, verifyMediaAccess } from './mediaStorage';
-import { getTransferConfig } from '../utils';
+import { getTransferConfig, arrayBufferToBase64, base64ToArrayBuffer } from '../utils';
 
 const BACKEND_URL = 'http://127.0.0.1:3001';
 
@@ -310,11 +310,13 @@ export class NetworkService {
       const chunkBlob = blob.slice(start, end);
       
       const buffer = await chunkBlob.arrayBuffer();
+      // CRITICAL: Convert to Base64 to ensure it survives JSON.stringify in the backend
+      const base64Data = arrayBufferToBase64(buffer);
       
       this.sendMessage(senderId, {
           type: 'MEDIA_CHUNK',
           senderId: this._myOnionAddress || 'system',
-          payload: { mediaId, chunkIndex, totalChunks, data: buffer }
+          payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
       }, `media_stream_${mediaId}`);
   }
 
@@ -347,14 +349,13 @@ export class NetworkService {
 
       // Convert incoming data
       let chunkData: ArrayBuffer;
-      if (data instanceof ArrayBuffer) chunkData = data;
-      else if (typeof data === 'string') {
-          const binary = atob(data);
-          const len = binary.length;
-          const bytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-          chunkData = bytes.buffer;
+      if (typeof data === 'string') {
+          // It's likely the Base64 string we sent
+          chunkData = base64ToArrayBuffer(data);
+      } else if (data instanceof ArrayBuffer) {
+          chunkData = data;
       } else {
+          // Fallback if Socket.IO did something magic, or it's a raw array
           chunkData = new Uint8Array(data).buffer;
       }
 
