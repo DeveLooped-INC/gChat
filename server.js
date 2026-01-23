@@ -22,7 +22,8 @@ const PORT = 3001;
 const TOR_SOCKS_PORT = 9990; 
 const TOR_CONTROL_PORT = 9991;
 const INCOMING_PORT = 3456;
-// Increased timeout to 10 minutes for slow Tor circuits
+// Critical: Tor circuits can take 30s+ to build. Large files need time.
+// We set a very generous timeout (10 minutes) to prevent "Request Aborted" errors.
 const CONNECTION_TIMEOUT_MS = 600000; 
 
 // Determine Data Directory (Default to System AppData)
@@ -245,29 +246,14 @@ function waitForPort(port, retries = 20) {
     });
 }
 
-// --- OPTIMIZED NETWORK AGENT ---
-// We reuse this agent to keep the Tor circuit open for multiple requests
-// This drastically reduces latency for file transfers
-let _sharedSocksAgent = null;
-
-function getSocksAgent() {
-    if (!_sharedSocksAgent) {
-        _sharedSocksAgent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`, {
-            keepAlive: true,
-            keepAliveMsecs: 10000,
-            timeout: CONNECTION_TIMEOUT_MS
-        });
-    }
-    return _sharedSocksAgent;
-}
-
+// --- NETWORK AGENT ---
+// We create a fresh agent for every request to avoid socket reuse issues.
+// Tor circuits can die unexpectedly; reusing agents often leads to "Socket Closed" errors.
 async function fetchWithRetry(url, options, streamId = null, retries = 3) {
     for (let i = 0; i < retries; i++) {
         if (isShuttingDown && i > 0) return; 
 
-        // Use shared agent for streams (like media) to reuse circuits
-        // Use fresh agent for control packets to ensure reachability if circuit dies
-        const agent = streamId ? getSocksAgent() : new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`);
+        const agent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`);
         
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT_MS);
@@ -275,12 +261,9 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
         try {
             const headers = { ...(options.headers || {}) };
             
-            // Critical: Close connection for one-off packets, Keep-Alive for streams
-            if (!streamId) {
-                headers['Connection'] = 'close';
-            } else {
-                headers['Connection'] = 'keep-alive';
-            }
+            // Force close connection to prevent Ghost Sockets. 
+            // In a high-latency Tor network, keep-alive often causes more problems than it solves.
+            headers['Connection'] = 'close'; 
 
             const config = {
                 url,
@@ -291,10 +274,8 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
                 signal: controller.signal,
                 validateStatus: () => true,
                 data: options.body,
-                // Increase max content length for large chunks
                 maxContentLength: Infinity,
                 maxBodyLength: Infinity,
-                // Add axios timeout
                 timeout: CONNECTION_TIMEOUT_MS
             };
 
@@ -309,13 +290,11 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
             clearTimeout(timeout);
             if (isShuttingDown) return;
             
-            // If stream failed, force refresh the shared agent for next retry
-            if (streamId && _sharedSocksAgent) {
-                _sharedSocksAgent = null;
-            }
-
             if (i === retries - 1) throw err;
-            const delay = 2000 * Math.pow(2, i);
+            
+            // Exponential backoff with jitter
+            const delay = (2000 * Math.pow(2, i)) + (Math.random() * 1000);
+            broadcastLog('WARN', 'NETWORK', `Retry ${i+1}/${retries} for ${url} in ${Math.round(delay)}ms`);
             await new Promise(r => setTimeout(r, delay));
         }
     }
