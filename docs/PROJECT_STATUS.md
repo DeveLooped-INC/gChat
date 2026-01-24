@@ -2,61 +2,63 @@
 # Project Status
 
 ## Overview
-**Current Version**: 1.2.3 (Media Transport Update)
-**Status**: Stable / Robust Media Transfer
+**Current Version**: 1.3.0 (The Social Sync Update)
+**Status**: Stable / Feature Rich
 
-The application has matured into a resilient decentralized platform running natively in the browser. It supports **Global Synchronization**, allowing nodes to actively pull content from the mesh, and **Mesh Media Recovery** for content persistence.
+gChat has evolved into a robust decentralized platform. It now features a sophisticated **State Synchronization Engine** that ensures nodes stay in sync even after periods of disconnection, and a comprehensive **Social Layer** including threaded comments, reactions, and moderation.
 
 ## ✅ Completed Features
 
-### 1. Onboarding & Identity
-*   [x] "Matrix-style" terminal initialization sequence.
-*   [x] **Real Tor Bootstrapping**: Spawns native `tor` daemon and waits for circuit establishment.
-*   [x] **Ed25519 Identity**: Real cryptographic key generation (Signing & Encryption).
-*   [x] **Persistent Identity**: Profile saved to LocalStorage, Keys saved to memory (exportable).
+### 1. Core Networking & Tor
+*   [x] **Automated Bootstrapping**: Zero-config Tor setup on Windows, Mac, Linux, and Android.
+*   [x] **Dual-Agent Routing**: Separation of Control vs. Data traffic to prevent head-of-line blocking.
+*   [x] **Keep-Alive Circuits**: Reusing Tor circuits for media chunks to improve throughput.
 
-### 2. Social Feed & Gossip
-*   [x] Posting text and images.
-*   [x] **Cryptographic Signatures**: All posts are signed with Ed25519 keys.
-*   [x] **Unstructured Gossip**: Public posts are automatically re-broadcasted to connected peers.
-*   [x] **Global Sync**: A manual "Pull" button (`GLOBAL_SYNC_REQUEST`) that floods the network to retrieve recent content from all reachable nodes.
-*   [x] **Moderation**: Local "Soft Delete" based on like/dislike ratios.
+### 2. Identity & Security
+*   [x] **Handle.Tripcode System**: Deterministic, collision-free identities (`User.x7z9`).
+*   [x] **Encrypted Backup**: Full node migration via AES-GCM encrypted ZIP files.
+*   [x] **Session Security**: Keys derived from Seed Phrase; never transmitted unencrypted.
 
-### 3. Encrypted Chat & Groups
-*   [x] **E2E Encryption**: Messages encrypted via ChaCha20-Poly1305 (NaCl).
-*   [x] **Tor Transport**: Packets routed via SOCKS5 proxy to hidden services.
-*   [x] **Group Chats**: 
-    *   [x] Creation, Admin Tools (Kick/Ban), and Settings (Mute/Rename).
-    *   [x] **Graceful Deletion**: If an owner deletes a group, it is removed from all members.
-*   [x] **Media Attachments**: Audio/Video recording and Image sharing with chunked transfer.
+### 3. Social Mechanics
+*   [x] **Inventory Sync**: Proactive pulling of missing posts based on hash comparison.
+*   [x] **Recursive Comments**: Reddit-style threaded conversations.
+*   [x] **Distributed Moderation**: Local blocking logic based on peer voting ratios.
+*   [x] **Rich Media**: Audio/Video recording with immediate chunked upload.
 
-### 4. Connectivity & Resilience
-*   [x] **Deep Link Invites**: QR Codes for instant peering.
-*   [x] **Handshake Protocol**: Automated key exchange upon connection.
-*   [x] **Self-Healing Mesh**: 
-    *   [x] **Media Recovery**: If a download fails, the node queries the mesh for peers holding the same content.
-    *   [x] **Proof of Access**: Media queries use `accessKey` tokens to validate permissions.
+### 4. Group Dynamics
+*   [x] **Role Management**: Owner/Admin permissions (Kick/Ban).
+*   [x] **State Consistency**: Updates (renames, mutes) propagate to all members.
+*   [x] **Group Encryption**: Multi-recipient encryption for group payloads.
 
-### 5. Node Management
-*   [x] **Graceful Shutdown**: "System Shutdown" overlay that ensures Tor shuts down cleanly without leaving ghost processes or corrupting data.
-*   [x] **Graceful Exit**: Deleting a node broadcasts a `NODE_DELETED` packet.
-*   [x] **Browser Native**: App launches in system default browser.
-*   [x] **Termux Support**: Automatic detection and patching of binary paths for Android.
+### 5. UX & Polish
+*   [x] **Notifications**: System-wide toast notifications for background events.
+*   [x] **Mobile Optimization**: Responsive layout with touch-friendly controls.
+*   [x] **Debug Console**: Built-in terminal for monitoring network traffic and Tor logs.
 
-## 🛠 Recent Changelog (v1.2.3)
+## 🚧 Known Issues & Tech Debt
 
-*   **Architecture**: **Dual Network Agents**. Split backend traffic into "Control" (chat/sync) and "Data" (media) lanes. This prevents large file downloads from stalling text messages.
-*   **Performance**: **Keep-Alive Circuits**. Re-enabled persistent connections for media transfers, significantly reducing latency by avoiding Tor circuit rebuilding for every chunk.
-*   **Fix**: **Binary Serialization**. Switched to explicit Base64 encoding for media chunks. This resolved the "Empty Blob" error caused by JSON serialization dropping raw buffers.
-*   **Stability**: **Chunk Validation**. Frontend now strictly validates chunk size before assembly, requesting retries for corrupted frames immediately.
+### 1. Missing Recovery Implementation (Critical)
+*   **Issue**: In `services/networkService.ts`, the functions `attemptMeshRecovery`, `handleRecoveryRequest`, and `handleRecoveryFound` are empty placeholders.
+*   **Impact**: **Self-Healing does not work.** If a media file is missing, the app *pretends* to look for it but never actually sends the request to peers.
 
-## 🚧 Known Limitations
+### 2. LocalStorage Capacity Risk (Critical)
+*   **Issue**: All data (posts, messages, large base64 strings) is stored in `localStorage`.
+*   **Impact**: Browsers limit this to 5MB. Active users will hit this limit quickly, causing the app to crash or stop saving. **Migration to IndexedDB is required immediately.**
 
-*   **Scaling**: Current "Flooding" gossip is inefficient for >1000 nodes.
-*   **Initial Latency**: First connection to a peer still takes 15-30s while Tor builds the circuit. Subsequent requests utilize Keep-Alive and are much faster.
+### 3. Security: Ephemeral Messages Persist
+*   **Issue**: "Disappearing messages" are flagged in the UI (`isEphemeral: true`) but are not actually deleted from the underlying storage.
+*   **Impact**: A forensic analysis of the `localStorage` would reveal messages that the user thought were deleted.
 
-## 🔜 Roadmap
+### 4. Performance: Feed Rendering
+*   **Issue**: `Feed.tsx` performs filtering, sorting, and searching on the entire post array during every render cycle.
+*   **Impact**: As the feed grows (100+ posts), the UI will become sluggish, especially on mobile devices.
 
-1.  **GossipSub**: Move from unstructured flooding to structured gossip (random subsets) to handle thousands of nodes.
-2.  **Supernodes**: Implement a "Relay Mode" for desktop nodes to store-and-forward messages for mobile nodes that go offline frequently.
-3.  **Binary Transport**: Optimize large file transfers using streams instead of JSON base64 payloads.
+### 5. Gossip Flooding
+*   **Issue**: Broadcasting uses simple flooding (`hops: 6`).
+*   **Impact**: High bandwidth usage on idle nodes. Need to move to probabilistic gossip.
+
+## 🔜 Immediate Priorities
+
+1.  **IndexedDB Migration**: Move storage out of `localStorage` to handle more than 5MB of data.
+2.  **Implement Mesh Recovery**: Fill in the missing logic in `networkService.ts`.
+3.  **Ephemeral Garbage Collector**: Implement a background timer to physically delete expired messages.
