@@ -155,13 +155,6 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
       } 
   };
 
-  const handlePingAll = () => {
-      addToast("Network Scan", `Pinging ${peers.length} peers...`, 'info');
-      peers.forEach(p => {
-          networkService.connect(p.onionAddress);
-      });
-  };
-
   const parseDeepLink = (url: string) => { 
       try { 
           const urlObj = new URL(url); 
@@ -183,13 +176,11 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
   const handleSaveProfile = () => {
     setIsSaving(true);
     setTimeout(() => {
-        // Construct new username with new handle + existing suffix
         const newUsername = `${displayName}${currentSuffix}`;
-        
         onUpdateProfile({ 
             ...user, 
             displayName, 
-            username: newUsername, // Critical Update
+            username: newUsername,
             bio, 
             avatarUrl, 
             isDiscoverable, 
@@ -208,11 +199,8 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
 
   const handleFactoryReset = async () => {
       if (confirm("DANGER: This will wipe ALL data, messages, and your identity from this device. Proceed?")) {
-          // Clear IndexedDB
           await storageService.deleteEverything();
-          // Clear Media Cache
           await clearMediaCache();
-          // Clear LocalStorage
           localStorage.clear();
           window.location.reload();
       }
@@ -266,7 +254,7 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
             </div>
         </div>
 
-        {/* 1. Stats Section (Moved to Top) */}
+        {/* 1. Stats Section */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col items-center justify-center">
                 <BarChart3 className="text-indigo-400 mb-2" size={24} />
@@ -352,13 +340,12 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
                 </div>
             </div>
             
-            {/* Save Button moved inside Profile card */}
             <div className="flex justify-end mt-6">
                 <button onClick={handleSaveProfile} disabled={isSaving} className="bg-onion-600 hover:bg-onion-500 text-white px-6 py-2.5 rounded-lg font-medium flex items-center space-x-2 transition-all disabled:opacity-50 shadow-lg shadow-onion-900/20">{isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}<span>Save Changes</span></button>
             </div>
         </div>
 
-        {/* --- ADMIN NETWORK STATUS (RESTORED) --- */}
+        {/* --- ADMIN NETWORK STATUS --- */}
         {user.isAdmin && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div 
@@ -404,7 +391,7 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
             </div>
         )}
 
-        {/* --- STORAGE STATS (RESTORED) --- */}
+        {/* --- STORAGE STATS --- */}
         {user.isAdmin && storageStats.length > 0 && (
             <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
                 <div className="flex items-center space-x-3 mb-4 border-b border-slate-800 pb-2">
@@ -430,7 +417,7 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
             </div>
         )}
 
-        {/* Security Section (Restored) */}
+        {/* Security Section */}
         <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
              <div className="flex items-center space-x-3 mb-6 border-b border-slate-800 pb-2">
                 <Key className="text-white" size={24} />
@@ -531,16 +518,7 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
                             <Activity className="text-blue-500" size={24} />
                             <h2 className="text-lg font-bold text-white">Peer Management</h2>
                         </div>
-                        <div className="flex items-center gap-2">
-                            <div className="text-xs text-slate-500">Connected: {peers.filter(p => p.status === 'online').length}</div>
-                            <button 
-                                onClick={handlePingAll}
-                                className="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
-                                title="Force Ping All"
-                            >
-                                <RefreshCw size={12} /> Ping All
-                            </button>
-                        </div>
+                        <div className="text-xs text-slate-500">Connected: {peers.filter(p => p.status === 'online').length}</div>
                     </div>
 
                     <div className="space-y-3">
