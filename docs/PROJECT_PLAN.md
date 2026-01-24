@@ -1,73 +1,73 @@
 
-# gChat: Detailed Project Plan
-**Decentralized Onion-Routed Social**
+# gChat: Master Project Plan
+**Decentralized Onion-Routed Social Platform**
 
-## 1. Vision
-To create a social platform that respects user sovereignty, privacy, and freedom of expression by removing central servers entirely. The platform operates on a peer-to-peer (P2P) mesh network, utilizing onion routing to anonymize traffic and local-first databases to ensure users own their data.
+## 1. The Vision
+To create a "Sovereign Social Node" that operates entirely peer-to-peer. Unlike Federated networks (like Mastodon) which rely on server admins, gChat relies on **you**. Every user is a server. Every device is a node.
 
-## 2. Core Pillars
+## 2. Core Pillars (Implemented)
 
-### A. Privacy by Default
-*   **No Phone Numbers/Emails**: Identities are cryptographic keypairs (Ed25519).
-*   **Metadata Resistance**: Onion routing hides who is talking to whom.
-*   **Encryption**: Everything is End-to-End Encrypted (E2E).
+### A. The "Handle.Tripcode" Identity
+*   **Philosophy**: No central registry. Uniqueness is mathematical.
+*   **Implementation**: Users choose a handle (e.g., "Neo"). The system appends a suffix derived from the SHA-256 hash of their Ed25519 public key (e.g., "Neo.x7z9").
+*   **Benefit**: Allows human-readable names while preventing impersonation.
 
-### B. Decentralization
-*   **Mesh Networking**: Devices connect directly via Tor Onion Services.
-*   **Gossip Protocol**: Data propagates through the network like a virus, verified by trust graphs.
-*   **Local-First**: The "cloud" is just a backup; your device is the source of truth.
+### B. The "Dual-Lane" Network
+*   **Architecture**: Traffic is split into two distinct lanes over Tor:
+    1.  **Control Lane**: Low-latency JSON packets (Chat, Gossip, Handshakes).
+    2.  **Data Lane**: High-latency, high-bandwidth Binary streams (Video, Audio, Images).
+*   **Benefit**: Downloading a 50MB video does not block text messages from arriving.
 
-### C. UX First
-*   Complex cryptography must be hidden behind a beautiful, familiar interface.
-*   Latency must be managed with optimistic UI updates.
+### C. The "Truth Chain" Feed
+*   **Data Structure**: Posts are not just text; they are cryptographically signed payloads containing a `truthHash` (Integrity Check).
+*   **Propagation**: Uses a "Daisy-Chain" flooding protocol (`hops: 6`) to propagate content across the mesh without a central index.
 
-## 3. Feature Specifications
+## 3. Architecture Specifications
 
-### Module 1: Identity & Onboarding (Completed)
-*   **Key Generation**: Generate public/private keys locally on the device.
-*   **Profile**: Display Name, Avatar, and Bio (stored in a mutable signed record).
-*   **Onion Address**: Generate a unique `.onion` style address for routability.
+### Module 1: The Universal Backend
+*   **Node.js Process**: Spawns and manages a native `tor` binary.
+*   **Hidden Service**: Automatically generates and guards a v3 `.onion` address.
+*   **Socket API**: Bridges the local browser (Frontend) to the Tor network (Backend) via WebSockets.
 
-### Module 2: The Feed (Completed)
-*   **Content**: Text, Images, and "Truth Hashes" (Merkle roots).
-*   **Distribution**:
-    *   *Public*: Broadcast to connected peers via **Gossip Protocol** and **Global Sync**.
-    *   *Friends*: Encrypted gossip to specific public keys.
-*   **Interactions**: Likes (signed proofs), Comments, and Reshares.
-*   **Recovery**: Mesh-based media recovery for orphaned content.
+### Module 2: Client-Side Cryptography
+*   **Keys**: Ed25519 (Signing) and X25519 (Encryption) keys generated via PBKDF2 from a BIP39 mnemonic.
+*   **Storage**: Keys reside in memory or encrypted `localStorage`.
+*   **E2E**: Messages are encrypted via NaCl (ChaCha20-Poly1305) before they ever leave the browser.
 
-### Module 3: Secure Chat & Groups (Completed)
-*   **Transport**: Direct P2P streams or Onion-routed packets.
-*   **Features**:
-    *   Text & Image support.
-    *   **Group Chats**: Admin controls, bans, invites, and settings.
-    *   **Ephemeral Messages**: Auto-delete functionality.
-    *   **Typing Indicators**: P2P state signaling.
-*   **Security**: Perfect Forward Secrecy (simulated via ephemeral flags).
+### Module 3: Resilience & Recovery
+*   **Inventory Sync**: Nodes actively compare content hashes (`INVENTORY_SYNC_REQUEST`) to identify missing posts.
+*   **Mesh Media Recovery**: If a node hosting a file goes offline, the network queries connected peers for cached copies using `accessKey` tokens (Self-Healing).
 
-### Module 4: Contact Management (Completed)
-*   **Trust Levels**: Pending, Verified, Blocked.
-*   **Handshake**: Scan QR codes to exchange keys out-of-band (for high trust).
-*   **Identity Card**: A visual representation of the user's node stats and keys.
+### Module 4: Social Interactions
+*   **Rich Threading**: Infinite depth recursive comments.
+*   **Reactions & Voting**: Signed reaction packets allow for distributed moderation (e.g., auto-hiding content with high negative ratios).
+*   **Groups**: decentralized group state management with Admin/Owner roles.
 
-### Module 5: Node Settings (Completed)
-*   **Network Control**: Toggle Tor/Mesh connection.
-*   **Storage**: Manage local storage usage (pruning old media).
-*   **Key Management**: Export private keys for backup (Self-Custody).
-*   **Decommissioning**: Graceful node deletion (notifies peers, orphans content).
-*   **Shutdown**: Graceful process termination overlay.
+## 4. Future Roadmap (The Scaling Phase)
 
-## 4. Technical Architecture
+Now that the core mechanics work, the focus shifts from "Possibility" to "Scalability" and "Hardening".
 
-*   **Frontend**: React + Vite (UI, Encryption, State).
-*   **Backend**: Node.js + Socket.IO (Tor Process Management, SOCKS Proxy, Hidden Service).
-    *   *Dual-Agent Routing*: Separate connection pools for lightweight signaling vs heavy media data.
-*   **Storage**: `localStorage` (Persisted state) + `Cache API` (Media).
-*   **Network**: Real Tor Network (v3 Onion Services).
+### Phase 1: Storage Architecture Upgrade (CRITICAL)
+*   **Problem**: `localStorage` is limited (5-10MB).
+*   **Solution**: Migrate all non-sensitive state (Posts, Messages) to **IndexedDB** using a wrapper like `idb`. Keep `localStorage` only for preferences and encrypted key blobs.
 
-## 5. Future Roadmap (Scaling)
+### Phase 2: GossipSub Implementation
+*   **Problem**: Current "Flooding" (sending to all peers) scales poorly beyond ~100 nodes.
+*   **Solution**: Implement structured gossip where nodes only forward to a random subset of peers (mesh subsets).
 
-As the network grows, simple flooding (gossip) becomes inefficient. Future versions will implement:
+### Phase 3: Offline "Supernodes"
+*   **Problem**: Mobile nodes (Termux) go offline when the phone sleeps.
+*   **Solution**: Allow desktop nodes to act as encrypted "Mailboxes" for mobile friends, storing messages until the mobile node wakes up.
 
-*   **GossipSub**: Probabilistic broadcasting to a random subset of peers rather than all peers.
-*   **Supernodes**: Allow users with powerful hardware (Desktops/Servers) to designate their node as a "Supernode". These will act as Always-Online Relays for mobile devices, storing messages while phones are asleep.
+### Phase 4: Binary Stream Optimization
+*   **Current**: Files are chunked -> Base64 Encoded -> JSON -> Tor.
+*   **Target**: Implement raw binary piping through the SOCKS proxy to reduce overhead by 33% (removing Base64 bloat).
+
+### Phase 5: Security Hardening (New)
+*   **Ephemeral Enforcement**: Currently, ephemeral messages are only visually hidden. We must implement a background "Garbage Collector" that actively purges these records from the database/storage after the timer expires.
+*   **Anti-Spam PoW**: Implement a lightweight "Proof of Work" (Hashcash) for public broadcasts. A node must solve a small math problem before their post is propagated by peers, preventing spam flooding.
+*   **Panic Button**: A UI feature to instantly "Forget" keys from memory and lock the node, useful for users in hostile environments.
+
+### Phase 6: Traffic Obfuscation (New)
+*   **Problem**: An ISP or observer can tell *when* you are chatting based on traffic bursts, even if they can't read the content.
+*   **Solution**: Implement "Traffic Padding". The node sends constant, low-bandwidth dummy noise packets. Real messages replace dummy packets, keeping the traffic profile flat and unanalyzable.
