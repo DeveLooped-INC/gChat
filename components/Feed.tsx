@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Post, UserProfile, ToastMessage, Contact, MediaMetadata, Comment } from '../types';
 import { MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban } from 'lucide-react';
 import { fileToBase64, getTransferConfig, SOCIAL_REACTIONS, formatUserIdentity } from '../utils';
@@ -84,37 +84,38 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
     return () => window.removeEventListener('click', handleClickOutside);
   }, []);
 
-  const processedPosts = (posts || []).filter(post => {
-    if (!post) return false;
-    if (selectedAuthorId && post.authorId !== selectedAuthorId) return false;
-    let visible = false;
-    if (feedFilter === 'public') {
-        visible = post.privacy === 'public';
-    } else {
-        visible = post.privacy === 'friends';
-    }
-    if (!visible) return false;
-    
-    // NOTE: Blocked posts are kept in the list but rendered differently
-    
-    if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const matchesContent = post.content.toLowerCase().includes(q);
-        const matchesTags = post.hashtags?.some(tag => tag.toLowerCase().includes(q));
-        if (!matchesContent && !matchesTags) return false;
-    }
-    if (locationFilter) {
-        if (!post.location || !post.location.toLowerCase().includes(locationFilter.toLowerCase())) return false;
-    }
-    return true;
-  }).sort((a, b) => {
-      if (sortBy === 'likes') {
-          const scoreA = Object.values(a.votes || {}).filter(v => v === 'up').length;
-          const scoreB = Object.values(b.votes || {}).filter(v => v === 'up').length;
-          return scoreB - scoreA;
-      }
-      return b.timestamp - a.timestamp;
-  });
+  // OPTIMIZED: Memoize processed posts to prevent re-filtering on every render
+  const processedPosts = useMemo(() => {
+      return (posts || []).filter(post => {
+        if (!post) return false;
+        if (selectedAuthorId && post.authorId !== selectedAuthorId) return false;
+        let visible = false;
+        if (feedFilter === 'public') {
+            visible = post.privacy === 'public';
+        } else {
+            visible = post.privacy === 'friends';
+        }
+        if (!visible) return false;
+        
+        if (searchQuery) {
+            const q = searchQuery.toLowerCase();
+            const matchesContent = post.content.toLowerCase().includes(q);
+            const matchesTags = post.hashtags?.some(tag => tag.toLowerCase().includes(q));
+            if (!matchesContent && !matchesTags) return false;
+        }
+        if (locationFilter) {
+            if (!post.location || !post.location.toLowerCase().includes(locationFilter.toLowerCase())) return false;
+        }
+        return true;
+      }).sort((a, b) => {
+          if (sortBy === 'likes') {
+              const scoreA = Object.values(a.votes || {}).filter(v => v === 'up').length;
+              const scoreB = Object.values(b.votes || {}).filter(v => v === 'up').length;
+              return scoreB - scoreA;
+          }
+          return b.timestamp - a.timestamp;
+      });
+  }, [posts, selectedAuthorId, feedFilter, searchQuery, locationFilter, sortBy]);
 
   const displayedPosts = viewingPost ? [viewingPost] : processedPosts.slice(0, visiblePostsCount);
   const hasMorePosts = !viewingPost && processedPosts.length > visiblePostsCount;
