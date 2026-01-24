@@ -8,6 +8,8 @@ import QRScanner from './QRScanner';
 import { createMigrationPackage } from '../services/migrationService';
 import NodeInfoModal, { NodeInfoTarget } from './NodeInfoModal';
 import { formatUserIdentity, calculateObjectSize } from '../utils';
+import { storageService } from '../services/storage';
+import { clearMediaCache } from '../services/mediaStorage';
 
 interface UserStats {
     totalPosts: number;
@@ -197,8 +199,13 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
       setAvatarUrl(`https://robohash.org/${randomSeed}?set=set4&bgset=bg2&size=200x200`);
   };
 
-  const handleFactoryReset = () => {
+  const handleFactoryReset = async () => {
       if (confirm("DANGER: This will wipe ALL data, messages, and your identity from this device. Proceed?")) {
+          // Clear IndexedDB
+          await storageService.deleteEverything();
+          // Clear Media Cache
+          await clearMediaCache();
+          // Clear LocalStorage
           localStorage.clear();
           window.location.reload();
       }
