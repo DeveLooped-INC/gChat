@@ -2,58 +2,72 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { UserProfile, Contact, Post, Group, Message, NotificationItem, NodePeer, ConnectionRequest, AppRoute } from '../types';
 import { networkService } from '../services/networkService';
+import { storageService } from '../services/storage';
 
 const NODE_CONFIG_KEY = 'gchat_node_config';
 
 export const useAppState = (user: UserProfile) => {
-    // --- DATA STATES ---
-    const [contacts, setContacts] = useState<Contact[]>(() => {
-        try { return JSON.parse(localStorage.getItem(`user_${user.id}_contacts`) || '[]'); } 
-        catch { return []; }
-    });
-
-    const [posts, setPosts] = useState<Post[]>(() => {
-        try { return JSON.parse(localStorage.getItem(`user_${user.id}_posts`) || '[]'); } 
-        catch { return []; }
-    });
-
-    const [groups, setGroups] = useState<Group[]>(() => {
-        try { return JSON.parse(localStorage.getItem(`user_${user.id}_groups`) || '[]'); } 
-        catch { return []; }
-    });
-
-    const [messages, setMessages] = useState<Message[]>(() => {
-        try { return JSON.parse(localStorage.getItem(`user_${user.id}_messages`) || '[]'); } 
-        catch { return []; }
-    });
-
-    const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
-        try { return JSON.parse(localStorage.getItem(`user_${user.id}_notifications`) || '[]'); } 
-        catch { return []; }
-    });
-
-    const [peers, setPeers] = useState<NodePeer[]>(() => {
-        try { return JSON.parse(localStorage.getItem('gchat_node_peers') || '[]'); } 
-        catch { return []; }
-    });
+    // --- DATA STATES (Initialized Empty, Loaded Async) ---
+    const [contacts, setContacts] = useState<Contact[]>([]);
+    const [posts, setPosts] = useState<Post[]>([]);
+    const [groups, setGroups] = useState<Group[]>([]);
+    const [messages, setMessages] = useState<Message[]>([]);
+    const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+    const [peers, setPeers] = useState<NodePeer[]>([]);
+    const [connectionRequests, setConnectionRequests] = useState<ConnectionRequest[]>([]);
 
     const [nodeConfig, setNodeConfig] = useState<{alias: string, description: string}>(() => {
         try { return JSON.parse(localStorage.getItem(NODE_CONFIG_KEY) || '{"alias":"", "description":""}'); }
         catch { return { alias: '', description: '' }; }
     });
 
-    const [connectionRequests, setConnectionRequests] = useState<ConnectionRequest[]>(() => {
-        try { return JSON.parse(localStorage.getItem(`user_${user.id}_requests`) || '[]'); } 
-        catch { return []; }
-    });
+    const [isLoaded, setIsLoaded] = useState(false);
 
-    // Refs for callbacks to avoid stale closures in event listeners
+    // --- INITIAL DATA LOAD (DIRECT DB ACCESS) ---
+    useEffect(() => {
+        const loadData = async () => {
+            try {
+                // Parallel load from IndexedDB
+                // We no longer check or migrate LocalStorage to prevent injection attacks
+                const [dbPosts, dbMsgs, dbContacts, dbGroups, dbNotifs, dbRequests] = await Promise.all([
+                    storageService.getItems<Post>('posts', user.id),
+                    storageService.getItems<Message>('messages', user.id),
+                    storageService.getItems<Contact>('contacts', user.id),
+                    storageService.getItems<Group>('groups', user.id),
+                    storageService.getItems<NotificationItem>('notifications', user.id),
+                    storageService.getItems<ConnectionRequest>('requests', user.id)
+                ]);
+
+                setPosts(dbPosts);
+                setMessages(dbMsgs);
+                setContacts(dbContacts);
+                setGroups(dbGroups);
+                setNotifications(dbNotifs);
+                setConnectionRequests(dbRequests);
+
+                // Peers are still ephemeral/local config mostly, stay in LS for now
+                // (Peers are essentially configuration, not user content)
+                const lsPeers = JSON.parse(localStorage.getItem('gchat_node_peers') || '[]');
+                setPeers(lsPeers);
+
+                setIsLoaded(true);
+            } catch (e) {
+                console.error("CRITICAL: Failed to load app state from DB", e);
+                // Fallback to empty state to allow app to function
+                setIsLoaded(true); 
+            }
+        };
+        loadData();
+    }, [user.id]);
+
+    // Refs for callbacks
     const userRef = useRef(user);
     const contactsRef = useRef(contacts);
     const peersRef = useRef(peers);
     const nodeConfigRef = useRef(nodeConfig);
     const postsRef = useRef(posts);
     const groupsRef = useRef(groups);
+    const messagesRef = useRef(messages);
     
     useEffect(() => { userRef.current = user; }, [user]);
     useEffect(() => { contactsRef.current = contacts; }, [contacts]);
@@ -61,20 +75,33 @@ export const useAppState = (user: UserProfile) => {
     useEffect(() => { nodeConfigRef.current = nodeConfig; }, [nodeConfig]);
     useEffect(() => { postsRef.current = posts; }, [posts]);
     useEffect(() => { groupsRef.current = groups; }, [groups]);
+    useEffect(() => { messagesRef.current = messages; }, [messages]);
 
-    // --- PERSISTENCE ---
-    useEffect(() => { localStorage.setItem(`user_${user.id}_contacts`, JSON.stringify(contacts)); }, [contacts, user.id]);
-    useEffect(() => { localStorage.setItem(`user_${user.id}_posts`, JSON.stringify(posts)); }, [posts, user.id]);
-    useEffect(() => { localStorage.setItem(`user_${user.id}_groups`, JSON.stringify(groups)); }, [groups, user.id]);
-    useEffect(() => { localStorage.setItem(`user_${user.id}_messages`, JSON.stringify(messages)); }, [messages, user.id]);
-    useEffect(() => { localStorage.setItem(`user_${user.id}_requests`, JSON.stringify(connectionRequests)); }, [connectionRequests, user.id]);
-    useEffect(() => { localStorage.setItem(`user_${user.id}_notifications`, JSON.stringify(notifications)); }, [notifications, user.id]);
-    useEffect(() => { localStorage.setItem(NODE_CONFIG_KEY, JSON.stringify(nodeConfig)); }, [nodeConfig]);
+    // --- PERSISTENCE (WRITE TO IDB) ---
+    // Persist changes to IDB automatically
+    useEffect(() => { if(isLoaded) storageService.saveBulk('contacts', contacts, user.id); }, [contacts, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.saveBulk('posts', posts, user.id); }, [posts, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.saveBulk('groups', groups, user.id); }, [groups, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.saveBulk('messages', messages, user.id); }, [messages, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.saveBulk('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.saveBulk('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
     
+    // Config and Peers stay in LocalStorage for fast sync access
+    useEffect(() => { localStorage.setItem(NODE_CONFIG_KEY, JSON.stringify(nodeConfig)); }, [nodeConfig]);
     useEffect(() => {
         localStorage.setItem('gchat_node_peers', JSON.stringify(peers));
         networkService.updateKnownPeers(peers.map(p => p.onionAddress));
     }, [peers]);
+
+    // --- GARBAGE COLLECTION ---
+    const pruneMessages = async () => {
+        const deletedCount = await storageService.pruneEphemeralMessages(user.id);
+        if (deletedCount > 0) {
+            // Reload messages from DB to reflect deletion in UI
+            const freshMsgs = await storageService.getItems<Message>('messages', user.id);
+            setMessages(freshMsgs);
+        }
+    };
 
     // --- DERIVED BADGE COUNTS ---
     const chatUnread = useMemo(() => {
@@ -128,6 +155,9 @@ export const useAppState = (user: UserProfile) => {
         nodeConfig, setNodeConfig,
         connectionRequests, setConnectionRequests,
         
+        isLoaded,
+        pruneMessages,
+
         // Refs
         userRef,
         contactsRef,
@@ -135,6 +165,7 @@ export const useAppState = (user: UserProfile) => {
         nodeConfigRef,
         postsRef,
         groupsRef,
+        messagesRef,
 
         // Derived
         chatUnread,
