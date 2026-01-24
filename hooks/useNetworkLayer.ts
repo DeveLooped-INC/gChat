@@ -65,6 +65,10 @@ export const useNetworkLayer = ({
         const nextPacket = { ...packet, hops: currentHops - 1 };
         const allPeers = state.peersRef.current.map(p => p.onionAddress);
         
+        // Filter out nodes we shouldn't send to:
+        // 1. sourceNodeId: The node that just sent us this packet (don't echo back immediately)
+        // 2. packet.senderId: The original author (don't send it back to them)
+        // 3. Self: Don't send to ourselves (obviously)
         const possibleRecipients = allPeers.filter(addr => {
             const isSource = addr === sourceNodeId;
             const isOrigin = addr === packet.senderId;
@@ -75,12 +79,12 @@ export const useNetworkLayer = ({
         if (possibleRecipients.length === 0) return;
 
         // OPTIMIZATION: Shuffle and take subset (GossipSub Lite)
-        // If we have many peers, don't spam everyone. Take 3 random ones to gossip to.
-        // This dramatically reduces bandwidth while maintaining high probability of propagation.
-        const recipients = possibleRecipients.sort(() => 0.5 - Math.random()).slice(0, 3);
+        // Increased fanout to 4 to improve propagation probability in sparse meshes
+        const recipients = possibleRecipients.sort(() => 0.5 - Math.random()).slice(0, 4);
 
         recipients.forEach(async (recipient) => {
-            await new Promise(r => setTimeout(r, Math.random() * 200));
+            // Small jitter to prevent burst floods
+            await new Promise(r => setTimeout(r, Math.random() * 300));
             networkService.sendMessage(recipient, nextPacket);
         });
     }, [state.peersRef, state.userRef]);
@@ -146,6 +150,7 @@ export const useNetworkLayer = ({
                 const existingPost = state.postsRef.current.find(p => p.id === postId);
                 const localHash = existingPost ? calculatePostHash(existingPost) : null;
                 
+                // If we don't have it, or our version is outdated, fetch it!
                 if (!existingPost || localHash !== contentHash) {
                     const reqPacket: NetworkPacket = {
                         id: crypto.randomUUID(),
@@ -155,6 +160,10 @@ export const useNetworkLayer = ({
                     };
                     networkService.sendMessage(senderNodeId, reqPacket);
                 }
+                
+                // CRITICAL FIX: Propagate the announcement down the chain!
+                // This ensures nodes not directly connected to the author still hear about the post.
+                daisyChainPacket(packet, senderNodeId);
                 break;
             }
 
@@ -210,6 +219,9 @@ export const useNetworkLayer = ({
                             const { handle } = formatUserIdentity(post.authorName);
                             addNotification('New Broadcast', `${handle} posted: ${post.content.substring(0, 30)}...`, 'info', AppRoute.FEED, post.authorId);
                         }
+                        // We do NOT daisy chain POST_DATA. It is a direct response to a FETCH request.
+                        // However, if we just updated our state, we should announce our new inventory state
+                        // so our peers can fetch from us if they need it.
                         broadcastPostState(postWithHash);
                     }
                 }
@@ -289,6 +301,7 @@ export const useNetworkLayer = ({
                                 ? { ...p, alias: info.alias, status: 'online', lastSeen: Date.now() } 
                                 : p
                         ));
+                        // Remove from discovered if we already friended them
                         setDiscoveredPeers(prev => prev.filter(p => p.id !== info.onionAddress));
                     } else {
                         setDiscoveredPeers(prev => {
@@ -306,6 +319,7 @@ export const useNetworkLayer = ({
                             }];
                         });
                     }
+                    // CRITICAL: Ensure we forward this announcement to our peers!
                     daisyChainPacket(packet, senderNodeId);
                 }
                 break;
