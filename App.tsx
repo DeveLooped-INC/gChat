@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import Layout from './components/Layout';
 import Onboarding from './components/Onboarding';
 import Feed from './components/Feed';
@@ -107,6 +107,15 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       maxSyncAgeHours,
       performGracefulShutdown
   });
+
+  // --- EPHEMERAL MESSAGE GARBAGE COLLECTOR ---
+  useEffect(() => {
+      // Run every 10 seconds
+      const gcInterval = setInterval(() => {
+          state.pruneMessages();
+      }, 10000);
+      return () => clearInterval(gcInterval);
+  }, [state.pruneMessages]);
 
   const handleClearNotifications = () => state.setNotifications([]);
   const handleMarkNotificationsRead = () => state.setNotifications(prev => prev.map(n => ({...n, read: true})));
@@ -628,6 +637,16 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
       handleNavigate(AppRoute.FEED);
       addNotification('Navigation', 'Switched to Public Feed for user.', 'info');
   }, [addNotification, handleNavigate]);
+
+  // Loading Screen for Async Data
+  if (!state.isLoaded) {
+      return (
+          <div className="h-[100dvh] w-full bg-slate-950 flex flex-col items-center justify-center text-slate-400">
+              <Loader2 className="animate-spin mb-4 text-onion-500" size={48} />
+              <p className="font-mono text-sm">Loading Encrypted Store...</p>
+          </div>
+      );
+  }
 
   return (
       <Layout 
