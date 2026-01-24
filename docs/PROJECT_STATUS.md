@@ -2,8 +2,8 @@
 # Project Status
 
 ## Overview
-**Current Version**: 1.2.2 (Stability & Sync Update)
-**Status**: Stable / Self-Healing Mesh Active
+**Current Version**: 1.2.3 (Media Transport Update)
+**Status**: Stable / Robust Media Transfer
 
 The application has matured into a resilient decentralized platform running natively in the browser. It supports **Global Synchronization**, allowing nodes to actively pull content from the mesh, and **Mesh Media Recovery** for content persistence.
 
@@ -43,17 +43,17 @@ The application has matured into a resilient decentralized platform running nati
 *   [x] **Browser Native**: App launches in system default browser.
 *   [x] **Termux Support**: Automatic detection and patching of binary paths for Android.
 
-## 🛠 Recent Changelog (v1.2.2)
+## 🛠 Recent Changelog (v1.2.3)
 
-*   **Feature**: **Global Sync**. Added a "Sync Network" button to the Global Feed. This broadcasts a request up to 6 hops away, asking nodes to return their public posts. This solves propagation issues in sparse networks.
-*   **Stability**: **Graceful Shutdown Protocol**. Implemented a strict shutdown sequence (Notify Peers -> Stop Tor -> Exit) with a UI overlay to prevent database corruption and "Socket Closed" errors in the terminal.
-*   **Fix**: **Termux Compatibility**. Added automatic `$PATH` patching to locate `pkg`-installed binaries on Android.
-*   **Debug**: Added "Daisy Chain Trace Logging" to the frontend console to visualize how messages hop between nodes.
+*   **Architecture**: **Dual Network Agents**. Split backend traffic into "Control" (chat/sync) and "Data" (media) lanes. This prevents large file downloads from stalling text messages.
+*   **Performance**: **Keep-Alive Circuits**. Re-enabled persistent connections for media transfers, significantly reducing latency by avoiding Tor circuit rebuilding for every chunk.
+*   **Fix**: **Binary Serialization**. Switched to explicit Base64 encoding for media chunks. This resolved the "Empty Blob" error caused by JSON serialization dropping raw buffers.
+*   **Stability**: **Chunk Validation**. Frontend now strictly validates chunk size before assembly, requesting retries for corrupted frames immediately.
 
 ## 🚧 Known Limitations
 
 *   **Scaling**: Current "Flooding" gossip is inefficient for >1000 nodes.
-*   **Large Files**: Very large video files (>50MB) may still experience timeouts over slower Tor circuits during chunk reassembly.
+*   **Initial Latency**: First connection to a peer still takes 15-30s while Tor builds the circuit. Subsequent requests utilize Keep-Alive and are much faster.
 
 ## 🔜 Roadmap
 
