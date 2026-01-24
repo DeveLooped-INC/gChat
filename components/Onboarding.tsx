@@ -6,6 +6,8 @@ import { networkService } from '../services/networkService';
 import { loadWordlist, generateMnemonic, validateMnemonic, keysFromMnemonic } from '../services/mnemonicService';
 import { generateTripcode } from '../services/cryptoService';
 import { restoreMigrationPackage } from '../services/migrationService';
+import { storageService } from '../services/storage';
+import { clearMediaCache } from '../services/mediaStorage';
 
 interface OnboardingProps {
   onComplete: (profile: UserProfile) => void;
@@ -162,8 +164,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       await finalizeUser(keys, handle);
   };
 
-  const handleFactoryReset = () => {
+  const handleFactoryReset = async () => {
       if (window.confirm("CRITICAL WARNING: This will wipe ALL local data, messages, contacts, and posts. Your node identity will be lost unless you have your seed phrase. Are you sure?")) {
+          // Clear IndexedDB
+          await storageService.deleteEverything();
+          // Clear Media Cache
+          await clearMediaCache();
+          // Clear LocalStorage
           localStorage.clear();
           window.location.reload();
       }
