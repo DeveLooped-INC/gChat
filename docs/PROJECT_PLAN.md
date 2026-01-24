@@ -61,6 +61,7 @@ To create a social platform that respects user sovereignty, privacy, and freedom
 
 *   **Frontend**: React + Vite (UI, Encryption, State).
 *   **Backend**: Node.js + Socket.IO (Tor Process Management, SOCKS Proxy, Hidden Service).
+    *   *Dual-Agent Routing*: Separate connection pools for lightweight signaling vs heavy media data.
 *   **Storage**: `localStorage` (Persisted state) + `Cache API` (Media).
 *   **Network**: Real Tor Network (v3 Onion Services).
 
