@@ -51,7 +51,7 @@ export const verifyMediaAccess = async (id: string, providedKey?: string): Promi
         if (!storedKey) return true;
         return storedKey === providedKey;
     } catch(e) {
-        return true; // Fail open if DB corrupted to avoid data loss, or fail closed? Fail open for mesh resilience.
+        return true; // Fail open if DB corrupted to avoid data loss on mesh recovery
     }
 };
 
@@ -66,9 +66,20 @@ export const deleteMedia = async (id: string) => {
     } catch(e) {}
 };
 
+// --- SYSTEM OPERATIONS ---
+
 export const clearMediaCache = async () => {
     try {
-        await caches.delete('gchat-media-v1');
+        // Delete the entire Cache Storage container
+        const keys = await caches.keys();
+        for (const key of keys) {
+            if (key === 'gchat-media-v1') {
+                await caches.delete(key);
+            }
+        }
+        // Clear metadata
         localStorage.removeItem('gchat_media_keys');
-    } catch(e) {}
+    } catch(e) {
+        console.error("Failed to clear media cache", e);
+    }
 };
