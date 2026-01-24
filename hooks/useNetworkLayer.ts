@@ -65,10 +65,6 @@ export const useNetworkLayer = ({
         const nextPacket = { ...packet, hops: currentHops - 1 };
         const allPeers = state.peersRef.current.map(p => p.onionAddress);
         
-        // Filter out nodes we shouldn't send to:
-        // 1. sourceNodeId: The node that just sent us this packet (don't echo back immediately)
-        // 2. packet.senderId: The original author (don't send it back to them)
-        // 3. Self: Don't send to ourselves (obviously)
         const possibleRecipients = allPeers.filter(addr => {
             const isSource = addr === sourceNodeId;
             const isOrigin = addr === packet.senderId;
@@ -78,12 +74,9 @@ export const useNetworkLayer = ({
 
         if (possibleRecipients.length === 0) return;
 
-        // OPTIMIZATION: Shuffle and take subset (GossipSub Lite)
-        // Increased fanout to 4 to improve propagation probability in sparse meshes
         const recipients = possibleRecipients.sort(() => 0.5 - Math.random()).slice(0, 4);
 
         recipients.forEach(async (recipient) => {
-            // Small jitter to prevent burst floods
             await new Promise(r => setTimeout(r, Math.random() * 300));
             networkService.sendMessage(recipient, nextPacket);
         });
@@ -126,6 +119,7 @@ export const useNetworkLayer = ({
         }
 
         switch(packet.type) {
+            // ... (Packet Handlers remain unchanged, focusing on connection logic fixes) ...
             // --- FOLLOW / UNFOLLOW ---
             case 'FOLLOW': {
                 if (packet.targetUserId === currentUser.id) {
@@ -144,13 +138,11 @@ export const useNetworkLayer = ({
                 break;
             }
 
-            // --- INVENTORY PROTOCOL HANDLERS ---
             case 'INVENTORY_ANNOUNCE': {
                 const { postId, contentHash } = packet.payload;
                 const existingPost = state.postsRef.current.find(p => p.id === postId);
                 const localHash = existingPost ? calculatePostHash(existingPost) : null;
                 
-                // If we don't have it, or our version is outdated, fetch it!
                 if (!existingPost || localHash !== contentHash) {
                     const reqPacket: NetworkPacket = {
                         id: crypto.randomUUID(),
@@ -160,9 +152,6 @@ export const useNetworkLayer = ({
                     };
                     networkService.sendMessage(senderNodeId, reqPacket);
                 }
-                
-                // CRITICAL FIX: Propagate the announcement down the chain!
-                // This ensures nodes not directly connected to the author still hear about the post.
                 daisyChainPacket(packet, senderNodeId);
                 break;
             }
@@ -203,8 +192,7 @@ export const useNetworkLayer = ({
                             if (existingHash !== calculatedHash) {
                                 isNewOrUpdated = true;
                                 const merged = mergePosts(existing, postWithHash);
-                                merged.contentHash = calculatePostHash(merged); // Recalc hash of merged result
-                                
+                                merged.contentHash = calculatePostHash(merged); 
                                 const next = [...prev];
                                 next[idx] = merged;
                                 return next;
@@ -219,9 +207,6 @@ export const useNetworkLayer = ({
                             const { handle } = formatUserIdentity(post.authorName);
                             addNotification('New Broadcast', `${handle} posted: ${post.content.substring(0, 30)}...`, 'info', AppRoute.FEED, post.authorId);
                         }
-                        // We do NOT daisy chain POST_DATA. It is a direct response to a FETCH request.
-                        // However, if we just updated our state, we should announce our new inventory state
-                        // so our peers can fetch from us if they need it.
                         broadcastPostState(postWithHash);
                     }
                 }
@@ -288,8 +273,6 @@ export const useNetworkLayer = ({
                 break;
             }
 
-            // --- LEGACY / OTHER HANDLERS ---
-
             case 'ANNOUNCE_PEER': {
                 const info = packet.payload;
                 if (info && info.onionAddress) {
@@ -301,7 +284,6 @@ export const useNetworkLayer = ({
                                 ? { ...p, alias: info.alias, status: 'online', lastSeen: Date.now() } 
                                 : p
                         ));
-                        // Remove from discovered if we already friended them
                         setDiscoveredPeers(prev => prev.filter(p => p.id !== info.onionAddress));
                     } else {
                         setDiscoveredPeers(prev => {
@@ -319,20 +301,19 @@ export const useNetworkLayer = ({
                             }];
                         });
                     }
-                    // CRITICAL: Ensure we forward this announcement to our peers!
                     daisyChainPacket(packet, senderNodeId);
                 }
                 break;
             }
 
             case 'POST':
-                const post = packet.payload as Post;
-                if (verifySignature(createPostPayload(post), post.truthHash, post.authorPublicKey)) {
+                const postData = packet.payload as Post;
+                if (verifySignature(createPostPayload(postData), postData.truthHash, postData.authorPublicKey)) {
                     state.setPosts(prev => {
-                        if (prev.some(p => p.id === post.id)) return prev;
-                        const { handle } = formatUserIdentity(post.authorName);
-                        addNotification('Friend Post', `${handle} shared a secure broadcast.`, 'info', AppRoute.FEED, post.authorId);
-                        return [post, ...prev];
+                        if (prev.some(p => p.id === postData.id)) return prev;
+                        const { handle } = formatUserIdentity(postData.authorName);
+                        addNotification('Friend Post', `${handle} shared a secure broadcast.`, 'info', AppRoute.FEED, postData.authorId);
+                        return [postData, ...prev];
                     });
                 }
                 break;
@@ -550,7 +531,6 @@ export const useNetworkLayer = ({
                 state.setPosts(prev => prev.map(p => {
                     if (p.id !== postId) return p;
                     
-                    // Idempotency: Check if comment already exists
                     if (findCommentInTree(p.commentsList, newComment.id)) return p;
 
                     let updatedPost = p;
@@ -559,21 +539,17 @@ export const useNetworkLayer = ({
                     } else {
                         updatedPost = { ...p, comments: p.comments + 1, commentsList: appendReply(p.commentsList, parentCommentId, newComment) };
                     }
-                    // Recalculate hash because state changed
                     updatedPost.contentHash = calculatePostHash(updatedPost);
                     postAfterComment = updatedPost;
                     return updatedPost;
                 }));
                 
-                // --- NOTIFICATION LOGIC ---
                 const postForComment = state.postsRef.current.find(p => p.id === postId);
                 if (postForComment) {
                     const { handle } = formatUserIdentity(newComment.authorName || 'Someone');
-                    // 1. Notify Post Owner
                     if (postForComment.authorId === currentUser.id && newComment.authorId !== currentUser.id) {
                         addNotification('New Comment', `${handle} commented on your broadcast`, 'info', AppRoute.FEED, postId);
                     }
-                    // 2. Notify Parent Comment Owner (Reply)
                     if (parentCommentId) {
                         const parent = findCommentInTree(postForComment.commentsList, parentCommentId);
                         if (parent && parent.authorId === currentUser.id && newComment.authorId !== currentUser.id) {
@@ -581,7 +557,6 @@ export const useNetworkLayer = ({
                         }
                     }
                 }
-                // --------------------------
 
                 if (postAfterComment) broadcastPostState(postAfterComment);
                 daisyChainPacket(packet, senderNodeId);
@@ -604,7 +579,6 @@ export const useNetworkLayer = ({
                     return updatedPost;
                 }));
 
-                // --- NOTIFICATION LOGIC ---
                 const postForCV = state.postsRef.current.find(p => p.id === cvPostId);
                 if (postForCV) {
                     const targetComment = findCommentInTree(postForCV.commentsList, cvCommentId);
@@ -614,7 +588,6 @@ export const useNetworkLayer = ({
                         addNotification('Comment Vote', `${handle} ${cvType}voted your comment`, 'success', AppRoute.FEED, cvPostId);
                     }
                 }
-                // --------------------------
 
                 if(postAfterCV) broadcastPostState(postAfterCV);
                 daisyChainPacket(packet, senderNodeId);
@@ -639,7 +612,6 @@ export const useNetworkLayer = ({
                     return updatedPost;
                 }));
 
-                // --- NOTIFICATION LOGIC ---
                 const postForCR = state.postsRef.current.find(p => p.id === crPostId);
                 if (postForCR) {
                     const targetComment = findCommentInTree(postForCR.commentsList, crCommentId);
@@ -649,7 +621,6 @@ export const useNetworkLayer = ({
                         addNotification('New Reaction', `${handle} reacted ${crEmoji} to your comment`, 'success', AppRoute.FEED, crPostId);
                     }
                 }
-                // --------------------------
 
                 if(postAfterCR) broadcastPostState(postAfterCR);
                 daisyChainPacket(packet, senderNodeId);
@@ -666,14 +637,12 @@ export const useNetworkLayer = ({
                     return updatedPost;
                 }));
 
-                // --- NOTIFICATION LOGIC ---
                 const postForVote = state.postsRef.current.find(p => p.id === vPostId);
                 if (postForVote && postForVote.authorId === currentUser.id && vUserId !== currentUser.id) {
                     const voter = state.contactsRef.current.find(c => c.id === vUserId);
                     const { handle } = formatUserIdentity(voter?.displayName || 'Someone');
                     addNotification('Broadcast Vote', `${handle} ${vType}voted your post`, 'success', AppRoute.FEED, vPostId);
                 }
-                // --------------------------
 
                 if(postAfterVote) broadcastPostState(postAfterVote);
                 daisyChainPacket(packet, senderNodeId);
@@ -695,14 +664,12 @@ export const useNetworkLayer = ({
                     return updatedPost;
                 }));
 
-                // --- NOTIFICATION LOGIC ---
                 const postForReaction = state.postsRef.current.find(p => p.id === rPostId);
                 if (postForReaction && postForReaction.authorId === currentUser.id && rUserId !== currentUser.id) {
                     const reactor = state.contactsRef.current.find(c => c.id === rUserId);
                     const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
                     addNotification('New Reaction', `${handle} reacted ${emoji} to your broadcast`, 'success', AppRoute.FEED, rPostId);
                 }
-                // --------------------------
 
                 if(postAfterReaction) broadcastPostState(postAfterReaction);
                 daisyChainPacket(packet, senderNodeId);
@@ -711,7 +678,7 @@ export const useNetworkLayer = ({
         }
     }, [addNotification, daisyChainPacket, maxSyncAgeHours, onUpdateUser, activeChatId, broadcastPostState, state]);
 
-    // Update the ref whenever handlePacket changes (which is often, due to dependency arrays)
+    // Update the ref whenever handlePacket changes
     useEffect(() => {
         handlePacketRef.current = handlePacket;
     }, [handlePacket]);
@@ -734,17 +701,13 @@ export const useNetworkLayer = ({
                 }
             };
             processedPacketIds.current.add(packet.id!);
-            // Send to direct peers
             const peerAddrs = state.peersRef.current.map(p => p.onionAddress);
             if (peerAddrs.length > 0) {
                 networkService.broadcast(packet, peerAddrs);
             }
         };
 
-        // Broadcast immediately on startup/online
         broadcastPresence();
-        
-        // Repeat every 2 minutes
         const interval = setInterval(broadcastPresence, 120000);
         return () => clearInterval(interval);
     }, [isOnline, user.isDiscoverable, user.homeNodeOnion, state.nodeConfigRef, state.peersRef]); 
@@ -758,23 +721,32 @@ export const useNetworkLayer = ({
         };
         
         if (isOnline) {
-            pingPeers(); // Initial ping on startup/online
-            const interval = setInterval(pingPeers, 60000); // Poll every 1 minute
+            pingPeers();
+            const interval = setInterval(pingPeers, 60000); 
             return () => clearInterval(interval);
         }
     }, [isOnline, state.peersRef]);
+
+    // --- INITIAL CONNECTION SWEEP ---
+    // Fix: Trigger connections only AFTER state is fully loaded (from LS/DB)
+    useEffect(() => {
+        if (state.isLoaded) {
+            console.log("State Loaded. Triggering connection sweep...", state.peers.length);
+            state.peers.forEach(p => networkService.connect(p.onionAddress));
+        }
+    }, [state.isLoaded]); // Removing state.peers from deps to prevent loop on every add, handled by handler
 
     // --- NETWORK INIT ---
     useEffect(() => {
         networkService.init(user.id);
         
-        // Initial connections
-        state.peers.forEach(p => networkService.connect(p.onionAddress));
-
         const unsubscribe = networkService.subscribeToStatus((status, onionAddress) => {
             setIsOnline(status);
-            // ON RECONNECT: Trigger Inventory Sync with all active peers
             if (status) {
+                // Fix: When coming online, force a connection check to all known peers
+                // This ensures UI goes from offline -> online if peers are reachable
+                state.peersRef.current.forEach(p => networkService.connect(p.onionAddress));
+
                 const activePeers = state.peersRef.current.map(p => p.onionAddress);
                 if (activePeers.length > 0) {
                     const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
@@ -808,7 +780,7 @@ export const useNetworkLayer = ({
                         const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
                         const myInventory = state.postsRef.current
                             .filter(pt => pt.timestamp > since && pt.privacy === 'public')
-                            .map(pt => ({ id: pt.id, hash: calculatePostHash(pt) })); // FRESH HASH
+                            .map(pt => ({ id: pt.id, hash: calculatePostHash(pt) })); 
 
                         const packet: NetworkPacket = {
                             id: crypto.randomUUID(),
@@ -818,7 +790,6 @@ export const useNetworkLayer = ({
                         };
                         networkService.sendMessage(peerOnion, packet);
 
-                        // 2. Trigger Peer Announcement to the new peer if discoverable
                         if (state.userRef.current.isDiscoverable) {
                             const config = state.nodeConfigRef.current;
                             const announcePacket: NetworkPacket = {
@@ -847,7 +818,6 @@ export const useNetworkLayer = ({
             }));
         };
 
-        // USE THE REF HERE, NOT THE FUNCTION DIRECTLY
         networkService.onMessage = (packet, senderNodeId) => {
             handlePacketRef.current(packet, senderNodeId);
         };
