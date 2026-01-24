@@ -5,21 +5,36 @@ import { networkService } from '../services/networkService';
 import { storageService } from '../services/storage';
 
 const NODE_CONFIG_KEY = 'gchat_node_config';
+const PEERS_KEY = 'gchat_node_peers';
 
 export const useAppState = (user: UserProfile) => {
-    // --- DATA STATES (Initialized Empty, Loaded Async) ---
+    // --- DATA STATES ---
+    
+    // CRITICAL FIX: Initialize peers directly from LocalStorage (Lazy Init).
+    // This prevents the "Save" effect from running with an empty array on mount and wiping the data.
+    const [peers, setPeers] = useState<NodePeer[]>(() => {
+        try {
+            const saved = localStorage.getItem(PEERS_KEY);
+            return saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            console.error("Failed to load peers from LS", e);
+            return [];
+        }
+    });
+
+    // Config is also synchronous LS
+    const [nodeConfig, setNodeConfig] = useState<{alias: string, description: string}>(() => {
+        try { return JSON.parse(localStorage.getItem(NODE_CONFIG_KEY) || '{"alias":"", "description":""}'); }
+        catch { return { alias: '', description: '' }; }
+    });
+
+    // IDB Data (Async)
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [posts, setPosts] = useState<Post[]>([]);
     const [groups, setGroups] = useState<Group[]>([]);
     const [messages, setMessages] = useState<Message[]>([]);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-    const [peers, setPeers] = useState<NodePeer[]>([]);
     const [connectionRequests, setConnectionRequests] = useState<ConnectionRequest[]>([]);
-
-    const [nodeConfig, setNodeConfig] = useState<{alias: string, description: string}>(() => {
-        try { return JSON.parse(localStorage.getItem(NODE_CONFIG_KEY) || '{"alias":"", "description":""}'); }
-        catch { return { alias: '', description: '' }; }
-    });
 
     const [isLoaded, setIsLoaded] = useState(false);
 
@@ -28,7 +43,6 @@ export const useAppState = (user: UserProfile) => {
         const loadData = async () => {
             try {
                 // Parallel load from IndexedDB
-                // We no longer check or migrate LocalStorage to prevent injection attacks
                 const [dbPosts, dbMsgs, dbContacts, dbGroups, dbNotifs, dbRequests] = await Promise.all([
                     storageService.getItems<Post>('posts', user.id),
                     storageService.getItems<Message>('messages', user.id),
@@ -45,15 +59,11 @@ export const useAppState = (user: UserProfile) => {
                 setNotifications(dbNotifs);
                 setConnectionRequests(dbRequests);
 
-                // Peers are still ephemeral/local config mostly, stay in LS for now
-                // (Peers are essentially configuration, not user content)
-                const lsPeers = JSON.parse(localStorage.getItem('gchat_node_peers') || '[]');
-                setPeers(lsPeers);
-
+                // Note: Peers are already loaded via useState lazy init above.
+                
                 setIsLoaded(true);
             } catch (e) {
                 console.error("CRITICAL: Failed to load app state from DB", e);
-                // Fallback to empty state to allow app to function
                 setIsLoaded(true); 
             }
         };
@@ -78,7 +88,6 @@ export const useAppState = (user: UserProfile) => {
     useEffect(() => { messagesRef.current = messages; }, [messages]);
 
     // --- PERSISTENCE (WRITE TO IDB) ---
-    // Persist changes to IDB automatically
     useEffect(() => { if(isLoaded) storageService.saveBulk('contacts', contacts, user.id); }, [contacts, user.id, isLoaded]);
     useEffect(() => { if(isLoaded) storageService.saveBulk('posts', posts, user.id); }, [posts, user.id, isLoaded]);
     useEffect(() => { if(isLoaded) storageService.saveBulk('groups', groups, user.id); }, [groups, user.id, isLoaded]);
@@ -86,10 +95,14 @@ export const useAppState = (user: UserProfile) => {
     useEffect(() => { if(isLoaded) storageService.saveBulk('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
     useEffect(() => { if(isLoaded) storageService.saveBulk('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
     
-    // Config and Peers stay in LocalStorage for fast sync access
+    // Config and Peers stay in LocalStorage
     useEffect(() => { localStorage.setItem(NODE_CONFIG_KEY, JSON.stringify(nodeConfig)); }, [nodeConfig]);
+    
     useEffect(() => {
-        localStorage.setItem('gchat_node_peers', JSON.stringify(peers));
+        // Guard: Only save if we actually have data or if we are sure we want to save empty.
+        // With lazy init, peers is correct from start, so this is safe.
+        localStorage.setItem(PEERS_KEY, JSON.stringify(peers));
+        // Keep network service updated for routing
         networkService.updateKnownPeers(peers.map(p => p.onionAddress));
     }, [peers]);
 
@@ -97,7 +110,6 @@ export const useAppState = (user: UserProfile) => {
     const pruneMessages = async () => {
         const deletedCount = await storageService.pruneEphemeralMessages(user.id);
         if (deletedCount > 0) {
-            // Reload messages from DB to reflect deletion in UI
             const freshMsgs = await storageService.getItems<Message>('messages', user.id);
             setMessages(freshMsgs);
         }
@@ -145,7 +157,6 @@ export const useAppState = (user: UserProfile) => {
     }, [posts, user.id, user.followersCount, contacts.length]);
 
     return {
-        // State
         contacts, setContacts,
         posts, setPosts,
         groups, setGroups,
@@ -154,11 +165,8 @@ export const useAppState = (user: UserProfile) => {
         peers, setPeers,
         nodeConfig, setNodeConfig,
         connectionRequests, setConnectionRequests,
-        
         isLoaded,
         pruneMessages,
-
-        // Refs
         userRef,
         contactsRef,
         peersRef,
@@ -166,8 +174,6 @@ export const useAppState = (user: UserProfile) => {
         postsRef,
         groupsRef,
         messagesRef,
-
-        // Derived
         chatUnread,
         contactsUnread,
         feedUnread,
