@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Power, Wifi, User, Terminal, Download, Server, Trash2, Plus, Save, Loader2, RefreshCw, Key, Eye, EyeOff, ToggleRight, ToggleLeft, QrCode, Upload, AlertTriangle, Activity, ShieldCheck, Zap, XCircle, CheckSquare, LogOut, HardDrive, FileArchive, Copy, Check, MapPin, Globe, Clock, Lock, Users, BarChart3, ThumbsUp, ThumbsDown, Info, Play, Pause, Camera, WifiOff, Database, Radio, Heart } from 'lucide-react';
+import { Power, Wifi, User, Terminal, Download, Server, Trash2, Plus, Save, Loader2, RefreshCw, Key, Eye, EyeOff, ToggleRight, ToggleLeft, QrCode, Upload, AlertTriangle, Activity, ShieldCheck, Zap, XCircle, CheckSquare, LogOut, HardDrive, FileArchive, Copy, Check, MapPin, Globe, Clock, Lock, Users, BarChart3, ThumbsUp, ThumbsDown, Info, Play, Pause, Camera, WifiOff, Database, Radio, Heart, RadioReceiver } from 'lucide-react';
 import { UserProfile, NodePeer, ToastMessage, LogEntry, AvailablePeer, PrivacySettings, StorageStats, Post, Message, Contact } from '../types';
 import { networkService, TorStats } from '../services/networkService';
 import IdentityModal from './IdentityModal';
@@ -153,6 +153,13 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
               else addToast("Offline", "Peer did not respond.", 'error'); 
           }); 
       } 
+  };
+
+  const handlePingAll = () => {
+      addToast("Network Scan", `Pinging ${peers.length} peers...`, 'info');
+      peers.forEach(p => {
+          networkService.connect(p.onionAddress);
+      });
   };
 
   const parseDeepLink = (url: string) => { 
@@ -524,7 +531,16 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
                             <Activity className="text-blue-500" size={24} />
                             <h2 className="text-lg font-bold text-white">Peer Management</h2>
                         </div>
-                        <div className="text-xs text-slate-500">Connected: {peers.filter(p => p.status === 'online').length}</div>
+                        <div className="flex items-center gap-2">
+                            <div className="text-xs text-slate-500">Connected: {peers.filter(p => p.status === 'online').length}</div>
+                            <button 
+                                onClick={handlePingAll}
+                                className="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
+                                title="Force Ping All"
+                            >
+                                <RefreshCw size={12} /> Ping All
+                            </button>
+                        </div>
                     </div>
 
                     <div className="space-y-3">
@@ -588,7 +604,7 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
                         {/* Pending Signals Section */}
                         {pendingPeers.length > 0 && (
                             <div className="mt-4 pt-4 border-t border-slate-800">
-                                <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><Radio size={12} className="text-onion-400 animate-pulse" /> Unknown Signals ({pendingPeers.length})</h3>
+                                <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><RadioReceiver size={12} className="text-onion-400 animate-pulse" /> Unknown Signals ({pendingPeers.length})</h3>
                                 <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
                                     {pendingPeers.map(peerId => (
                                         <div key={peerId} className="flex items-center justify-between p-3 bg-onion-950/10 border border-onion-500/20 rounded-lg">
