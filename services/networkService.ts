@@ -232,7 +232,13 @@ export class NetworkService {
       let hasActive = false;
 
       this._activeDownloads.forEach((dl) => {
-          if (dl.status !== 'active') return;
+          if (dl.status === 'error' || dl.status === 'completed' || dl.status === 'paused') return;
+          
+          if (dl.status === 'recovering') {
+              // Timeout logic for recovery mode?
+              return;
+          }
+
           hasActive = true;
 
           // Adaptive Timeout: Base 60s + (RTT * 4)
@@ -242,16 +248,16 @@ export class NetworkService {
           dl.inflight.forEach((req, key) => {
               if (now - req.sentAt > dynamicTimeout) {
                   if (req.retries >= 10) {
-                      this.log('ERROR', 'NETWORK', `Chunk ${req.index} failed 10 times. Pausing.`);
-                      dl.status = 'paused';
-                      dl.listeners.forEach(l => l.onError("Connection unstable. Paused."));
+                      this.log('WARN', 'NETWORK', `Chunk ${req.index} failed 10 times. Triggering Mesh Recovery.`);
+                      this.attemptMeshRecovery(dl.id);
+                      dl.status = 'recovering';
+                      dl.listeners.forEach(l => l.onError("Source offline. Searching mesh..."));
                       return;
                   }
 
                   this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt)/1000)}s). Retrying...`);
                   
                   // CONGESTION CONTROL: Multiplicative Decrease
-                  // If a chunk fails, the circuit is likely overloaded. Drop to 1 (serial mode).
                   dl.concurrency = 1;
                   
                   // Move failed chunk back to front of queue
@@ -261,7 +267,7 @@ export class NetworkService {
               }
           });
 
-          this.pumpDownloadQueue(dl);
+          if(dl.status === 'active') this.pumpDownloadQueue(dl);
       });
 
       // Keep screen awake while downloading
@@ -341,10 +347,6 @@ export class NetworkService {
           if (rtt < 2000 && download.concurrency < 6) {
               download.concurrency += 0.1;
           }
-          
-          if (this.isDebugEnabled) {
-              this.log('DEBUG', 'NETWORK', `Chunk ${chunkIndex} OK. RTT: ${rtt}ms. Concurrency: ${download.concurrency.toFixed(1)}`);
-          }
       }
 
       // Convert incoming data
@@ -382,10 +384,69 @@ export class NetworkService {
       }
   }
 
-  // --- RECOVERY LOGIC (Placeholders for now) ---
-  private async attemptMeshRecovery(mediaId: string) { /* ... existing ... */ }
-  private async handleRecoveryRequest(senderId: string, payload: { mediaId: string; accessKey?: string }) { /* ... existing ... */ }
-  private handleRecoveryFound(senderId: string, payload: { mediaId: string }) { /* ... existing ... */ }
+  // --- RECOVERY LOGIC ---
+  private async attemptMeshRecovery(mediaId: string) {
+      const dl = this._activeDownloads.get(mediaId);
+      if(!dl) return;
+      
+      const packet = {
+          id: crypto.randomUUID(),
+          type: 'MEDIA_RECOVERY_REQUEST',
+          senderId: this._myOnionAddress || 'unknown',
+          payload: { 
+              mediaId, 
+              accessKey: dl.metadata.accessKey // Send key so peers can verify if they are allowed to serve it
+          }
+      };
+      
+      // Broadcast to everyone EXCEPT the peer we already know failed
+      const recipients = Array.from(this._knownPeers).filter(p => p !== dl.peerOnion);
+      this.log('INFO', 'NETWORK', `Broadcasting recovery request for ${mediaId} to ${recipients.length} peers`);
+      this.broadcast(packet, recipients);
+  }
+
+  private async handleRecoveryRequest(senderId: string, payload: { mediaId: string; accessKey?: string }) {
+      const { mediaId, accessKey } = payload;
+      
+      // Do we have it?
+      const hasIt = await hasMedia(mediaId);
+      if (!hasIt) return;
+
+      // Are we allowed to share it?
+      const canAccess = await verifyMediaAccess(mediaId, accessKey);
+      if (!canAccess) {
+          this.log('WARN', 'NETWORK', `Denied recovery request for ${mediaId} from ${senderId} (Invalid Access Key)`);
+          return;
+      }
+
+      this.log('INFO', 'NETWORK', `Found requested media ${mediaId}. Offering to ${senderId}`);
+      this.sendMessage(senderId, {
+          id: crypto.randomUUID(),
+          type: 'MEDIA_RECOVERY_FOUND',
+          senderId: this._myOnionAddress || 'unknown',
+          payload: { mediaId }
+      });
+  }
+
+  private handleRecoveryFound(senderId: string, payload: { mediaId: string }) {
+      const { mediaId } = payload;
+      const dl = this._activeDownloads.get(mediaId);
+      
+      if (dl && (dl.status === 'recovering' || dl.status === 'paused')) {
+          this.log('INFO', 'NETWORK', `Recovery Successful! Switching download source to ${senderId}`);
+          
+          dl.peerOnion = senderId;
+          dl.status = 'active';
+          
+          // Reset concurrency stats for new peer
+          dl.concurrency = 1;
+          dl.avgRtt = 5000;
+          dl.rttSamples = [];
+          
+          // Resume download
+          this.pumpDownloadQueue(dl);
+      }
+  }
 
   private async finishDownload(mediaId: string) {
       const download = this._activeDownloads.get(mediaId);
