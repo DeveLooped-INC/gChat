@@ -57,7 +57,7 @@ export const useNetworkLayer = ({
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
     }, [state.userRef, state.peersRef]);
 
-    // --- DAISY CHAIN GOSSIP ---
+    // --- DAISY CHAIN GOSSIP (OPTIMIZED) ---
     const daisyChainPacket = useCallback(async (packet: NetworkPacket, sourceNodeId?: string) => {
         const currentHops = packet.hops || 0;
         if (currentHops <= 0) return;
@@ -65,14 +65,19 @@ export const useNetworkLayer = ({
         const nextPacket = { ...packet, hops: currentHops - 1 };
         const allPeers = state.peersRef.current.map(p => p.onionAddress);
         
-        const recipients = allPeers.filter(addr => {
+        const possibleRecipients = allPeers.filter(addr => {
             const isSource = addr === sourceNodeId;
             const isOrigin = addr === packet.senderId;
             const isSelf = addr === state.userRef.current.homeNodeOnion;
             return !isSource && !isOrigin && !isSelf;
         });
 
-        if (recipients.length === 0) return;
+        if (possibleRecipients.length === 0) return;
+
+        // OPTIMIZATION: Shuffle and take subset (GossipSub Lite)
+        // If we have many peers, don't spam everyone. Take 3 random ones to gossip to.
+        // This dramatically reduces bandwidth while maintaining high probability of propagation.
+        const recipients = possibleRecipients.sort(() => 0.5 - Math.random()).slice(0, 3);
 
         recipients.forEach(async (recipient) => {
             await new Promise(r => setTimeout(r, Math.random() * 200));
