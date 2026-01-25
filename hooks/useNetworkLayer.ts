@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { UserProfile, NetworkPacket, AvailablePeer, Post, ToastMessage, AppRoute, MediaMetadata, EncryptedPayload, Message, Group, ConnectionRequest } from '../types';
 import { networkService } from '../services/networkService';
@@ -286,12 +287,13 @@ export const useNetworkLayer = ({
             case 'ANNOUNCE_PEER': {
                 const info = packet.payload;
                 if (info && info.onionAddress) {
-                    const isAlreadyPeer = state.peersRef.current.some(p => p.onionAddress === info.onionAddress);
+                    const existingPeer = state.peersRef.current.find(p => p.onionAddress === info.onionAddress);
 
-                    if (isAlreadyPeer) {
+                    if (existingPeer) {
+                        // Only update if not already trusted to avoid downgrading trust level or if we just want to update metadata
                         state.setPeers(prev => prev.map(p => 
                             p.onionAddress === info.onionAddress 
-                                ? { ...p, alias: info.alias, status: 'online', lastSeen: Date.now() } 
+                                ? { ...p, alias: info.alias || p.alias, status: 'online', lastSeen: Date.now() } 
                                 : p
                         ));
                         setDiscoveredPeers(prev => prev.filter(p => p.id !== info.onionAddress));
@@ -749,24 +751,30 @@ export const useNetworkLayer = ({
         }
     }, [isOnline, state.peersRef]);
 
-    // --- INITIAL CONNECTION SWEEP ---
+    // --- INITIAL CONNECTION SWEEP & QUEUE FLUSH ---
     useEffect(() => {
         if (state.isLoaded) {
-            console.log("State Loaded. Processing Queue and Connecting...", state.peers.length);
-            
-            // 1. Flush the Packet Queue
-            if (packetQueue.current.length > 0) {
-                console.log(`Flushing ${packetQueue.current.length} queued packets.`);
-                packetQueue.current.forEach(({ packet, senderNodeId }) => {
-                    handlePacketRef.current(packet, senderNodeId);
-                });
-                packetQueue.current = [];
-            }
+            // FIX: setTimeout ensures that the 'contactsRef' and other refs have been updated 
+            // by their own useEffects before we process the queue.
+            const timer = setTimeout(() => {
+                console.log("State Loaded & Settled. Processing Queue and Connecting...", state.peers.length);
+                
+                // 1. Flush the Packet Queue
+                if (packetQueue.current.length > 0) {
+                    console.log(`Flushing ${packetQueue.current.length} queued packets.`);
+                    packetQueue.current.forEach(({ packet, senderNodeId }) => {
+                        handlePacketRef.current(packet, senderNodeId);
+                    });
+                    packetQueue.current = [];
+                }
 
-            // 2. Trigger connection sweep
-            state.peers.forEach(p => networkService.connect(p.onionAddress));
+                // 2. Trigger connection sweep
+                state.peers.forEach(p => networkService.connect(p.onionAddress));
+            }, 100); // 100ms delay to be safe
+
+            return () => clearTimeout(timer);
         }
-    }, [state.isLoaded]); 
+    }, [state.isLoaded, state.peers]); 
 
     // --- NETWORK INIT ---
     useEffect(() => {
