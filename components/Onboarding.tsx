@@ -317,7 +317,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     );
   }
 
-  // --- MISMATCH MODAL (UPDATED FOR GUEST LOGIN) ---
+  // --- GUEST LOGIN MODAL ---
   if (showMismatchWarning && mismatchData) {
       return (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
