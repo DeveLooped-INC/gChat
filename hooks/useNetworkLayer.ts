@@ -1,11 +1,12 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { UserProfile, NetworkPacket, AvailablePeer, Post, ToastMessage, AppRoute, MediaMetadata, EncryptedPayload, Message, Group, ConnectionRequest } from '../types';
+import { UserProfile, NetworkPacket, AvailablePeer, Post, ToastMessage, AppRoute, MediaMetadata, EncryptedPayload, Message, Group, ConnectionRequest, NotificationItem } from '../types';
 import { networkService } from '../services/networkService';
 import { calculatePostHash, formatUserIdentity } from '../utils';
 import { verifySignature, decryptMessage } from '../services/cryptoService';
 import { createPostPayload, mergePosts, appendReply, updateCommentTree, findCommentInTree } from '../utils/dataHelpers';
 import { useAppState } from './useAppState';
+import { storageService } from '../services/storage';
 
 const MAX_GOSSIP_HOPS = 6;
 
@@ -87,9 +88,9 @@ export const useNetworkLayer = ({
 
     // --- PACKET HANDLING LOGIC ---
     // We use a REF to hold the latest version of this function to avoid stale closures in the socket listener
-    const handlePacketRef = useRef<(packet: NetworkPacket, senderNodeId: string) => void>(() => {});
+    const handlePacketRef = useRef<(packet: NetworkPacket, senderNodeId: string) => Promise<void>>(async () => {});
 
-    const handlePacket = useCallback((packet: NetworkPacket, senderNodeId: string) => {
+    const handlePacket = useCallback(async (packet: NetworkPacket, senderNodeId: string) => {
         // CRITICAL FIX: If state is not loaded (contacts empty), queue packet.
         // This prevents "Existing Contact" checks from failing and creating duplicate requests.
         if (!state.isLoaded) {
@@ -99,6 +100,38 @@ export const useNetworkLayer = ({
         }
 
         const currentUser = state.userRef.current;
+
+        // --- MULTI-USER OFFLINE HANDLING ---
+        // If packet is for another user on this node who is not currently logged in
+        if (packet.targetUserId && packet.targetUserId !== currentUser.id) {
+            const registry = JSON.parse(localStorage.getItem('gchat_profile_registry') || '{}');
+            // If the target user exists in this node's registry
+            if (registry[packet.targetUserId]) {
+                console.log(`[Network] Parking packet for offline user ${packet.targetUserId}`);
+                
+                // 1. Save Packet for Replay
+                await storageService.saveItem('offline_packets', {
+                    id: crypto.randomUUID(),
+                    packet,
+                    senderNodeId,
+                    timestamp: Date.now()
+                }, packet.targetUserId);
+
+                // 2. Generate a Generic Notification for them
+                const notif: NotificationItem = {
+                    id: crypto.randomUUID(),
+                    title: 'Missed Activity',
+                    message: `Received ${packet.type} while you were away.`,
+                    type: 'info',
+                    timestamp: Date.now(),
+                    read: false,
+                    linkRoute: AppRoute.NOTIFICATIONS
+                };
+                await storageService.saveItem('notifications', notif, packet.targetUserId);
+                
+                return; // Stop processing for current user
+            }
+        }
         
         if (packet.id && processedPacketIds.current.has(packet.id)) {
             return; 
@@ -706,6 +739,26 @@ export const useNetworkLayer = ({
     useEffect(() => {
         handlePacketRef.current = handlePacket;
     }, [handlePacket]);
+
+    // --- REPLAY OFFLINE PACKETS ---
+    useEffect(() => {
+        if (state.isLoaded) {
+            const replay = async () => {
+                const pending = await storageService.getItems<any>('offline_packets', user.id);
+                if (pending.length > 0) {
+                    addNotification('Welcome Back', `Processing ${pending.length} missed packets...`, 'info');
+                    // Sort by timestamp to preserve order
+                    pending.sort((a, b) => a.timestamp - b.timestamp);
+                    
+                    for (const item of pending) {
+                        await handlePacketRef.current(item.packet, item.senderNodeId);
+                        await storageService.deleteItem('offline_packets', item.id);
+                    }
+                }
+            };
+            replay();
+        }
+    }, [state.isLoaded, user.id, addNotification]);
 
     // --- DISCOVERY BROADCAST (HEARTBEAT) ---
     useEffect(() => {
