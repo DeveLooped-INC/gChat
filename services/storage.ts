@@ -2,7 +2,7 @@
 import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest } from '../types';
 
 const DB_NAME = 'gChat_Data';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' | 'requests' | 'offline_packets';
 
@@ -19,17 +19,25 @@ class StorageService {
       
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
+        const transaction = (event.target as IDBOpenDBRequest).transaction!;
         
         // Create stores with 'id' as keyPath
         const stores: StoreName[] = ['posts', 'messages', 'contacts', 'groups', 'notifications', 'requests', 'offline_packets'];
         
-        stores.forEach(store => {
-          if (!db.objectStoreNames.contains(store)) {
-            const objectStore = db.createObjectStore(store, { keyPath: 'id' });
-            // Add index for querying by 'localOwnerId' to support multi-user switching
-            if (!objectStore.indexNames.contains('localOwnerId')) {
-                objectStore.createIndex('localOwnerId', 'localOwnerId', { unique: false });
-            }
+        stores.forEach(storeName => {
+          let objectStore: IDBObjectStore;
+
+          if (!db.objectStoreNames.contains(storeName)) {
+            // Create new store
+            objectStore = db.createObjectStore(storeName, { keyPath: 'id' });
+          } else {
+            // Open existing store for modification
+            objectStore = transaction.objectStore(storeName);
+          }
+
+          // Ensure 'localOwnerId' index exists on ALL stores (New and Old)
+          if (!objectStore.indexNames.contains('localOwnerId')) {
+              objectStore.createIndex('localOwnerId', 'localOwnerId', { unique: false });
           }
         });
       };
@@ -93,6 +101,13 @@ class StorageService {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(storeName, 'readonly');
       const store = tx.objectStore(storeName);
+      
+      // Safety check: Index might be missing if migration failed previously
+      if (!store.indexNames.contains('localOwnerId')) {
+          reject(new Error(`Index 'localOwnerId' missing on ${storeName}. DB Migration required.`));
+          return;
+      }
+
       const index = store.index('localOwnerId');
       const request = index.getAll(ownerId);
 
