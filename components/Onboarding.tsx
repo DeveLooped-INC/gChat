@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, ArrowRight, Lock, Server, Loader2, RefreshCw, Upload, UserPlus, LogIn, Key, Copy, Check, Trash2, AlertTriangle, Cpu, FileArchive, X } from 'lucide-react';
+import { ShieldCheck, ArrowRight, Lock, Server, Loader2, RefreshCw, Upload, UserPlus, LogIn, Key, Copy, Check, Trash2, AlertTriangle, Cpu, FileArchive, X, Users } from 'lucide-react';
 import { UserProfile } from '../types';
 import { networkService } from '../services/networkService';
 import { loadWordlist, generateMnemonic, validateMnemonic, keysFromMnemonic } from '../services/mnemonicService';
@@ -35,7 +35,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
   // Mismatch State
   const [showMismatchWarning, setShowMismatchWarning] = useState(false);
-  const [mismatchData, setMismatchData] = useState<{derivedId: string, ownerId: string} | null>(null);
+  const [mismatchData, setMismatchData] = useState<{derivedId: string, ownerId: string, guestName?: string} | null>(null);
 
   // Import State
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -124,7 +124,11 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
      const nodeOwnerId = localStorage.getItem('gchat_node_owner');
      
      if (nodeOwnerId && nodeOwnerId !== userId) {
-         setMismatchData({ derivedId: userId, ownerId: nodeOwnerId });
+         // Attempt to find guest name from local registry
+         const registry = JSON.parse(localStorage.getItem('gchat_profile_registry') || '{}');
+         const guestName = registry[userId]?.displayName;
+
+         setMismatchData({ derivedId: userId, ownerId: nodeOwnerId, guestName });
          setShowMismatchWarning(true);
          setIsProcessing(false);
          return;
@@ -313,28 +317,28 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     );
   }
 
-  // --- MISMATCH MODAL ---
+  // --- MISMATCH MODAL (UPDATED FOR GUEST LOGIN) ---
   if (showMismatchWarning && mismatchData) {
       return (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-              <div className="bg-slate-900 border border-amber-500/50 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
-                  <div className="flex items-center gap-3 mb-4 text-amber-500">
-                      <AlertTriangle size={32} />
-                      <h2 className="text-xl font-bold">Identity Mismatch</h2>
+              <div className="bg-slate-900 border border-indigo-500/50 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+                  <div className="flex items-center gap-3 mb-4 text-indigo-400">
+                      <Users size={32} />
+                      <h2 className="text-xl font-bold">Guest Login</h2>
                   </div>
                   
                   <p className="text-slate-300 text-sm mb-4 leading-relaxed">
-                      The seed phrase you entered generates a <strong>different User ID</strong> than the one that owns this node.
+                      You are logging in as a <strong>Guest User</strong> on this node.
                   </p>
                   
                   <div className="bg-black/50 p-3 rounded-lg font-mono text-xs space-y-2 mb-4">
                       <div>
-                          <span className="text-slate-500 block">Expected Owner ID:</span>
-                          <span className="text-emerald-400 break-all">{mismatchData.ownerId}</span>
+                          <span className="text-slate-500 block">Node Owner:</span>
+                          <span className="text-slate-400 break-all">{mismatchData.ownerId.substring(0, 16)}...</span>
                       </div>
                       <div className="border-t border-slate-800 pt-2">
-                          <span className="text-slate-500 block">Generated ID (You):</span>
-                          <span className="text-amber-400 break-all">{mismatchData.derivedId}</span>
+                          <span className="text-slate-500 block">Your ID:</span>
+                          <span className="text-indigo-400 break-all">{mismatchData.derivedId.substring(0, 16)}...</span>
                       </div>
                   </div>
 
@@ -343,16 +347,16 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                           onClick={() => { setShowMismatchWarning(false); setMismatchData(null); }}
                           className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold transition-colors"
                       >
-                          Go Back & Fix
+                          Back
                       </button>
                       <button 
                           onClick={async () => {
                               const keys = await keysFromMnemonic(mnemonicInput.trim().toLowerCase().split(/\s+/).join(' '));
                               proceedWithLogin(keys, mismatchData.derivedId);
                           }}
-                          className="flex-1 py-3 border border-amber-500/30 text-amber-500 hover:bg-amber-950/30 rounded-xl font-bold transition-colors"
+                          className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-colors"
                       >
-                          Proceed Anyway
+                          Login as {mismatchData.guestName || 'Guest'}
                       </button>
                   </div>
               </div>
