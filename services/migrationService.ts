@@ -135,12 +135,12 @@ export const restoreMigrationPackage = async (file: File, password: string): Pro
         // 4. Restore IndexedDB (Version 2 Only)
         if (version === 2 && payload.idbData && payload.ownerId) {
             const ownerId = payload.ownerId;
-            await storageService.saveBulk('posts', payload.idbData.posts || [], ownerId);
-            await storageService.saveBulk('messages', payload.idbData.messages || [], ownerId);
-            await storageService.saveBulk('contacts', payload.idbData.contacts || [], ownerId);
-            await storageService.saveBulk('groups', payload.idbData.groups || [], ownerId);
-            await storageService.saveBulk('notifications', payload.idbData.notifications || [], ownerId);
-            await storageService.saveBulk('requests', payload.idbData.requests || [], ownerId);
+            await storageService.syncState('posts', payload.idbData.posts || [], ownerId);
+            await storageService.syncState('messages', payload.idbData.messages || [], ownerId);
+            await storageService.syncState('contacts', payload.idbData.contacts || [], ownerId);
+            await storageService.syncState('groups', payload.idbData.groups || [], ownerId);
+            await storageService.syncState('notifications', payload.idbData.notifications || [], ownerId);
+            await storageService.syncState('requests', payload.idbData.requests || [], ownerId);
         }
 
         // 5. Restore Tor Keys
