@@ -757,7 +757,7 @@ export const useNetworkLayer = ({
             // FIX: setTimeout ensures that the 'contactsRef' and other refs have been updated 
             // by their own useEffects before we process the queue.
             const timer = setTimeout(() => {
-                console.log("State Loaded & Settled. Processing Queue and Connecting...", state.peers.length);
+                console.log("State Loaded & Settled. Processing Queue and Connecting...", state.peersRef.current.length);
                 
                 // 1. Flush the Packet Queue
                 if (packetQueue.current.length > 0) {
@@ -769,12 +769,12 @@ export const useNetworkLayer = ({
                 }
 
                 // 2. Trigger connection sweep
-                state.peers.forEach(p => networkService.connect(p.onionAddress));
+                state.peersRef.current.forEach(p => networkService.connect(p.onionAddress));
             }, 100); // 100ms delay to be safe
 
             return () => clearTimeout(timer);
         }
-    }, [state.isLoaded, state.peers]); 
+    }, [state.isLoaded]); 
 
     // --- NETWORK INIT ---
     useEffect(() => {
