@@ -64,7 +64,9 @@ export const useAppState = (user: UserProfile) => {
                 setIsLoaded(true);
             } catch (e) {
                 console.error("CRITICAL: Failed to load app state from DB", e);
-                setIsLoaded(true); 
+                // DO NOT SET isLoaded(true) here!
+                // This leaves the app in a loading state loop, but prevents empty arrays from overwriting valid data.
+                alert("Database Error: Failed to load profile data. Please refresh.");
             }
         };
         loadData();
