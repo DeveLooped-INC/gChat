@@ -2,9 +2,9 @@
 import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest } from '../types';
 
 const DB_NAME = 'gChat_Data';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
-type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' | 'requests';
+type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' | 'requests' | 'offline_packets';
 
 class StorageService {
   private dbPromise: Promise<IDBDatabase> | null = null;
@@ -21,7 +21,7 @@ class StorageService {
         const db = (event.target as IDBOpenDBRequest).result;
         
         // Create stores with 'id' as keyPath
-        const stores: StoreName[] = ['posts', 'messages', 'contacts', 'groups', 'notifications', 'requests'];
+        const stores: StoreName[] = ['posts', 'messages', 'contacts', 'groups', 'notifications', 'requests', 'offline_packets'];
         
         stores.forEach(store => {
           if (!db.objectStoreNames.contains(store)) {
