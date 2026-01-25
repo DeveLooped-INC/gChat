@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { UserProfile, NetworkPacket, AvailablePeer, Post, ToastMessage, AppRoute, MediaMetadata, EncryptedPayload, Message, Group, ConnectionRequest } from '../types';
 import { networkService } from '../services/networkService';
@@ -34,6 +33,9 @@ export const useNetworkLayer = ({
     const [pendingNodeRequests, setPendingNodeRequests] = useState<string[]>([]);
     
     const processedPacketIds = useRef<Set<string>>(new Set());
+    
+    // Packet Queue for pre-load handling
+    const packetQueue = useRef<{packet: NetworkPacket, senderNodeId: string}[]>([]);
 
     // --- HELPER: Broadcast Post State (Ensures propagation of edits/comments) ---
     const broadcastPostState = useCallback((post: Post) => {
@@ -87,6 +89,14 @@ export const useNetworkLayer = ({
     const handlePacketRef = useRef<(packet: NetworkPacket, senderNodeId: string) => void>(() => {});
 
     const handlePacket = useCallback((packet: NetworkPacket, senderNodeId: string) => {
+        // CRITICAL FIX: If state is not loaded (contacts empty), queue packet.
+        // This prevents "Existing Contact" checks from failing and creating duplicate requests.
+        if (!state.isLoaded) {
+            console.log(`[Network] State not loaded. Queuing packet ${packet.type} from ${senderNodeId}`);
+            packetQueue.current.push({ packet, senderNodeId });
+            return;
+        }
+
         const currentUser = state.userRef.current;
         
         if (packet.id && processedPacketIds.current.has(packet.id)) {
@@ -103,6 +113,7 @@ export const useNetworkLayer = ({
             }));
         }
 
+        // Logic to detect unknown nodes pinging us
         if (senderNodeId && 
             !state.peersRef.current.some(p => p.onionAddress === senderNodeId) && 
             packet.type !== 'NODE_SHUTDOWN' && 
@@ -113,14 +124,13 @@ export const useNetworkLayer = ({
         ) {
             setPendingNodeRequests(prev => {
                 if (prev.includes(senderNodeId)) return prev;
+                // Only notify if we don't know the node
                 addNotification('New Node Signal', `Unknown peer ${senderNodeId.substring(0,8)}... pinged you.`, 'info', AppRoute.NODE_SETTINGS);
                 return [...prev, senderNodeId];
             });
         }
 
         switch(packet.type) {
-            // ... (Packet Handlers remain unchanged, focusing on connection logic fixes) ...
-            // --- FOLLOW / UNFOLLOW ---
             case 'FOLLOW': {
                 if (packet.targetUserId === currentUser.id) {
                     const updatedUser = { ...currentUser, followersCount: (currentUser.followersCount || 0) + 1 };
@@ -350,13 +360,25 @@ export const useNetworkLayer = ({
                         return c;
                     }));
                 }
+                
+                // CRITICAL CHECK: Must use contactsRef which is populated only after state.isLoaded
                 const existingContact = state.contactsRef.current.find(c => c.id === req.fromUserId);
-                if (existingContact) return;
+                if (existingContact) {
+                    // Contact already exists, ignore request.
+                    // Optionally update home node if changed
+                    if (!existingContact.homeNodes.includes(req.fromHomeNode)) {
+                        state.setContacts(prev => prev.map(c => c.id === req.fromUserId ? {...c, homeNodes: [req.fromHomeNode]} : c));
+                    }
+                    return; 
+                }
+
                 state.setConnectionRequests(prev => {
                     if (prev.some(r => r.fromUserId === req.fromUserId)) return prev;
                     addNotification('New Connection', `${req.fromDisplayName} wants to connect.`, 'success', AppRoute.CONTACTS);
                     return [...prev, req];
                 });
+                
+                // Try to connect back to their node to establish circuit
                 if (req.fromHomeNode) networkService.connect(req.fromHomeNode);
                 break;
 
@@ -728,13 +750,23 @@ export const useNetworkLayer = ({
     }, [isOnline, state.peersRef]);
 
     // --- INITIAL CONNECTION SWEEP ---
-    // Fix: Trigger connections only AFTER state is fully loaded (from LS/DB)
     useEffect(() => {
         if (state.isLoaded) {
-            console.log("State Loaded. Triggering connection sweep...", state.peers.length);
+            console.log("State Loaded. Processing Queue and Connecting...", state.peers.length);
+            
+            // 1. Flush the Packet Queue
+            if (packetQueue.current.length > 0) {
+                console.log(`Flushing ${packetQueue.current.length} queued packets.`);
+                packetQueue.current.forEach(({ packet, senderNodeId }) => {
+                    handlePacketRef.current(packet, senderNodeId);
+                });
+                packetQueue.current = [];
+            }
+
+            // 2. Trigger connection sweep
             state.peers.forEach(p => networkService.connect(p.onionAddress));
         }
-    }, [state.isLoaded]); // Removing state.peers from deps to prevent loop on every add, handled by handler
+    }, [state.isLoaded]); 
 
     // --- NETWORK INIT ---
     useEffect(() => {
@@ -743,8 +775,6 @@ export const useNetworkLayer = ({
         const unsubscribe = networkService.subscribeToStatus((status, onionAddress) => {
             setIsOnline(status);
             if (status) {
-                // Fix: When coming online, force a connection check to all known peers
-                // This ensures UI goes from offline -> online if peers are reachable
                 state.peersRef.current.forEach(p => networkService.connect(p.onionAddress));
 
                 const activePeers = state.peersRef.current.map(p => p.onionAddress);
@@ -776,7 +806,6 @@ export const useNetworkLayer = ({
                     }));
                     
                     if (status === 'online' && p.status !== 'online') {
-                        // 1. Trigger Inventory Sync on individual peer reconnect
                         const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
                         const myInventory = state.postsRef.current
                             .filter(pt => pt.timestamp > since && pt.privacy === 'public')
