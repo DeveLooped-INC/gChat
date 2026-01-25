@@ -315,7 +315,6 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
   // --- MISMATCH MODAL ---
   if (showMismatchWarning && mismatchData) {
-      // (Mismatch modal content identical to previous fix)
       return (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
               <div className="bg-slate-900 border border-amber-500/50 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
@@ -544,7 +543,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                         className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                         {isProcessing && <Loader2 size={16} className="animate-spin" />}
-                        Restore Identity
+                        Login
                     </button>
                 </div>
             )}
