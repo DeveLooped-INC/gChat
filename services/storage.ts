@@ -55,15 +55,33 @@ class StorageService {
     });
   }
 
-  public async saveBulk<T extends { id: string }>(storeName: StoreName, items: T[], ownerId: string): Promise<void> {
+  // Replaces saveBulk with a synchronization method that handles deletions
+  public async syncState<T extends { id: string }>(storeName: StoreName, items: T[], ownerId: string): Promise<void> {
     const db = await this.initDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(storeName, 'readwrite');
       const store = tx.objectStore(storeName);
+      const index = store.index('localOwnerId');
       
-      items.forEach(item => {
-        store.put({ ...item, localOwnerId: ownerId });
-      });
+      // Get all existing keys for this user to identify what needs to be deleted
+      const request = index.getAllKeys(IDBKeyRange.only(ownerId));
+
+      request.onsuccess = () => {
+        const existingIds = request.result; // Array of keys (ids)
+        const newItemIds = new Set(items.map(i => i.id));
+
+        // 1. Delete removed items
+        existingIds.forEach((existingId) => {
+            if (!newItemIds.has(existingId.toString())) {
+                store.delete(existingId);
+            }
+        });
+
+        // 2. Put (Update/Insert) current items
+        items.forEach(item => {
+            store.put({ ...item, localOwnerId: ownerId });
+        });
+      };
 
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
