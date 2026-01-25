@@ -49,6 +49,7 @@ export const useNetworkLayer = ({
         const packet: NetworkPacket = {
             id: crypto.randomUUID(),
             type: 'INVENTORY_ANNOUNCE',
+            hops: MAX_GOSSIP_HOPS, // FIXED: Added hops to ensure propagation
             senderId: state.userRef.current.homeNodeOnion,
             payload: {
                 postId: post.id,
@@ -152,7 +153,7 @@ export const useNetworkLayer = ({
             !state.peersRef.current.some(p => p.onionAddress === senderNodeId) && 
             packet.type !== 'NODE_SHUTDOWN' && 
             packet.type !== 'USER_EXIT' && 
-            packet.type !== 'ANNOUNCE_PEER' &&
+            // FIXED: Removed ANNOUNCE_PEER from exclusion so users see "Unknown Signals" again
             packet.type !== 'INVENTORY_ANNOUNCE' &&
             packet.type !== 'INVENTORY_SYNC_REQUEST'
         ) {
