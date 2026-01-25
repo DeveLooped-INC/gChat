@@ -88,21 +88,19 @@ export const useAppState = (user: UserProfile) => {
     useEffect(() => { messagesRef.current = messages; }, [messages]);
 
     // --- PERSISTENCE (WRITE TO IDB) ---
-    useEffect(() => { if(isLoaded) storageService.saveBulk('contacts', contacts, user.id); }, [contacts, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.saveBulk('posts', posts, user.id); }, [posts, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.saveBulk('groups', groups, user.id); }, [groups, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.saveBulk('messages', messages, user.id); }, [messages, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.saveBulk('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.saveBulk('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
+    // Switched from saveBulk (Upsert only) to syncState (Upsert + Delete Missing)
+    useEffect(() => { if(isLoaded) storageService.syncState('contacts', contacts, user.id); }, [contacts, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.syncState('posts', posts, user.id); }, [posts, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.syncState('groups', groups, user.id); }, [groups, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.syncState('messages', messages, user.id); }, [messages, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.syncState('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
+    useEffect(() => { if(isLoaded) storageService.syncState('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
     
     // Config and Peers stay in LocalStorage
     useEffect(() => { localStorage.setItem(NODE_CONFIG_KEY, JSON.stringify(nodeConfig)); }, [nodeConfig]);
     
     useEffect(() => {
-        // Guard: Only save if we actually have data or if we are sure we want to save empty.
-        // With lazy init, peers is correct from start, so this is safe.
         localStorage.setItem(PEERS_KEY, JSON.stringify(peers));
-        // Keep network service updated for routing
         networkService.updateKnownPeers(peers.map(p => p.onionAddress));
     }, [peers]);
 
