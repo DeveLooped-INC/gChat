@@ -131,9 +131,6 @@ export const useNetworkLayer = ({
                     timestamp: Date.now()
                 }, effectiveTargetId);
 
-                // Note: We DO NOT generate a generic notification here anymore.
-                // We rely on 'replay' to generate specific, rich notifications when the user logs in.
-                
                 return; // Stop processing for current user
             }
         }
@@ -742,6 +739,9 @@ export const useNetworkLayer = ({
     useEffect(() => {
         if (state.isLoaded) {
             const replay = async () => {
+                // Short delay to ensure Refs are populated by useLayoutEffect
+                await new Promise(resolve => setTimeout(resolve, 500)); 
+                
                 const pending = await storageService.getItems<any>('offline_packets', user.id);
                 if (pending.length > 0) {
                     addNotification('Welcome Back', `Processing ${pending.length} missed packets...`, 'info');
@@ -749,6 +749,9 @@ export const useNetworkLayer = ({
                     pending.sort((a, b) => a.timestamp - b.timestamp);
                     
                     for (const item of pending) {
+                        // CRITICAL: Remove from processed set so handlePacket treats it as new
+                        if(item.packet.id) processedPacketIds.current.delete(item.packet.id);
+                        
                         await handlePacketRef.current(item.packet, item.senderNodeId);
                         await storageService.deleteItem('offline_packets', item.id);
                     }
