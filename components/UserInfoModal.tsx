@@ -154,7 +154,7 @@ const UserInfoModal: React.FC<UserInfoModalProps> = ({
                                 <button className="w-full py-2 bg-slate-800 text-slate-400 rounded-xl text-xs font-medium cursor-default border border-slate-800">
                                     This is your public identity
                                 </button>
-                                <div className="grid grid-cols-2 gap-3 pt-1">
+                                <div className={`grid gap-3 pt-1 ${onShutdown ? 'grid-cols-2' : 'grid-cols-1'}`}>
                                     {onLogout && (
                                         <button 
                                             onClick={onLogout}
