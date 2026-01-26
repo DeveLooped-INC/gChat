@@ -89,9 +89,9 @@ export const useNetworkLayer = ({
 
     // --- PACKET HANDLING LOGIC ---
     // We use a REF to hold the latest version of this function to avoid stale closures in the socket listener
-    const handlePacketRef = useRef<(packet: NetworkPacket, senderNodeId: string) => Promise<void>>(async () => {});
+    const handlePacketRef = useRef<(packet: NetworkPacket, senderNodeId: string, isReplay?: boolean) => Promise<void>>(async () => {});
 
-    const handlePacket = useCallback(async (packet: NetworkPacket, senderNodeId: string) => {
+    const handlePacket = useCallback(async (packet: NetworkPacket, senderNodeId: string, isReplay = false) => {
         // CRITICAL FIX: If state is not loaded (contacts empty), queue packet.
         if (!state.isLoaded) {
             console.log(`[Network] State not loaded. Queuing packet ${packet.type} from ${senderNodeId}`);
@@ -100,46 +100,55 @@ export const useNetworkLayer = ({
         }
 
         const currentUser = state.userRef.current;
-
-        // --- MULTI-USER OFFLINE HANDLING ---
-        // Enhanced Logic: Check for implicit targets (Social Packets)
         const registry = JSON.parse(localStorage.getItem('gchat_profile_registry') || '{}');
-        let effectiveTargetId = packet.targetUserId;
 
-        // Infer target for Broadcasts (Comments/Votes) by checking Post Author
-        if (!effectiveTargetId && ['COMMENT', 'VOTE', 'REACTION', 'COMMENT_VOTE', 'COMMENT_REACTION'].includes(packet.type)) {
-            const postId = packet.payload.postId;
-            const post = state.postsRef.current.find(p => p.id === postId);
-            if (post) {
-                // If the post author is a local user, they are the target
-                if (registry[post.authorId]) {
-                    effectiveTargetId = post.authorId;
-                }
-            }
-        }
-
-        // If the packet is for another user on this node
-        if (effectiveTargetId && effectiveTargetId !== currentUser.id) {
-            if (registry[effectiveTargetId]) {
-                console.log(`[Network] Parking packet for offline user ${effectiveTargetId}`);
-                
-                // Save Packet for Replay
+        // --- 1. HANDLING EXPLICIT TARGETS (Direct Messages, Handshakes) ---
+        // If the packet is targeted at a specific user on this node (who is NOT the current user)
+        // We must park it and STOP processing to prevent data leaks or errors.
+        if (packet.targetUserId && packet.targetUserId !== currentUser.id) {
+            if (registry[packet.targetUserId]) {
+                console.log(`[Network] Parking Targeted Packet (${packet.type}) for offline user ${packet.targetUserId}`);
                 await storageService.saveItem('offline_packets', {
                     id: crypto.randomUUID(),
                     packet,
                     senderNodeId,
                     timestamp: Date.now()
-                }, effectiveTargetId);
-
-                return; // Stop processing for current user
+                }, packet.targetUserId);
+                return; // STOP Processing for current user
             }
         }
+
+        // --- 2. HANDLING IMPLIED TARGETS (Social Broadcasts) ---
+        // If the packet is a social interaction (Comment, Vote, etc) on a post owned by a local offline user,
+        // we should park a COPY for them, but CONTINUE processing so the current user sees it and gossip continues.
+        let impliedTargetId: string | null = null;
+        if (!packet.targetUserId && ['COMMENT', 'VOTE', 'REACTION', 'COMMENT_VOTE', 'COMMENT_REACTION'].includes(packet.type)) {
+            const postId = packet.payload.postId;
+            // Note: We check postsRef directly. If the post exists locally, we check author.
+            const post = state.postsRef.current.find(p => p.id === postId);
+            if (post && registry[post.authorId]) {
+                impliedTargetId = post.authorId;
+            }
+        }
+
+        if (impliedTargetId && impliedTargetId !== currentUser.id) {
+            console.log(`[Network] Parking Social Notification for offline user ${impliedTargetId}`);
+            await storageService.saveItem('offline_packets', {
+                id: crypto.randomUUID(),
+                packet,
+                senderNodeId,
+                timestamp: Date.now()
+            }, impliedTargetId);
+            // DO NOT RETURN. Continue to gossip and update local state.
+        }
         
+        // --- DEDUPLICATION ---
         if (packet.id && processedPacketIds.current.has(packet.id)) {
             return; 
         }
         if (packet.id) processedPacketIds.current.add(packet.id);
 
+        // --- PEER STATUS UPDATE ---
         if (senderNodeId) {
             state.setPeers(prev => prev.map(p => {
                 if (p.onionAddress === senderNodeId && p.status !== 'online') {
@@ -196,7 +205,7 @@ export const useNetworkLayer = ({
                     };
                     networkService.sendMessage(senderNodeId, reqPacket);
                 }
-                daisyChainPacket(packet, senderNodeId);
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
             }
 
@@ -345,7 +354,7 @@ export const useNetworkLayer = ({
                             }];
                         });
                     }
-                    daisyChainPacket(packet, senderNodeId);
+                    if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 }
                 break;
             }
@@ -379,7 +388,7 @@ export const useNetworkLayer = ({
                 ));
                 setDiscoveredPeers(prev => prev.filter(p => p.id !== onionAddress));
                 if (packet.hops && packet.hops > 0) {
-                    daisyChainPacket(packet, senderNodeId);
+                    if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 }
                 break;
             }
@@ -558,7 +567,7 @@ export const useNetworkLayer = ({
             case 'DELETE_POST':
                 const { postId: delPostId } = packet.payload;
                 state.setPosts(prev => prev.filter(p => p.id !== delPostId));
-                daisyChainPacket(packet, senderNodeId);
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
             case 'EDIT_POST':
@@ -573,7 +582,7 @@ export const useNetworkLayer = ({
                     return p;
                 }));
                 if(editedPost) broadcastPostState(editedPost);
-                daisyChainPacket(packet, senderNodeId);
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
             case 'COMMENT':
@@ -611,7 +620,7 @@ export const useNetworkLayer = ({
                 }
 
                 if (postAfterComment) broadcastPostState(postAfterComment);
-                daisyChainPacket(packet, senderNodeId);
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
             case 'COMMENT_VOTE':
@@ -642,7 +651,7 @@ export const useNetworkLayer = ({
                 }
 
                 if(postAfterCV) broadcastPostState(postAfterCV);
-                daisyChainPacket(packet, senderNodeId);
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
             case 'COMMENT_REACTION':
@@ -675,7 +684,7 @@ export const useNetworkLayer = ({
                 }
 
                 if(postAfterCR) broadcastPostState(postAfterCR);
-                daisyChainPacket(packet, senderNodeId);
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
             case 'VOTE':
@@ -697,7 +706,7 @@ export const useNetworkLayer = ({
                 }
 
                 if(postAfterVote) broadcastPostState(postAfterVote);
-                daisyChainPacket(packet, senderNodeId);
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
             case 'REACTION': {
@@ -724,7 +733,7 @@ export const useNetworkLayer = ({
                 }
 
                 if(postAfterReaction) broadcastPostState(postAfterReaction);
-                daisyChainPacket(packet, senderNodeId);
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
             }
         }
@@ -752,7 +761,8 @@ export const useNetworkLayer = ({
                         // CRITICAL: Remove from processed set so handlePacket treats it as new
                         if(item.packet.id) processedPacketIds.current.delete(item.packet.id);
                         
-                        await handlePacketRef.current(item.packet, item.senderNodeId);
+                        // Pass isReplay=true to prevent re-gossiping old news
+                        await handlePacketRef.current(item.packet, item.senderNodeId, true);
                         await storageService.deleteItem('offline_packets', item.id);
                     }
                 }
