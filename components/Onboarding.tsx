@@ -145,7 +145,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
      if (storedMeta) {
          // Known user on this device - restore immediately
          // Note: We use the stored displayName (Handle) and reconstruct the full unique username
-         await finalizeUser(keys, storedMeta.displayName, storedMeta.avatarUrl);
+         await finalizeUser(keys, storedMeta.displayName, storedMeta.avatarUrl, storedMeta.bio);
      } else {
          // Unknown user (new browser) - ask for details
          setRecoveredKeys(keys);
@@ -202,19 +202,26 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       }
   };
 
-  const finalizeUser = async (keys: any, chosenHandle: string, finalAvatar?: string) => {
+  const finalizeUser = async (keys: any, chosenHandle: string, finalAvatar?: string, finalBio?: string) => {
       try {
           const userId = keys.signing.publicKey;
           const tripcode = generateTripcode(userId);
           
           // The "Username" is now the unique combination
           const uniqueUsername = `${chosenHandle}.${tripcode}`;
+          
+          const bio = finalBio || 'Secured by Tor';
 
           // --- PROFILE PERSISTENCE ---
           
-          // 1. Update Registry (Store just the handle part for display name)
+          // 1. Update Registry (Store handle, avatar, AND bio)
           const registry = JSON.parse(localStorage.getItem('gchat_profile_registry') || '{}');
-          registry[userId] = { displayName: chosenHandle, username: uniqueUsername, avatarUrl: finalAvatar };
+          registry[userId] = { 
+              displayName: chosenHandle, 
+              username: uniqueUsername, 
+              avatarUrl: finalAvatar,
+              bio: bio // Added Bio Persistence
+          };
           localStorage.setItem('gchat_profile_registry', JSON.stringify(registry));
 
           // 2. Check for Admin Status (Node Ownership)
@@ -233,7 +240,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
               id: userId,
               username: uniqueUsername, // Globally Unique ID
               displayName: chosenHandle, // Human Readable Handle
-              bio: 'Secured by Tor',
+              bio: bio,
               avatarUrl: finalAvatar,
               keys,
               isAdmin,
