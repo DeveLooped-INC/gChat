@@ -794,7 +794,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                   onMessage={() => {}}
                   onViewPosts={handleViewUserPosts}
                   onLogout={onLogout}
-                  onShutdown={performGracefulShutdown}
+                  onShutdown={user.isAdmin ? performGracefulShutdown : undefined}
                   posts={state.posts}
               />
           )}
