@@ -781,7 +781,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                       username: user.username, 
                       avatarUrl: user.avatarUrl,
                       homeNode: user.homeNodeOnion,
-                      followersCount: user.followersCount
+                      followersCount: user.followersCount,
+                      bio: user.bio 
                   }}
                   currentUser={user}
                   isContact={false}
@@ -824,6 +825,17 @@ const App: React.FC = () => {
   const handleUpdateUser = (updated: UserProfile) => {
       setUser(updated);
       localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(updated));
+      
+      // PERSIST TO REGISTRY (Fixes data loss on logout)
+      const registry = JSON.parse(localStorage.getItem('gchat_profile_registry') || '{}');
+      registry[updated.id] = {
+          displayName: updated.displayName,
+          username: updated.username,
+          avatarUrl: updated.avatarUrl,
+          bio: updated.bio, // Now saving Bio
+          isDiscoverable: updated.isDiscoverable
+      };
+      localStorage.setItem('gchat_profile_registry', JSON.stringify(registry));
   };
 
   if (!user) {
