@@ -49,7 +49,7 @@ export const useNetworkLayer = ({
         const packet: NetworkPacket = {
             id: crypto.randomUUID(),
             type: 'INVENTORY_ANNOUNCE',
-            hops: MAX_GOSSIP_HOPS, // FIXED: Added hops to ensure propagation
+            hops: MAX_GOSSIP_HOPS, 
             senderId: state.userRef.current.homeNodeOnion,
             payload: {
                 postId: post.id,
@@ -93,7 +93,6 @@ export const useNetworkLayer = ({
 
     const handlePacket = useCallback(async (packet: NetworkPacket, senderNodeId: string) => {
         // CRITICAL FIX: If state is not loaded (contacts empty), queue packet.
-        // This prevents "Existing Contact" checks from failing and creating duplicate requests.
         if (!state.isLoaded) {
             console.log(`[Network] State not loaded. Queuing packet ${packet.type} from ${senderNodeId}`);
             packetQueue.current.push({ packet, senderNodeId });
@@ -103,32 +102,37 @@ export const useNetworkLayer = ({
         const currentUser = state.userRef.current;
 
         // --- MULTI-USER OFFLINE HANDLING ---
-        // If packet is for another user on this node who is not currently logged in
-        if (packet.targetUserId && packet.targetUserId !== currentUser.id) {
-            const registry = JSON.parse(localStorage.getItem('gchat_profile_registry') || '{}');
-            // If the target user exists in this node's registry
-            if (registry[packet.targetUserId]) {
-                console.log(`[Network] Parking packet for offline user ${packet.targetUserId}`);
+        // Enhanced Logic: Check for implicit targets (Social Packets)
+        const registry = JSON.parse(localStorage.getItem('gchat_profile_registry') || '{}');
+        let effectiveTargetId = packet.targetUserId;
+
+        // Infer target for Broadcasts (Comments/Votes) by checking Post Author
+        if (!effectiveTargetId && ['COMMENT', 'VOTE', 'REACTION', 'COMMENT_VOTE', 'COMMENT_REACTION'].includes(packet.type)) {
+            const postId = packet.payload.postId;
+            const post = state.postsRef.current.find(p => p.id === postId);
+            if (post) {
+                // If the post author is a local user, they are the target
+                if (registry[post.authorId]) {
+                    effectiveTargetId = post.authorId;
+                }
+            }
+        }
+
+        // If the packet is for another user on this node
+        if (effectiveTargetId && effectiveTargetId !== currentUser.id) {
+            if (registry[effectiveTargetId]) {
+                console.log(`[Network] Parking packet for offline user ${effectiveTargetId}`);
                 
-                // 1. Save Packet for Replay
+                // Save Packet for Replay
                 await storageService.saveItem('offline_packets', {
                     id: crypto.randomUUID(),
                     packet,
                     senderNodeId,
                     timestamp: Date.now()
-                }, packet.targetUserId);
+                }, effectiveTargetId);
 
-                // 2. Generate a Generic Notification for them
-                const notif: NotificationItem = {
-                    id: crypto.randomUUID(),
-                    title: 'Missed Activity',
-                    message: `Received ${packet.type} while you were away.`,
-                    type: 'info',
-                    timestamp: Date.now(),
-                    read: false,
-                    linkRoute: AppRoute.NOTIFICATIONS
-                };
-                await storageService.saveItem('notifications', notif, packet.targetUserId);
+                // Note: We DO NOT generate a generic notification here anymore.
+                // We rely on 'replay' to generate specific, rich notifications when the user logs in.
                 
                 return; // Stop processing for current user
             }
@@ -153,13 +157,11 @@ export const useNetworkLayer = ({
             !state.peersRef.current.some(p => p.onionAddress === senderNodeId) && 
             packet.type !== 'NODE_SHUTDOWN' && 
             packet.type !== 'USER_EXIT' && 
-            // FIXED: Removed ANNOUNCE_PEER from exclusion so users see "Unknown Signals" again
             packet.type !== 'INVENTORY_ANNOUNCE' &&
             packet.type !== 'INVENTORY_SYNC_REQUEST'
         ) {
             setPendingNodeRequests(prev => {
                 if (prev.includes(senderNodeId)) return prev;
-                // Only notify if we don't know the node
                 addNotification('New Node Signal', `Unknown peer ${senderNodeId.substring(0,8)}... pinged you.`, 'info', AppRoute.NODE_SETTINGS);
                 return [...prev, senderNodeId];
             });
@@ -324,7 +326,6 @@ export const useNetworkLayer = ({
                     const existingPeer = state.peersRef.current.find(p => p.onionAddress === info.onionAddress);
 
                     if (existingPeer) {
-                        // Only update if not already trusted to avoid downgrading trust level or if we just want to update metadata
                         state.setPeers(prev => prev.map(p => 
                             p.onionAddress === info.onionAddress 
                                 ? { ...p, alias: info.alias || p.alias, status: 'online', lastSeen: Date.now() } 
@@ -397,11 +398,8 @@ export const useNetworkLayer = ({
                     }));
                 }
                 
-                // CRITICAL CHECK: Must use contactsRef which is populated only after state.isLoaded
                 const existingContact = state.contactsRef.current.find(c => c.id === req.fromUserId);
                 if (existingContact) {
-                    // Contact already exists, ignore request.
-                    // Optionally update home node if changed
                     if (!existingContact.homeNodes.includes(req.fromHomeNode)) {
                         state.setContacts(prev => prev.map(c => c.id === req.fromUserId ? {...c, homeNodes: [req.fromHomeNode]} : c));
                     }
@@ -414,7 +412,6 @@ export const useNetworkLayer = ({
                     return [...prev, req];
                 });
                 
-                // Try to connect back to their node to establish circuit
                 if (req.fromHomeNode) networkService.connect(req.fromHomeNode);
                 break;
 
