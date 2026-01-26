@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import { UserProfile, Contact, Post, Group, Message, NotificationItem, NodePeer, ConnectionRequest, AppRoute } from '../types';
 import { networkService } from '../services/networkService';
 import { storageService } from '../services/storage';
@@ -73,6 +73,7 @@ export const useAppState = (user: UserProfile) => {
     }, [user.id]);
 
     // Refs for callbacks
+    // Use useLayoutEffect to ensure refs are updated BEFORE other effects run (like network replay)
     const userRef = useRef(user);
     const contactsRef = useRef(contacts);
     const peersRef = useRef(peers);
@@ -81,13 +82,13 @@ export const useAppState = (user: UserProfile) => {
     const groupsRef = useRef(groups);
     const messagesRef = useRef(messages);
     
-    useEffect(() => { userRef.current = user; }, [user]);
-    useEffect(() => { contactsRef.current = contacts; }, [contacts]);
-    useEffect(() => { peersRef.current = peers; }, [peers]);
-    useEffect(() => { nodeConfigRef.current = nodeConfig; }, [nodeConfig]);
-    useEffect(() => { postsRef.current = posts; }, [posts]);
-    useEffect(() => { groupsRef.current = groups; }, [groups]);
-    useEffect(() => { messagesRef.current = messages; }, [messages]);
+    useLayoutEffect(() => { userRef.current = user; }, [user]);
+    useLayoutEffect(() => { contactsRef.current = contacts; }, [contacts]);
+    useLayoutEffect(() => { peersRef.current = peers; }, [peers]);
+    useLayoutEffect(() => { nodeConfigRef.current = nodeConfig; }, [nodeConfig]);
+    useLayoutEffect(() => { postsRef.current = posts; }, [posts]);
+    useLayoutEffect(() => { groupsRef.current = groups; }, [groups]);
+    useLayoutEffect(() => { messagesRef.current = messages; }, [messages]);
 
     // --- PERSISTENCE (WRITE TO IDB) ---
     // Switched from saveBulk (Upsert only) to syncState (Upsert + Delete Missing)
