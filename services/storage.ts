@@ -2,7 +2,7 @@
 import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest } from '../types';
 
 const DB_NAME = 'gChat_Data';
-const DB_VERSION = 3;
+const DB_VERSION = 4; // Bumped to force index check/creation
 
 type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' | 'requests' | 'offline_packets';
 
@@ -15,7 +15,10 @@ class StorageService {
     this.dbPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+          console.error("IDB Open Error:", request.error);
+          reject(request.error);
+      };
       
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
@@ -51,69 +54,93 @@ class StorageService {
   // --- GENERIC OPERATIONS ---
 
   public async saveItem<T extends { id: string }>(storeName: StoreName, item: T, ownerId: string): Promise<void> {
-    const db = await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const record = { ...item, localOwnerId: ownerId };
-      const request = store.put(record);
-      
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    try {
+        const db = await this.initDB();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readwrite');
+          const store = tx.objectStore(storeName);
+          const record = { ...item, localOwnerId: ownerId };
+          const request = store.put(record);
+          
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        });
+    } catch(e) {
+        console.error(`Storage Save Error (${storeName}):`, e);
+    }
   }
 
   // Replaces saveBulk with a synchronization method that handles deletions
   public async syncState<T extends { id: string }>(storeName: StoreName, items: T[], ownerId: string): Promise<void> {
-    const db = await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const index = store.index('localOwnerId');
-      
-      // Get all existing keys for this user to identify what needs to be deleted
-      const request = index.getAllKeys(IDBKeyRange.only(ownerId));
+    try {
+        const db = await this.initDB();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readwrite');
+          const store = tx.objectStore(storeName);
+          const index = store.index('localOwnerId');
+          
+          // Get all existing keys for this user to identify what needs to be deleted
+          const request = index.getAllKeys(IDBKeyRange.only(ownerId));
 
-      request.onsuccess = () => {
-        const existingIds = request.result; // Array of keys (ids)
-        const newItemIds = new Set(items.map(i => i.id));
+          request.onsuccess = () => {
+            const existingIds = request.result; // Array of keys (ids)
+            const newItemIds = new Set(items.map(i => i.id));
 
-        // 1. Delete removed items
-        existingIds.forEach((existingId) => {
-            if (!newItemIds.has(existingId.toString())) {
-                store.delete(existingId);
-            }
+            // 1. Delete removed items
+            existingIds.forEach((existingId) => {
+                if (!newItemIds.has(existingId.toString())) {
+                    store.delete(existingId);
+                }
+            });
+
+            // 2. Put (Update/Insert) current items
+            items.forEach(item => {
+                store.put({ ...item, localOwnerId: ownerId });
+            });
+          };
+
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => {
+              console.error(`Sync Tx Error (${storeName}):`, tx.error);
+              reject(tx.error);
+          };
         });
-
-        // 2. Put (Update/Insert) current items
-        items.forEach(item => {
-            store.put({ ...item, localOwnerId: ownerId });
-        });
-      };
-
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    } catch(e) {
+        console.error(`Storage Sync Error (${storeName}):`, e);
+    }
   }
 
   public async getItems<T>(storeName: StoreName, ownerId: string): Promise<T[]> {
-    const db = await this.initDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readonly');
-      const store = tx.objectStore(storeName);
-      
-      // Safety check: Index might be missing if migration failed previously
-      if (!store.indexNames.contains('localOwnerId')) {
-          reject(new Error(`Index 'localOwnerId' missing on ${storeName}. DB Migration required.`));
-          return;
-      }
+    try {
+        const db = await this.initDB();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readonly');
+          const store = tx.objectStore(storeName);
+          
+          // Safety check: Index might be missing if migration failed previously
+          if (!store.indexNames.contains('localOwnerId')) {
+              console.warn(`Index 'localOwnerId' missing on ${storeName}. Recreating index required.`);
+              // Fallback: Get all and filter manually (Slow but works)
+              const fallbackReq = store.getAll();
+              fallbackReq.onsuccess = () => {
+                  const all = fallbackReq.result as (T & { localOwnerId?: string })[];
+                  const filtered = all.filter(i => i.localOwnerId === ownerId);
+                  resolve(filtered);
+              };
+              fallbackReq.onerror = () => reject(fallbackReq.error);
+              return;
+          }
 
-      const index = store.index('localOwnerId');
-      const request = index.getAll(ownerId);
+          const index = store.index('localOwnerId');
+          const request = index.getAll(ownerId);
 
-      request.onsuccess = () => resolve(request.result as T[]);
-      request.onerror = () => reject(request.error);
-    });
+          request.onsuccess = () => resolve(request.result as T[]);
+          request.onerror = () => reject(request.error);
+        });
+    } catch(e) {
+        console.error(`Storage Get Error (${storeName}):`, e);
+        return [];
+    }
   }
 
   public async deleteItem(storeName: StoreName, id: string): Promise<void> {
@@ -145,6 +172,12 @@ class StorageService {
       return new Promise((resolve, reject) => {
           const tx = db.transaction('messages', 'readwrite');
           const store = tx.objectStore('messages');
+          
+          if (!store.indexNames.contains('localOwnerId')) {
+              resolve(0); // Cannot prune efficiently without index
+              return;
+          }
+
           const index = store.index('localOwnerId');
           const request = index.openCursor(IDBKeyRange.only(ownerId));
           
