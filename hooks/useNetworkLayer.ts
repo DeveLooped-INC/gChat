@@ -36,6 +36,10 @@ export const useNetworkLayer = ({
     
     const processedPacketIds = useRef<Set<string>>(new Set());
     
+    // Ensure we always use the latest addNotification to avoid stale state in async loops
+    const addNotificationRef = useRef(addNotification);
+    useEffect(() => { addNotificationRef.current = addNotification; }, [addNotification]);
+
     // Packet Queue for pre-load handling
     const packetQueue = useRef<{packet: NetworkPacket, senderNodeId: string}[]>([]);
 
@@ -168,7 +172,7 @@ export const useNetworkLayer = ({
         ) {
             setPendingNodeRequests(prev => {
                 if (prev.includes(senderNodeId)) return prev;
-                addNotification('New Node Signal', `Unknown peer ${senderNodeId.substring(0,8)}... pinged you.`, 'info', AppRoute.NODE_SETTINGS);
+                addNotificationRef.current('New Node Signal', `Unknown peer ${senderNodeId.substring(0,8)}... pinged you.`, 'info', AppRoute.NODE_SETTINGS);
                 return [...prev, senderNodeId];
             });
         }
@@ -178,7 +182,7 @@ export const useNetworkLayer = ({
                 if (packet.targetUserId === currentUser.id) {
                     const updatedUser = { ...currentUser, followersCount: (currentUser.followersCount || 0) + 1 };
                     onUpdateUser(updatedUser);
-                    addNotification('New Follower', 'Someone started following you!', 'success', AppRoute.NODE_SETTINGS);
+                    addNotificationRef.current('New Follower', 'Someone started following you!', 'success', AppRoute.NODE_SETTINGS);
                 }
                 break;
             }
@@ -258,7 +262,7 @@ export const useNetworkLayer = ({
                         const isRecent = (Date.now() - post.timestamp) < (maxSyncAgeHours * 60 * 60 * 1000);
                         if (isRecent && post.authorId !== currentUser.id) {
                             const { handle } = formatUserIdentity(post.authorName);
-                            addNotification('New Broadcast', `${handle} posted: ${post.content.substring(0, 30)}...`, 'info', AppRoute.FEED, post.authorId);
+                            addNotificationRef.current('New Broadcast', `${handle} posted: ${post.content.substring(0, 30)}...`, 'info', AppRoute.FEED, post.authorId);
                         }
                         broadcastPostState(postWithHash);
                     }
@@ -321,7 +325,7 @@ export const useNetworkLayer = ({
                         });
                         return next.sort((a,b) => b.timestamp - a.timestamp);
                     });
-                    if (addedCount > 0) addNotification('Sync', `Updated ${addedCount} posts via Inventory Sync.`, 'success');
+                    if (addedCount > 0) addNotificationRef.current('Sync', `Updated ${addedCount} posts via Inventory Sync.`, 'success');
                 }
                 break;
             }
@@ -365,7 +369,7 @@ export const useNetworkLayer = ({
                     state.setPosts(prev => {
                         if (prev.some(p => p.id === postData.id)) return prev;
                         const { handle } = formatUserIdentity(postData.authorName);
-                        addNotification('Friend Post', `${handle} shared a secure broadcast.`, 'info', AppRoute.FEED, postData.authorId);
+                        addNotificationRef.current('Friend Post', `${handle} shared a secure broadcast.`, 'info', AppRoute.FEED, postData.authorId);
                         return [postData, ...prev];
                     });
                 }
@@ -414,7 +418,7 @@ export const useNetworkLayer = ({
 
                 state.setConnectionRequests(prev => {
                     if (prev.some(r => r.fromUserId === req.fromUserId)) return prev;
-                    addNotification('New Connection', `${req.fromDisplayName} wants to connect.`, 'success', AppRoute.CONTACTS);
+                    addNotificationRef.current('New Connection', `${req.fromDisplayName} wants to connect.`, 'success', AppRoute.CONTACTS);
                     return [...prev, req];
                 });
                 
@@ -454,7 +458,7 @@ export const useNetworkLayer = ({
                             content: content,
                             timestamp: Date.now(),
                             delivered: true,
-                            read: activeChatId === threadId, 
+                            read: activeChatId === threadId && !isReplay, 
                             isMine: false,
                             media, attachmentUrl, replyToId, privacy
                         };
@@ -462,11 +466,13 @@ export const useNetworkLayer = ({
                             if (prev.some(m => m.id === newMsg.id)) return prev;
                             return [...prev, newMsg];
                         });
-                        if (activeChatId !== threadId) {
+                        
+                        // Force notification if Replaying (user was offline) OR not in active chat
+                        if (isReplay || activeChatId !== threadId) {
                             const group = state.groupsRef.current.find(g => g.id === encPayload.groupId);
                             if (!group || !group.isMuted) {
                                 const title = group ? `Group: ${group.name}` : `From ${senderContact.displayName}`;
-                                addNotification('New Message', title, 'info', AppRoute.CHAT, threadId);
+                                addNotificationRef.current('New Message', title, 'info', AppRoute.CHAT, threadId);
                             }
                         }
                     }
@@ -509,7 +515,7 @@ export const useNetworkLayer = ({
                 const group = packet.payload as Group;
                 state.setGroups(prev => {
                     if (prev.some(g => g.id === group.id)) return prev;
-                    addNotification('Group Invite', `Added to group "${group.name}"`, 'success', AppRoute.CHAT, group.id);
+                    addNotificationRef.current('Group Invite', `Added to group "${group.name}"`, 'success', AppRoute.CHAT, group.id);
                     return [...prev, group];
                 });
                 break;
@@ -609,12 +615,12 @@ export const useNetworkLayer = ({
                 if (postForComment) {
                     const { handle } = formatUserIdentity(newComment.authorName || 'Someone');
                     if (postForComment.authorId === currentUser.id && newComment.authorId !== currentUser.id) {
-                        addNotification('New Comment', `${handle} commented on your broadcast`, 'info', AppRoute.FEED, postId);
+                        addNotificationRef.current('New Comment', `${handle} commented on your broadcast`, 'info', AppRoute.FEED, postId);
                     }
                     if (parentCommentId) {
                         const parent = findCommentInTree(postForComment.commentsList, parentCommentId);
                         if (parent && parent.authorId === currentUser.id && newComment.authorId !== currentUser.id) {
-                            addNotification('New Reply', `${handle} replied to your comment`, 'info', AppRoute.FEED, postId);
+                            addNotificationRef.current('New Reply', `${handle} replied to your comment`, 'info', AppRoute.FEED, postId);
                         }
                     }
                 }
@@ -646,7 +652,7 @@ export const useNetworkLayer = ({
                     if (targetComment && targetComment.authorId === currentUser.id && cvUserId !== currentUser.id) {
                         const voter = state.contactsRef.current.find(c => c.id === cvUserId);
                         const { handle } = formatUserIdentity(voter?.displayName || 'Someone');
-                        addNotification('Comment Vote', `${handle} ${cvType}voted your comment`, 'success', AppRoute.FEED, cvPostId);
+                        addNotificationRef.current('Comment Vote', `${handle} ${cvType}voted your comment`, 'success', AppRoute.FEED, cvPostId);
                     }
                 }
 
@@ -679,7 +685,7 @@ export const useNetworkLayer = ({
                     if (targetComment && targetComment.authorId === currentUser.id && crUserId !== currentUser.id) {
                         const reactor = state.contactsRef.current.find(c => c.id === crUserId);
                         const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
-                        addNotification('New Reaction', `${handle} reacted ${crEmoji} to your comment`, 'success', AppRoute.FEED, crPostId);
+                        addNotificationRef.current('New Reaction', `${handle} reacted ${crEmoji} to your comment`, 'success', AppRoute.FEED, crPostId);
                     }
                 }
 
@@ -702,7 +708,7 @@ export const useNetworkLayer = ({
                 if (postForVote && postForVote.authorId === currentUser.id && vUserId !== currentUser.id) {
                     const voter = state.contactsRef.current.find(c => c.id === vUserId);
                     const { handle } = formatUserIdentity(voter?.displayName || 'Someone');
-                    addNotification('Broadcast Vote', `${handle} ${vType}voted your post`, 'success', AppRoute.FEED, vPostId);
+                    addNotificationRef.current('Broadcast Vote', `${handle} ${vType}voted your post`, 'success', AppRoute.FEED, vPostId);
                 }
 
                 if(postAfterVote) broadcastPostState(postAfterVote);
@@ -729,7 +735,7 @@ export const useNetworkLayer = ({
                 if (postForReaction && postForReaction.authorId === currentUser.id && rUserId !== currentUser.id) {
                     const reactor = state.contactsRef.current.find(c => c.id === rUserId);
                     const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
-                    addNotification('New Reaction', `${handle} reacted ${emoji} to your broadcast`, 'success', AppRoute.FEED, rPostId);
+                    addNotificationRef.current('New Reaction', `${handle} reacted ${emoji} to your broadcast`, 'success', AppRoute.FEED, rPostId);
                 }
 
                 if(postAfterReaction) broadcastPostState(postAfterReaction);
@@ -753,7 +759,7 @@ export const useNetworkLayer = ({
                 
                 const pending = await storageService.getItems<any>('offline_packets', user.id);
                 if (pending.length > 0) {
-                    addNotification('Welcome Back', `Processing ${pending.length} missed packets...`, 'info');
+                    addNotificationRef.current('Welcome Back', `Processing ${pending.length} missed packets...`, 'info');
                     // Sort by timestamp to preserve order
                     pending.sort((a, b) => a.timestamp - b.timestamp);
                     
