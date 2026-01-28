@@ -479,7 +479,7 @@ const Chat: React.FC<ChatProps> = ({
                     </div>
 
                     {/* Actions Overlay (Hover) */}
-                    <div className={`absolute top-0 ${msg.isMine ? '-left-20' : '-right-20'} h-full flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity px-2`}>
+                    <div className={`absolute top-0 ${msg.isMine ? '-left-20' : '-right-20'} h-full flex items-center gap-2 transition-opacity px-2 ${isReactionMenuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                         <button onClick={() => setReplyingToMessage(msg)} className="p-1.5 bg-slate-700/50 hover:bg-slate-700 rounded-full text-slate-300 hover:text-white transition-colors" title="Reply">
                             <CornerDownRight size={14} />
                         </button>
