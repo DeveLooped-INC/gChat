@@ -2,7 +2,7 @@
 import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest } from '../types';
 
 const DB_NAME = 'gChat_Data';
-const DB_VERSION = 4; // Bumped to force index check/creation
+const DB_VERSION = 5; // Bumped to force index check/creation and fix schema issues
 
 type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' | 'requests' | 'offline_packets';
 
@@ -77,27 +77,40 @@ class StorageService {
         return new Promise((resolve, reject) => {
           const tx = db.transaction(storeName, 'readwrite');
           const store = tx.objectStore(storeName);
-          const index = store.index('localOwnerId');
-          
-          // Get all existing keys for this user to identify what needs to be deleted
-          const request = index.getAllKeys(IDBKeyRange.only(ownerId));
+          const newItemIds = new Set(items.map(i => i.id));
 
-          request.onsuccess = () => {
-            const existingIds = request.result; // Array of keys (ids)
-            const newItemIds = new Set(items.map(i => i.id));
+          // ROBUST STRATEGY: Handle missing index gracefully
+          if (store.indexNames.contains('localOwnerId')) {
+              const index = store.index('localOwnerId');
+              const request = index.getAllKeys(IDBKeyRange.only(ownerId));
 
-            // 1. Delete removed items
-            existingIds.forEach((existingId) => {
-                if (!newItemIds.has(existingId.toString())) {
-                    store.delete(existingId);
-                }
-            });
-
-            // 2. Put (Update/Insert) current items
-            items.forEach(item => {
-                store.put({ ...item, localOwnerId: ownerId });
-            });
-          };
+              request.onsuccess = () => {
+                const existingIds = request.result; // Array of keys (ids)
+                // 1. Delete removed items
+                existingIds.forEach((existingId) => {
+                    if (!newItemIds.has(existingId.toString())) {
+                        store.delete(existingId);
+                    }
+                });
+                // 2. Put (Update/Insert) current items
+                items.forEach(item => {
+                    store.put({ ...item, localOwnerId: ownerId });
+                });
+              };
+              request.onerror = () => {
+                  console.error(`Sync Index Error (${storeName}):`, request.error);
+                  // Fallback to naive PUT only if index read fails, preventing total data loss
+                  items.forEach(item => store.put({ ...item, localOwnerId: ownerId }));
+              };
+          } else {
+              // Index missing? This shouldn't happen with version bumping, but as a failsafe:
+              // We can't efficiently delete old items without the index to find them.
+              // So we just Upsert. This might leave orphans but saves current data.
+              console.warn(`Index missing for ${storeName}, skipping deletion phase.`);
+              items.forEach(item => {
+                  store.put({ ...item, localOwnerId: ownerId });
+              });
+          }
 
           tx.oncomplete = () => resolve();
           tx.onerror = () => {
