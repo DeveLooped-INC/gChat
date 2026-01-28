@@ -107,8 +107,6 @@ export const useNetworkLayer = ({
         const registry = JSON.parse(localStorage.getItem('gchat_profile_registry') || '{}');
 
         // --- 1. HANDLING EXPLICIT TARGETS (Direct Messages, Handshakes) ---
-        // If the packet is targeted at a specific user on this node (who is NOT the current user)
-        // We must park it and STOP processing to prevent data leaks or errors.
         if (packet.targetUserId && packet.targetUserId !== currentUser.id) {
             if (registry[packet.targetUserId]) {
                 console.log(`[Network] Parking Targeted Packet (${packet.type}) for offline user ${packet.targetUserId}`);
@@ -118,17 +116,14 @@ export const useNetworkLayer = ({
                     senderNodeId,
                     timestamp: Date.now()
                 }, packet.targetUserId);
-                return; // STOP Processing for current user
+                return; 
             }
         }
 
         // --- 2. HANDLING IMPLIED TARGETS (Social Broadcasts) ---
-        // If the packet is a social interaction (Comment, Vote, etc) on a post owned by a local offline user,
-        // we should park a COPY for them, but CONTINUE processing so the current user sees it and gossip continues.
         let impliedTargetId: string | null = null;
         if (!packet.targetUserId && ['COMMENT', 'VOTE', 'REACTION', 'COMMENT_VOTE', 'COMMENT_REACTION'].includes(packet.type)) {
             const postId = packet.payload.postId;
-            // Note: We check postsRef directly. If the post exists locally, we check author.
             const post = state.postsRef.current.find(p => p.id === postId);
             if (post && registry[post.authorId]) {
                 impliedTargetId = post.authorId;
@@ -143,7 +138,6 @@ export const useNetworkLayer = ({
                 senderNodeId,
                 timestamp: Date.now()
             }, impliedTargetId);
-            // DO NOT RETURN. Continue to gossip and update local state.
         }
         
         // --- DEDUPLICATION ---
@@ -162,7 +156,7 @@ export const useNetworkLayer = ({
             }));
         }
 
-        // Logic to detect unknown nodes pinging us
+        // Detect unknown nodes
         if (senderNodeId && 
             !state.peersRef.current.some(p => p.onionAddress === senderNodeId) && 
             packet.type !== 'NODE_SHUTDOWN' && 
@@ -201,6 +195,7 @@ export const useNetworkLayer = ({
                 const localHash = existingPost ? calculatePostHash(existingPost) : null;
                 
                 if (!existingPost || localHash !== contentHash) {
+                    // We don't have this version. Request it.
                     const reqPacket: NetworkPacket = {
                         id: crypto.randomUUID(),
                         type: 'FETCH_POST',
@@ -209,7 +204,10 @@ export const useNetworkLayer = ({
                     };
                     networkService.sendMessage(senderNodeId, reqPacket);
                 }
-                if (!isReplay) daisyChainPacket(packet, senderNodeId);
+                
+                // NO DAISY CHAIN HERE.
+                // We rely on 'POST_DATA' triggering 'broadcastPostState' to propagate availability.
+                // This prevents announcing things we don't have yet.
                 break;
             }
 
@@ -264,12 +262,16 @@ export const useNetworkLayer = ({
                             const { handle } = formatUserIdentity(post.authorName);
                             addNotificationRef.current('New Broadcast', `${handle} posted: ${post.content.substring(0, 30)}...`, 'info', AppRoute.FEED, post.authorId);
                         }
+                        // PROPAGATION TRIGGER: I have received and validated new data.
+                        // I now announce it to MY peers so they can fetch it from me.
                         broadcastPostState(postWithHash);
                     }
                 }
                 break;
             }
 
+            // ... (Rest of cases remain similar, ensure existing functionality is preserved) ...
+            
             case 'INVENTORY_SYNC_REQUEST': {
                 const { inventory, since } = packet.payload;
                 const theirInv = inventory as { id: string, hash: string }[];
@@ -467,7 +469,6 @@ export const useNetworkLayer = ({
                             return [...prev, newMsg];
                         });
                         
-                        // Force notification if Replaying (user was offline) OR not in active chat
                         if (isReplay || activeChatId !== threadId) {
                             const group = state.groupsRef.current.find(g => g.id === encPayload.groupId);
                             if (!group || !group.isMuted) {
