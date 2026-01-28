@@ -57,7 +57,11 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
   const handleNotificationNavigation = useCallback((route?: AppRoute, id?: string) => {
       if (!route) return;
       if (route === AppRoute.CHAT && id) { setActiveChatId(id); handleNavigate(AppRoute.CHAT); } 
-      else if (route === AppRoute.FEED && id) { setFeedInitialState({ filter: 'public', authorId: id }); handleNavigate(AppRoute.FEED); } 
+      else if (route === AppRoute.FEED && id) { 
+          // LinkId for FEED notifications is usually the POST ID, not Author ID
+          setFeedInitialState({ filter: 'public', postId: id }); 
+          handleNavigate(AppRoute.FEED); 
+      } 
       else if (route === AppRoute.CONTACTS) { handleNavigate(AppRoute.CONTACTS); } 
       else { handleNavigate(route); }
   }, [handleNavigate]);
