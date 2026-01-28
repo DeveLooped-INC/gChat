@@ -238,13 +238,33 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                           <button onClick={() => onCommentVote(postId, comment.id, 'up')} disabled={isMyComment} className={`flex items-center gap-1 text-[10px] ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-500 hover:text-emerald-400'}`}><ThumbsUp size={12} /> {upVotes > 0 && upVotes}</button>
                           <button onClick={() => onCommentVote(postId, comment.id, 'down')} disabled={isMyComment} className={`flex items-center gap-1 text-[10px] ${myVote === 'down' ? 'text-red-400' : 'text-slate-500 hover:text-red-400'}`}><ThumbsDown size={12} /> {downVotes > 0 && downVotes}</button>
                           <button onClick={() => setReplyingTo({postId, commentId: comment.id})} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-white"><MessageCircle size={12} /> Reply</button>
-                          <div className="relative group/react">
-                              <button className="text-slate-500 hover:text-yellow-400"><Smile size={12} /></button>
-                              <div className="absolute left-0 bottom-full mb-1 hidden group-hover/react:flex bg-slate-900 border border-slate-700 rounded-full p-1 gap-1 shadow-xl z-10">
-                                  {SOCIAL_REACTIONS.map(emoji => (
-                                      <button key={emoji} onClick={() => onCommentReaction(postId, comment.id, emoji)} className="hover:scale-125 transition-transform text-sm">{emoji}</button>
-                                  ))}
-                              </div>
+                          <div className="relative">
+                              <button 
+                                  onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveReactionPicker(prev => (prev?.commentId === comment.id) ? null : { postId, commentId: comment.id });
+                                  }}
+                                  className={`text-slate-500 hover:text-yellow-400 ${activeReactionPicker?.commentId === comment.id ? 'text-yellow-400' : ''}`}
+                              >
+                                  <Smile size={12} />
+                              </button>
+                              {activeReactionPicker?.commentId === comment.id && (
+                                  <div className="absolute left-0 bottom-full mb-1 flex bg-slate-900 border border-slate-700 rounded-full p-1 gap-1 shadow-xl z-10 animate-in zoom-in-95">
+                                      {SOCIAL_REACTIONS.map(emoji => (
+                                          <button 
+                                              key={emoji} 
+                                              onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  onCommentReaction(postId, comment.id, emoji);
+                                                  setActiveReactionPicker(null);
+                                              }} 
+                                              className="hover:scale-125 transition-transform text-sm"
+                                          >
+                                              {emoji}
+                                          </button>
+                                      ))}
+                                  </div>
+                              )}
                           </div>
                       </div>
                   </div>
@@ -407,13 +427,33 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                 {Object.entries(post.reactions || {}).map(([emoji, users]) => (
                                     users.length > 0 && <span key={emoji} className="text-sm bg-slate-800 px-2 py-1 rounded-full text-slate-300">{emoji} {users.length}</span>
                                 ))}
-                                <div className="relative group">
-                                    <button className="text-slate-400 hover:text-yellow-400 p-1"><Smile size={18} /></button>
-                                    <div className="absolute right-0 bottom-full mb-2 hidden group-hover:flex bg-slate-900 border border-slate-700 rounded-full p-2 gap-2 shadow-xl z-10">
-                                        {SOCIAL_REACTIONS.map(emoji => (
-                                            <button key={emoji} onClick={() => onPostReaction(post.id, emoji)} className="hover:scale-125 transition-transform text-lg">{emoji}</button>
-                                        ))}
-                                    </div>
+                                <div className="relative">
+                                    <button 
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setActiveReactionPicker(prev => (prev?.postId === post.id && !prev.commentId) ? null : { postId: post.id });
+                                        }}
+                                        className={`p-1 rounded hover:bg-slate-800 transition-colors ${activeReactionPicker?.postId === post.id && !activeReactionPicker.commentId ? 'text-yellow-400' : 'text-slate-400 hover:text-yellow-400'}`}
+                                    >
+                                        <Smile size={18} />
+                                    </button>
+                                    {activeReactionPicker?.postId === post.id && !activeReactionPicker.commentId && (
+                                        <div className="absolute right-0 bottom-full mb-2 flex bg-slate-900 border border-slate-700 rounded-full p-2 gap-2 shadow-xl z-10 animate-in zoom-in-95">
+                                            {SOCIAL_REACTIONS.map(emoji => (
+                                                <button 
+                                                    key={emoji} 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onPostReaction(post.id, emoji);
+                                                        setActiveReactionPicker(null);
+                                                    }} 
+                                                    className="hover:scale-125 transition-transform text-lg"
+                                                >
+                                                    {emoji}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
