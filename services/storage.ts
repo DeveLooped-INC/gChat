@@ -2,7 +2,7 @@
 import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest } from '../types';
 
 const DB_NAME = 'gChat_Data';
-const DB_VERSION = 5; // Bumped to force index check/creation and fix schema issues
+const DB_VERSION = 5; 
 
 type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' | 'requests' | 'offline_packets';
 
@@ -31,14 +31,11 @@ class StorageService {
           let objectStore: IDBObjectStore;
 
           if (!db.objectStoreNames.contains(storeName)) {
-            // Create new store
             objectStore = db.createObjectStore(storeName, { keyPath: 'id' });
           } else {
-            // Open existing store for modification
             objectStore = transaction.objectStore(storeName);
           }
 
-          // Ensure 'localOwnerId' index exists on ALL stores (New and Old)
           if (!objectStore.indexNames.contains('localOwnerId')) {
               objectStore.createIndex('localOwnerId', 'localOwnerId', { unique: false });
           }
@@ -70,7 +67,7 @@ class StorageService {
     }
   }
 
-  // Replaces saveBulk with a synchronization method that handles deletions
+  // Robust Sync: Only deletes if it successfully reads keys.
   public async syncState<T extends { id: string }>(storeName: StoreName, items: T[], ownerId: string): Promise<void> {
     try {
         const db = await this.initDB();
@@ -79,33 +76,44 @@ class StorageService {
           const store = tx.objectStore(storeName);
           const newItemIds = new Set(items.map(i => i.id));
 
-          // ROBUST STRATEGY: Handle missing index gracefully
+          // If store is not empty but index read fails, we should NOT delete anything.
+          // Just update the existing/new items.
+          
           if (store.indexNames.contains('localOwnerId')) {
               const index = store.index('localOwnerId');
               const request = index.getAllKeys(IDBKeyRange.only(ownerId));
 
               request.onsuccess = () => {
-                const existingIds = request.result; // Array of keys (ids)
+                const existingIds = request.result; 
+                
+                // Safety check: If result is empty, but we have items to save, 
+                // and the store actually has data (implying index failure or ownership mismatch),
+                // we should be careful. 
+                // However, 'getAllKeys' with a range ONLY returns keys for that range. 
+                // If it returns empty, it means "no data for this user". 
+                // Assuming normal operation, we proceed.
+                
                 // 1. Delete removed items
-                existingIds.forEach((existingId) => {
-                    if (!newItemIds.has(existingId.toString())) {
-                        store.delete(existingId);
-                    }
-                });
+                if (existingIds && existingIds.length > 0) {
+                    existingIds.forEach((existingId) => {
+                        if (!newItemIds.has(existingId.toString())) {
+                            store.delete(existingId);
+                        }
+                    });
+                }
+
                 // 2. Put (Update/Insert) current items
                 items.forEach(item => {
                     store.put({ ...item, localOwnerId: ownerId });
                 });
               };
+              
               request.onerror = () => {
-                  console.error(`Sync Index Error (${storeName}):`, request.error);
-                  // Fallback to naive PUT only if index read fails, preventing total data loss
+                  console.warn(`Sync Index Read Failed (${storeName}). Falling back to Upsert-Only.`);
+                  // Fallback: Just save everything. Do not delete anything.
                   items.forEach(item => store.put({ ...item, localOwnerId: ownerId }));
               };
           } else {
-              // Index missing? This shouldn't happen with version bumping, but as a failsafe:
-              // We can't efficiently delete old items without the index to find them.
-              // So we just Upsert. This might leave orphans but saves current data.
               console.warn(`Index missing for ${storeName}, skipping deletion phase.`);
               items.forEach(item => {
                   store.put({ ...item, localOwnerId: ownerId });
@@ -130,10 +138,8 @@ class StorageService {
           const tx = db.transaction(storeName, 'readonly');
           const store = tx.objectStore(storeName);
           
-          // Safety check: Index might be missing if migration failed previously
           if (!store.indexNames.contains('localOwnerId')) {
-              console.warn(`Index 'localOwnerId' missing on ${storeName}. Recreating index required.`);
-              // Fallback: Get all and filter manually (Slow but works)
+              // Fallback: Scan all
               const fallbackReq = store.getAll();
               fallbackReq.onsuccess = () => {
                   const all = fallbackReq.result as (T & { localOwnerId?: string })[];
@@ -187,7 +193,7 @@ class StorageService {
           const store = tx.objectStore('messages');
           
           if (!store.indexNames.contains('localOwnerId')) {
-              resolve(0); // Cannot prune efficiently without index
+              resolve(0); 
               return;
           }
 
@@ -196,7 +202,6 @@ class StorageService {
           
           let deletedCount = 0;
           const now = Date.now();
-          // Ephemeral TTL: 60 seconds after being read
           const TTL = 60000; 
 
           request.onsuccess = (e) => {
@@ -215,8 +220,6 @@ class StorageService {
           request.onerror = () => reject(request.error);
       });
   }
-
-  // --- SYSTEM OPERATIONS ---
 
   public async deleteEverything(): Promise<void> {
       if (this.dbPromise) {
