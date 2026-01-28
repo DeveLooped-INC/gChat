@@ -260,7 +260,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
         {/* Header */}
         <div className="flex justify-between items-center mb-4">
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                <Globe size={24} className="text-onion-400" /> Public Feed
+                <Globe size={24} className="text-onion-400" /> Social Feed
             </h2>
             <div className="flex gap-2">
                 <button onClick={() => setShowFilters(!showFilters)} className={`p-2 rounded-lg transition-colors ${showFilters ? 'bg-onion-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}>
