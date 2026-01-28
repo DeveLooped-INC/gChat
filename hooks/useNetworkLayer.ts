@@ -195,7 +195,7 @@ export const useNetworkLayer = ({
                 const localHash = existingPost ? calculatePostHash(existingPost) : null;
                 
                 if (!existingPost || localHash !== contentHash) {
-                    // We don't have this version. Request it.
+                    console.log(`[Network] Detected out-of-sync post ${postId}. Fetching from ${senderNodeId}...`);
                     const reqPacket: NetworkPacket = {
                         id: crypto.randomUUID(),
                         type: 'FETCH_POST',
@@ -204,10 +204,6 @@ export const useNetworkLayer = ({
                     };
                     networkService.sendMessage(senderNodeId, reqPacket);
                 }
-                
-                // NO DAISY CHAIN HERE.
-                // We rely on 'POST_DATA' triggering 'broadcastPostState' to propagate availability.
-                // This prevents announcing things we don't have yet.
                 break;
             }
 
@@ -215,6 +211,7 @@ export const useNetworkLayer = ({
                 const { postId } = packet.payload;
                 const post = state.postsRef.current.find(p => p.id === postId);
                 if (post && post.privacy === 'public') {
+                    console.log(`[Network] Serving post ${postId} to ${senderNodeId}`);
                     const respPacket: NetworkPacket = {
                         id: crypto.randomUUID(),
                         type: 'POST_DATA',
@@ -229,8 +226,9 @@ export const useNetworkLayer = ({
             case 'POST_DATA': {
                 const post = packet.payload as Post;
                 const payload = createPostPayload(post);
+                const isValid = verifySignature(payload, post.truthHash, post.authorPublicKey);
                 
-                if (verifySignature(payload, post.truthHash, post.authorPublicKey)) {
+                if (isValid) {
                     const calculatedHash = calculatePostHash(post);
                     const postWithHash = { ...post, contentHash: calculatedHash };
 
@@ -266,12 +264,12 @@ export const useNetworkLayer = ({
                         // I now announce it to MY peers so they can fetch it from me.
                         broadcastPostState(postWithHash);
                     }
+                } else {
+                    console.warn(`[Network] Received INVALID post data from ${senderNodeId}. Signature Verification Failed.`);
                 }
                 break;
             }
 
-            // ... (Rest of cases remain similar, ensure existing functionality is preserved) ...
-            
             case 'INVENTORY_SYNC_REQUEST': {
                 const { inventory, since } = packet.payload;
                 const theirInv = inventory as { id: string, hash: string }[];
@@ -365,7 +363,7 @@ export const useNetworkLayer = ({
                 break;
             }
 
-            case 'POST':
+            case 'POST': {
                 const postData = packet.payload as Post;
                 if (verifySignature(createPostPayload(postData), postData.truthHash, postData.authorPublicKey)) {
                     state.setPosts(prev => {
@@ -376,6 +374,7 @@ export const useNetworkLayer = ({
                     });
                 }
                 break;
+            }
 
             case 'USER_EXIT': {
                 const { userId } = packet.payload;
@@ -399,7 +398,7 @@ export const useNetworkLayer = ({
                 break;
             }
 
-            case 'CONNECTION_REQUEST':
+            case 'CONNECTION_REQUEST': {
                 const req = packet.payload as ConnectionRequest;
                 if (req.fromEncryptionPublicKey) {
                     state.setContacts(prev => prev.map(c => {
@@ -426,16 +425,19 @@ export const useNetworkLayer = ({
                 
                 if (req.fromHomeNode) networkService.connect(req.fromHomeNode);
                 break;
+            }
 
-            case 'MESSAGE': 
+            case 'MESSAGE': {
                 const encPayload = packet.payload as EncryptedPayload;
+                const currentEncryptionKey = state.userRef.current.keys.encryption.secretKey;
+                
                 let senderContact = state.contactsRef.current.find(c => {
                     if (!c.encryptionPublicKey) return false;
-                    return decryptMessage(encPayload.ciphertext, encPayload.nonce, c.encryptionPublicKey, currentUser.keys.encryption.secretKey) !== null;
+                    return decryptMessage(encPayload.ciphertext, encPayload.nonce, c.encryptionPublicKey, currentEncryptionKey) !== null;
                 });
 
                 if(senderContact && senderContact.encryptionPublicKey) {
-                    const decrypted = decryptMessage(encPayload.ciphertext, encPayload.nonce, senderContact.encryptionPublicKey, currentUser.keys.encryption.secretKey);
+                    const decrypted = decryptMessage(encPayload.ciphertext, encPayload.nonce, senderContact.encryptionPublicKey, currentEncryptionKey);
                     if(decrypted) {
                         let content = decrypted;
                         let media: MediaMetadata | undefined = undefined;
@@ -479,6 +481,7 @@ export const useNetworkLayer = ({
                     }
                 }
                 break;
+            }
             
             case 'CHAT_REACTION': {
                 const { messageId, emoji, userId, action } = packet.payload;
@@ -592,7 +595,7 @@ export const useNetworkLayer = ({
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
-            case 'COMMENT':
+            case 'COMMENT': {
                 const { postId, comment: newComment, parentCommentId } = packet.payload;
                 let postAfterComment: Post | undefined;
                 
@@ -629,8 +632,9 @@ export const useNetworkLayer = ({
                 if (postAfterComment) broadcastPostState(postAfterComment);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
+            }
 
-            case 'COMMENT_VOTE':
+            case 'COMMENT_VOTE': {
                 const { postId: cvPostId, commentId: cvCommentId, userId: cvUserId, type: cvType } = packet.payload;
                 let postAfterCV: Post | undefined;
                 state.setPosts(prev => prev.map(p => {
@@ -660,18 +664,19 @@ export const useNetworkLayer = ({
                 if(postAfterCV) broadcastPostState(postAfterCV);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
+            }
 
-            case 'COMMENT_REACTION':
-                const { postId: crPostId, commentId: crCommentId, userId: crUserId, emoji: crEmoji } = packet.payload;
+            case 'COMMENT_REACTION': {
+                const { postId, commentId, userId, emoji } = packet.payload;
                 let postAfterCR: Post | undefined;
                 state.setPosts(prev => prev.map(p => {
-                    if (p.id !== crPostId) return p;
+                    if (p.id !== postId) return p;
                     const updatedPost = {
                         ...p,
-                        commentsList: updateCommentTree(p.commentsList, crCommentId, (c) => {
+                        commentsList: updateCommentTree(p.commentsList, commentId, (c) => {
                             const currentReactions = { ...(c.reactions || {}) };
-                            if (!currentReactions[crEmoji]) currentReactions[crEmoji] = [];
-                            if (!currentReactions[crEmoji].includes(crUserId)) currentReactions[crEmoji] = [...currentReactions[crEmoji], crUserId];
+                            if (!currentReactions[emoji]) currentReactions[emoji] = [];
+                            if (!currentReactions[emoji].includes(userId)) currentReactions[emoji] = [...currentReactions[emoji], userId];
                             return { ...c, reactions: currentReactions };
                         })
                     };
@@ -679,263 +684,73 @@ export const useNetworkLayer = ({
                     postAfterCR = updatedPost;
                     return updatedPost;
                 }));
-
-                const postForCR = state.postsRef.current.find(p => p.id === crPostId);
-                if (postForCR) {
-                    const targetComment = findCommentInTree(postForCR.commentsList, crCommentId);
-                    if (targetComment && targetComment.authorId === currentUser.id && crUserId !== currentUser.id) {
-                        const reactor = state.contactsRef.current.find(c => c.id === crUserId);
-                        const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
-                        addNotificationRef.current('New Reaction', `${handle} reacted ${crEmoji} to your comment`, 'success', AppRoute.FEED, crPostId);
-                    }
-                }
-
-                if(postAfterCR) broadcastPostState(postAfterCR);
+                if (postAfterCR) broadcastPostState(postAfterCR);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
+            }
 
-            case 'VOTE':
-                const { postId: vPostId, userId: vUserId, type: vType } = packet.payload;
+            case 'VOTE': {
+                const { postId, userId, type } = packet.payload;
                 let postAfterVote: Post | undefined;
                 state.setPosts(prev => prev.map(p => {
-                    if (p.id !== vPostId) return p;
-                    const updatedPost = { ...p, votes: { ...p.votes, [vUserId]: vType } };
+                    if (p.id !== postId) return p;
+                    const updatedPost = { ...p, votes: { ...p.votes, [userId]: type } };
                     updatedPost.contentHash = calculatePostHash(updatedPost);
                     postAfterVote = updatedPost;
                     return updatedPost;
                 }));
-
-                const postForVote = state.postsRef.current.find(p => p.id === vPostId);
-                if (postForVote && postForVote.authorId === currentUser.id && vUserId !== currentUser.id) {
-                    const voter = state.contactsRef.current.find(c => c.id === vUserId);
-                    const { handle } = formatUserIdentity(voter?.displayName || 'Someone');
-                    addNotificationRef.current('Broadcast Vote', `${handle} ${vType}voted your post`, 'success', AppRoute.FEED, vPostId);
-                }
-
-                if(postAfterVote) broadcastPostState(postAfterVote);
+                if (postAfterVote) broadcastPostState(postAfterVote);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
+            }
 
             case 'REACTION': {
-                const { postId: rPostId, userId: rUserId, emoji } = packet.payload;
-                let postAfterReaction: Post | undefined;
+                const { postId, userId, emoji } = packet.payload;
+                let postAfterReact: Post | undefined;
                 state.setPosts(prev => prev.map(p => {
-                    if (p.id !== rPostId) return p;
+                    if (p.id !== postId) return p;
                     const currentReactions = { ...(p.reactions || {}) };
                     if (!currentReactions[emoji]) currentReactions[emoji] = [];
-                    if (!currentReactions[emoji].includes(rUserId)) {
-                        currentReactions[emoji] = [...currentReactions[emoji], rUserId];
-                    }
+                    if (!currentReactions[emoji].includes(userId)) currentReactions[emoji] = [...currentReactions[emoji], userId];
                     const updatedPost = { ...p, reactions: currentReactions };
                     updatedPost.contentHash = calculatePostHash(updatedPost);
-                    postAfterReaction = updatedPost;
+                    postAfterReact = updatedPost;
                     return updatedPost;
                 }));
-
-                const postForReaction = state.postsRef.current.find(p => p.id === rPostId);
-                if (postForReaction && postForReaction.authorId === currentUser.id && rUserId !== currentUser.id) {
-                    const reactor = state.contactsRef.current.find(c => c.id === rUserId);
-                    const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
-                    addNotificationRef.current('New Reaction', `${handle} reacted ${emoji} to your broadcast`, 'success', AppRoute.FEED, rPostId);
-                }
-
-                if(postAfterReaction) broadcastPostState(postAfterReaction);
+                if (postAfterReact) broadcastPostState(postAfterReact);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
             }
         }
-    }, [addNotification, daisyChainPacket, maxSyncAgeHours, onUpdateUser, activeChatId, broadcastPostState, state]);
+    }, [state.setPosts, state.setMessages, state.setGroups, state.setContacts, state.setConnectionRequests, state.setPeers, state.postsRef, state.contactsRef, state.groupsRef, state.userRef, state.peersRef, broadcastPostState, addNotificationRef, onUpdateUser, currentUser.id, currentUser.homeNodeOnion, daisyChainPacket, state.isLoaded, maxSyncAgeHours]);
 
-    // Update the ref whenever handlePacket changes
+    // Update Ref whenever handler changes (due to dependency updates)
     useEffect(() => {
         handlePacketRef.current = handlePacket;
     }, [handlePacket]);
 
-    // --- REPLAY OFFLINE PACKETS ---
+    // Socket Listener Setup
     useEffect(() => {
-        if (state.isLoaded) {
-            const replay = async () => {
-                // Short delay to ensure Refs are populated by useLayoutEffect
-                await new Promise(resolve => setTimeout(resolve, 500)); 
-                
-                const pending = await storageService.getItems<any>('offline_packets', user.id);
-                if (pending.length > 0) {
-                    addNotificationRef.current('Welcome Back', `Processing ${pending.length} missed packets...`, 'info');
-                    // Sort by timestamp to preserve order
-                    pending.sort((a, b) => a.timestamp - b.timestamp);
-                    
-                    for (const item of pending) {
-                        // CRITICAL: Remove from processed set so handlePacket treats it as new
-                        if(item.packet.id) processedPacketIds.current.delete(item.packet.id);
-                        
-                        // Pass isReplay=true to prevent re-gossiping old news
-                        await handlePacketRef.current(item.packet, item.senderNodeId, true);
-                        await storageService.deleteItem('offline_packets', item.id);
-                    }
-                }
-            };
-            replay();
-        }
-    }, [state.isLoaded, user.id, addNotification]);
+        // Subscribe to network events
+        const unsubscribeStatus = networkService.subscribeToStatus((online) => setIsOnline(online));
+        
+        networkService.onMessage = (packet, sender) => {
+            handlePacketRef.current(packet, sender);
+        };
 
-    // --- DISCOVERY BROADCAST (HEARTBEAT) ---
-    useEffect(() => {
-        if (!isOnline || !user.isDiscoverable) return;
-
-        const broadcastPresence = () => {
-            const config = state.nodeConfigRef.current;
-            const packet: NetworkPacket = {
-                id: crypto.randomUUID(),
-                hops: MAX_GOSSIP_HOPS,
-                type: 'ANNOUNCE_PEER',
-                senderId: user.homeNodeOnion,
-                payload: {
-                    onionAddress: user.homeNodeOnion,
-                    alias: config.alias || 'Unknown Node',
-                    description: config.description || 'gChat Relay Node'
-                }
-            };
-            processedPacketIds.current.add(packet.id!);
-            const peerAddrs = state.peersRef.current.map(p => p.onionAddress);
-            if (peerAddrs.length > 0) {
-                networkService.broadcast(packet, peerAddrs);
+        // Queue processing (if state loads later)
+        const queueInterval = setInterval(() => {
+            if (state.isLoaded && packetQueue.current.length > 0) {
+                const item = packetQueue.current.shift();
+                if (item) handlePacketRef.current(item.packet, item.senderNodeId, true);
             }
+        }, 1000);
+
+        return () => {
+            unsubscribeStatus();
+            clearInterval(queueInterval);
         };
-
-        broadcastPresence();
-        const interval = setInterval(broadcastPresence, 120000);
-        return () => clearInterval(interval);
-    }, [isOnline, user.isDiscoverable, user.homeNodeOnion, state.nodeConfigRef, state.peersRef]); 
-
-    // --- PERIODIC PEER HEALTH POLLING ---
-    useEffect(() => {
-        const pingPeers = () => {
-            state.peersRef.current.forEach(p => {
-                networkService.connect(p.onionAddress); 
-            });
-        };
-        
-        if (isOnline) {
-            pingPeers();
-            const interval = setInterval(pingPeers, 60000); 
-            return () => clearInterval(interval);
-        }
-    }, [isOnline, state.peersRef]);
-
-    // --- INITIAL CONNECTION SWEEP & QUEUE FLUSH ---
-    useEffect(() => {
-        if (state.isLoaded) {
-            // FIX: setTimeout ensures that the 'contactsRef' and other refs have been updated 
-            // by their own useEffects before we process the queue.
-            const timer = setTimeout(() => {
-                console.log("State Loaded & Settled. Processing Queue and Connecting...", state.peersRef.current.length);
-                
-                // 1. Flush the Packet Queue
-                if (packetQueue.current.length > 0) {
-                    console.log(`Flushing ${packetQueue.current.length} queued packets.`);
-                    packetQueue.current.forEach(({ packet, senderNodeId }) => {
-                        handlePacketRef.current(packet, senderNodeId);
-                    });
-                    packetQueue.current = [];
-                }
-
-                // 2. Trigger connection sweep
-                state.peersRef.current.forEach(p => networkService.connect(p.onionAddress));
-            }, 100); // 100ms delay to be safe
-
-            return () => clearTimeout(timer);
-        }
-    }, [state.isLoaded]); 
-
-    // --- NETWORK INIT ---
-    useEffect(() => {
-        networkService.init(user.id);
-        
-        const unsubscribe = networkService.subscribeToStatus((status, onionAddress) => {
-            setIsOnline(status);
-            if (status) {
-                state.peersRef.current.forEach(p => networkService.connect(p.onionAddress));
-
-                const activePeers = state.peersRef.current.map(p => p.onionAddress);
-                if (activePeers.length > 0) {
-                    const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
-                    const myInventory = state.postsRef.current
-                        .filter(p => p.timestamp > since && p.privacy === 'public')
-                        .map(p => ({ id: p.id, hash: calculatePostHash(p) }));
-
-                    const packet: NetworkPacket = {
-                        id: crypto.randomUUID(),
-                        type: 'INVENTORY_SYNC_REQUEST',
-                        senderId: state.userRef.current.homeNodeOnion,
-                        payload: { inventory: myInventory, since }
-                    };
-                    networkService.broadcast(packet, activePeers);
-                }
-            }
-        });
-        
-        networkService.onPeerStatus = (peerOnion, status, latency) => {
-            state.setPeers(prev => prev.map(p => {
-                if (p.onionAddress === peerOnion) {
-                    state.setContacts(currContacts => currContacts.map(c => {
-                        if (c.homeNodes.includes(peerOnion)) {
-                            return { ...c, status, latencyMs: latency || c.latencyMs, lastActive: Date.now() };
-                        }
-                        return c;
-                    }));
-                    
-                    if (status === 'online' && p.status !== 'online') {
-                        const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
-                        const myInventory = state.postsRef.current
-                            .filter(pt => pt.timestamp > since && pt.privacy === 'public')
-                            .map(pt => ({ id: pt.id, hash: calculatePostHash(pt) })); 
-
-                        const packet: NetworkPacket = {
-                            id: crypto.randomUUID(),
-                            type: 'INVENTORY_SYNC_REQUEST',
-                            senderId: state.userRef.current.homeNodeOnion,
-                            payload: { inventory: myInventory, since }
-                        };
-                        networkService.sendMessage(peerOnion, packet);
-
-                        if (state.userRef.current.isDiscoverable) {
-                            const config = state.nodeConfigRef.current;
-                            const announcePacket: NetworkPacket = {
-                                id: crypto.randomUUID(),
-                                hops: MAX_GOSSIP_HOPS,
-                                type: 'ANNOUNCE_PEER',
-                                senderId: state.userRef.current.homeNodeOnion,
-                                payload: {
-                                    onionAddress: state.userRef.current.homeNodeOnion,
-                                    alias: config.alias || 'Unknown Node',
-                                    description: config.description || 'gChat Relay Node'
-                                }
-                            };
-                            networkService.sendMessage(peerOnion, announcePacket);
-                        }
-                    }
-
-                    return { 
-                        ...p, 
-                        status, 
-                        lastSeen: Date.now(), 
-                        latencyMs: latency || p.latencyMs 
-                    };
-                }
-                return p;
-            }));
-        };
-
-        networkService.onMessage = (packet, senderNodeId) => {
-            handlePacketRef.current(packet, senderNodeId);
-        };
-
-        networkService.onShutdownRequest = () => {
-            performGracefulShutdown();
-        };
-
-        return () => unsubscribe();
-    }, [maxSyncAgeHours, performGracefulShutdown, state.peersRef, state.userRef, state.postsRef, state.nodeConfigRef]);
+    }, [state.isLoaded]);
 
     return {
         isOnline,
