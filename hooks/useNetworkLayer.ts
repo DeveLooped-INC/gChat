@@ -35,6 +35,7 @@ export const useNetworkLayer = ({
     const [pendingNodeRequests, setPendingNodeRequests] = useState<string[]>([]);
     
     const processedPacketIds = useRef<Set<string>>(new Set());
+    const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     
     // Ensure we always use the latest addNotification to avoid stale state in async loops
     const addNotificationRef = useRef(addNotification);
@@ -172,6 +173,16 @@ export const useNetworkLayer = ({
         }
 
         switch(packet.type) {
+            case 'TYPING': {
+                const { userId } = packet.payload;
+                if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                state.setTypingContactId(userId);
+                typingTimeoutRef.current = setTimeout(() => {
+                    state.setTypingContactId(null);
+                }, 3000);
+                break;
+            }
+
             case 'FOLLOW': {
                 if (packet.targetUserId === currentUser.id) {
                     const updatedUser = { ...currentUser, followersCount: (currentUser.followersCount || 0) + 1 };
@@ -684,6 +695,17 @@ export const useNetworkLayer = ({
                     postAfterCR = updatedPost;
                     return updatedPost;
                 }));
+
+                const postForCR = state.postsRef.current.find(p => p.id === postId);
+                if (postForCR) {
+                    const targetComment = findCommentInTree(postForCR.commentsList, commentId);
+                    if (targetComment && targetComment.authorId === currentUser.id && userId !== currentUser.id) {
+                        const reactor = state.contactsRef.current.find(c => c.id === userId);
+                        const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
+                        addNotificationRef.current('New Reaction', `${handle} reacted ${emoji} to your comment`, 'success', AppRoute.FEED, postId);
+                    }
+                }
+
                 if (postAfterCR) broadcastPostState(postAfterCR);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
@@ -717,12 +739,20 @@ export const useNetworkLayer = ({
                     postAfterReact = updatedPost;
                     return updatedPost;
                 }));
+
+                const postForReact = state.postsRef.current.find(p => p.id === postId);
+                if (postForReact && postForReact.authorId === currentUser.id && userId !== currentUser.id) {
+                    const reactor = state.contactsRef.current.find(c => c.id === userId);
+                    const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
+                    addNotificationRef.current('New Reaction', `${handle} reacted ${emoji} to your broadcast`, 'success', AppRoute.FEED, postId);
+                }
+
                 if (postAfterReact) broadcastPostState(postAfterReact);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
             }
         }
-    }, [state.setPosts, state.setMessages, state.setGroups, state.setContacts, state.setConnectionRequests, state.setPeers, state.postsRef, state.contactsRef, state.groupsRef, state.userRef, state.peersRef, broadcastPostState, addNotificationRef, onUpdateUser, user.id, user.homeNodeOnion, daisyChainPacket, state.isLoaded, maxSyncAgeHours]);
+    }, [state.setPosts, state.setMessages, state.setGroups, state.setContacts, state.setConnectionRequests, state.setPeers, state.setTypingContactId, state.postsRef, state.contactsRef, state.groupsRef, state.userRef, state.peersRef, broadcastPostState, addNotificationRef, onUpdateUser, user.id, user.homeNodeOnion, daisyChainPacket, state.isLoaded, maxSyncAgeHours]);
 
     // Update Ref whenever handler changes (due to dependency updates)
     useEffect(() => {
@@ -751,6 +781,30 @@ export const useNetworkLayer = ({
             clearInterval(queueInterval);
         };
     }, [state.isLoaded]);
+
+    // Announcement Heartbeat
+    useEffect(() => {
+        if (isOnline && user.isDiscoverable && state.nodeConfig.alias) {
+            const announce = () => {
+                const packet: NetworkPacket = { 
+                    id: crypto.randomUUID(), 
+                    hops: MAX_GOSSIP_HOPS, 
+                    type: 'ANNOUNCE_PEER', 
+                    senderId: user.homeNodeOnion, 
+                    payload: { onionAddress: user.homeNodeOnion, alias: state.nodeConfig.alias, description: state.nodeConfig.description } 
+                };
+                processedPacketIds.current.add(packet.id!);
+                networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
+            };
+            
+            // Announce on connect
+            announce();
+            
+            // Re-announce periodically
+            const interval = setInterval(announce, 1000 * 60 * 60); // Every hour
+            return () => clearInterval(interval);
+        }
+    }, [isOnline, user.isDiscoverable, state.nodeConfig, state.peersRef, user.homeNodeOnion]);
 
     return {
         isOnline,
