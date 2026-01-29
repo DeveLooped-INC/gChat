@@ -51,7 +51,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
   const [sortBy, setSortBy] = useState<'recent' | 'likes'>('recent');
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [sharingPost, setSharingPost] = useState<Post | null>(null);
-  const [privacy, setPrivacy] = useState<'public' | 'friends'>('friends');
+  const [privacy, setPrivacy] = useState<'public' | 'friends'>('public');
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [attachedMedia, setAttachedMedia] = useState<MediaMetadata | null>(null);
   const [postLocation, setPostLocation] = useState('');
@@ -82,7 +82,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
           }
           if (onConsumeInitialState) onConsumeInitialState();
       }
-  }, [initialState, posts]);
+  }, [initialState, posts, onConsumeInitialState, addToast]);
 
   useEffect(() => {
     const handleClickOutside = () => {
@@ -231,144 +231,266 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                               </span>
                               <span className="text-slate-500 text-[10px]">{new Date(comment.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                           </div>
-                          <p className="text-sm text-slate-300 leading-relaxed">{comment.content}</p>
-                          {reactionEntries.length > 0 && (<div className="flex gap-1 mt-2">{reactionEntries.map(([emoji, users]) => (users && users.length > 0 && (<span key={emoji} className="bg-slate-900/50 text-[10px] px-1.5 py-0.5 rounded-full text-slate-400 border border-slate-700/50">{emoji} {users.length}</span>)))}</div>)}
-                      </div>
-                      <div className="flex items-center gap-4 mt-1 ml-1">
-                          <button onClick={() => onCommentVote(postId, comment.id, 'up')} disabled={isMyComment} className={`flex items-center gap-1 text-[10px] ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-500 hover:text-emerald-400'}`}><ThumbsUp size={12} /> {upVotes > 0 && upVotes}</button>
-                          <button onClick={() => onCommentVote(postId, comment.id, 'down')} disabled={isMyComment} className={`flex items-center gap-1 text-[10px] ${myVote === 'down' ? 'text-red-400' : 'text-slate-500 hover:text-red-400'}`}><ThumbsDown size={12} /> {downVotes > 0 && downVotes}</button>
-                          <button onClick={() => setReplyingTo({postId, commentId: comment.id})} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-white"><MessageCircle size={12} /> Reply</button>
-                          <div className="relative">
-                              <button 
-                                  onClick={(e) => {
-                                      e.stopPropagation();
-                                      setActiveReactionPicker(prev => (prev?.commentId === comment.id) ? null : { postId, commentId: comment.id });
-                                  }}
-                                  className={`text-slate-500 hover:text-yellow-400 ${activeReactionPicker?.commentId === comment.id ? 'text-yellow-400' : ''}`}
-                              >
-                                  <Smile size={12} />
+                          <p className="text-sm text-slate-200 whitespace-pre-wrap">{comment.content}</p>
+                          
+                          <div className="flex items-center gap-3 mt-2">
+                              <div className="flex items-center gap-1 bg-slate-800 rounded-full px-2 py-0.5">
+                                  <button onClick={() => onCommentVote(postId, comment.id, 'up')} disabled={isMyComment} className={`hover:text-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-500'}`}><ThumbsUp size={12} /></button>
+                                  <span className={`text-[10px] ${upVotes > 0 ? 'text-emerald-400' : 'text-slate-600'}`}>{upVotes || 0}</span>
+                                  <div className="w-px h-3 bg-slate-700 mx-1"></div>
+                                  <button onClick={() => onCommentVote(postId, comment.id, 'down')} disabled={isMyComment} className={`hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'down' ? 'text-red-400' : 'text-slate-500'}`}><ThumbsDown size={12} /></button>
+                              </div>
+                              <button onClick={() => setReplyingTo({postId, commentId: comment.id})} className="text-xs text-slate-500 hover:text-white flex items-center gap-1">
+                                  <MessageCircle size={12} /> Reply
                               </button>
-                              {activeReactionPicker?.commentId === comment.id && (
-                                  <div className="absolute left-0 bottom-full mb-1 flex bg-slate-900 border border-slate-700 rounded-full p-1 gap-1 shadow-xl z-10 animate-in zoom-in-95">
-                                      {SOCIAL_REACTIONS.map(emoji => (
-                                          <button 
-                                              key={emoji} 
-                                              onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  onCommentReaction(postId, comment.id, emoji);
-                                                  setActiveReactionPicker(null);
-                                              }} 
-                                              className="hover:scale-125 transition-transform text-sm"
-                                          >
-                                              {emoji}
-                                          </button>
-                                      ))}
-                                  </div>
-                              )}
+                              <div className="flex gap-1">
+                                  {SOCIAL_REACTIONS.slice(0, 3).map(emoji => (
+                                      <button key={emoji} onClick={() => onCommentReaction(postId, comment.id, emoji)} disabled={isMyComment} className="text-[10px] hover:scale-125 transition-transform opacity-50 hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed">{emoji}</button>
+                                  ))}
+                              </div>
                           </div>
+                          {reactionEntries.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                  {reactionEntries.map(([emoji, users]) => users.length > 0 && (
+                                      <span key={emoji} className="bg-slate-800 text-[10px] px-1.5 rounded-full text-slate-400 border border-slate-700">{emoji} {users.length}</span>
+                                  ))}
+                              </div>
+                          )}
                       </div>
+                      {comment.replies && comment.replies.length > 0 && (
+                          <div className="mt-1">
+                              {comment.replies.map(reply => (
+                                  <RecursiveComment key={reply.id} comment={reply} postId={postId} depth={depth + 1} />
+                              ))}
+                          </div>
+                      )}
                   </div>
               </div>
-              {/* Replies */}
-              {(comment.replies || []).map(reply => <RecursiveComment key={reply.id} comment={reply} postId={postId} depth={depth + 1} />)}
           </div>
       );
   };
 
   return (
-    <div className="h-full overflow-y-auto w-full max-w-2xl mx-auto p-4 md:p-8 space-y-6 pb-24">
-        {/* Header */}
-        <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                <Globe size={24} className="text-onion-400" /> Social Feed
-            </h2>
-            <div className="flex gap-2">
-                <button onClick={() => setShowFilters(!showFilters)} className={`p-2 rounded-lg transition-colors ${showFilters ? 'bg-onion-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}>
-                    <Filter size={20} />
-                </button>
-                <button onClick={() => setShowBroadcastModal(true)} className="bg-onion-600 hover:bg-onion-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors">
-                    <Send size={18} /> <span className="hidden sm:inline">Broadcast</span>
-                </button>
+    <div className="h-full overflow-y-auto w-full max-w-2xl mx-auto p-4 md:p-8 space-y-6 pb-20 relative">
+        {/* Header / Filter Bar */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="flex items-center gap-2">
+                {viewingPost ? (
+                    <button onClick={() => setViewingPost(null)} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors">
+                        <ArrowLeft size={20} /> Back to Feed
+                    </button>
+                ) : (
+                    <>
+                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                        <Globe className="text-onion-500" />
+                        {selectedAuthorId ? 'User Feed' : (feedFilter === 'public' ? 'Global Mesh' : 'Friends Circle')}
+                    </h2>
+                    {selectedAuthorId && (
+                        <button onClick={() => setSelectedAuthorId(null)} className="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded hover:text-white"><X size={12} /></button>
+                    )}
+                    </>
+                )}
             </div>
+            
+            {!viewingPost && (
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                    <button onClick={() => setShowBroadcastModal(true)} className="flex-1 md:flex-none bg-onion-600 hover:bg-onion-500 text-white px-4 py-2 rounded-lg font-bold flex items-center justify-center gap-2 transition-colors shadow-lg shadow-onion-900/20">
+                        <Radio size={18} /> Broadcast
+                    </button>
+                    <button onClick={() => setShowFilters(!showFilters)} className={`p-2 rounded-lg border ${showFilters ? 'bg-slate-800 border-onion-500 text-onion-400' : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'}`}>
+                        <Filter size={20} />
+                    </button>
+                    <button onClick={onGlobalSync} className="p-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-400 hover:text-emerald-400" title="Sync">
+                        <RefreshCw size={20} />
+                    </button>
+                </div>
+            )}
         </div>
 
-        {/* Filter Bar */}
-        {showFilters && (
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-4 animate-in slide-in-from-top-2">
-                <div className="flex gap-4">
-                    <div className="flex-1 relative">
-                        <Search className="absolute left-3 top-2.5 text-slate-500" size={16} />
-                        <input type="text" placeholder="Search content..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 pl-10 pr-4 text-white focus:outline-none focus:border-onion-500" />
-                    </div>
-                    <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none">
-                        <option value="recent">Recent</option>
-                        <option value="likes">Top Rated</option>
-                    </select>
-                </div>
+        {/* Filters Panel */}
+        {showFilters && !viewingPost && (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4 animate-in slide-in-from-top-2">
                 <div className="flex gap-2">
-                    <button onClick={() => setFeedFilter('public')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-colors ${feedFilter === 'public' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}>Public</button>
-                    <button onClick={() => setFeedFilter('friends')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-colors ${feedFilter === 'friends' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'}`}>Friends Only</button>
+                    <button onClick={() => setFeedFilter('public')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${feedFilter === 'public' ? 'bg-onion-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}>Public Mesh</button>
+                    <button onClick={() => setFeedFilter('friends')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${feedFilter === 'friends' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}>Friends Only</button>
+                </div>
+                <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
+                    <Search size={16} className="text-slate-500" />
+                    <input type="text" placeholder="Search topics or tags..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-transparent border-none outline-none text-white text-sm w-full placeholder-slate-600" />
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                    <div className="flex items-center gap-2">
+                        <span className="text-slate-500">Sort by:</span>
+                        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="bg-slate-950 border border-slate-800 text-white rounded px-2 py-1 outline-none focus:border-onion-500">
+                            <option value="recent">Recent</option>
+                            <option value="likes">Top Rated</option>
+                        </select>
+                    </div>
                 </div>
             </div>
         )}
 
-        {/* Selected Author Banner */}
-        {selectedAuthorId && (
-            <div className="bg-indigo-900/30 border border-indigo-500/50 p-3 rounded-xl flex justify-between items-center text-indigo-200">
-                <span className="text-sm">Viewing posts by specific user</span>
-                <button onClick={() => { setSelectedAuthorId(null); setViewingPost(null); }} className="text-xs hover:text-white flex items-center gap-1"><X size={14} /> Clear</button>
-            </div>
-        )}
+        {/* Broadcast Modal */}
+        {showBroadcastModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+                    <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/50 rounded-t-2xl">
+                        <h3 className="font-bold text-white flex items-center gap-2">
+                            <Radio size={18} className="text-onion-500" />
+                            {sharingPost ? 'Share Broadcast' : 'New Broadcast'}
+                        </h3>
+                        <button onClick={() => { setShowBroadcastModal(false); resetPostForm(); }} className="text-slate-400 hover:text-white"><X size={20} /></button>
+                    </div>
+                    
+                    <div className="p-4 overflow-y-auto space-y-4">
+                        <div className="flex gap-2 mb-2">
+                            <button onClick={() => setPrivacy('public')} className={`flex-1 py-2 rounded-lg text-sm font-bold border transition-colors flex items-center justify-center gap-2 ${privacy === 'public' ? 'bg-onion-900/20 border-onion-500 text-onion-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+                                <Globe size={16} /> Public
+                            </button>
+                            <button onClick={() => setPrivacy('friends')} className={`flex-1 py-2 rounded-lg text-sm font-bold border transition-colors flex items-center justify-center gap-2 ${privacy === 'friends' ? 'bg-indigo-900/20 border-indigo-500 text-indigo-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+                                <Users size={16} /> Friends
+                            </button>
+                        </div>
 
-        {/* Viewing Single Post */}
-        {viewingPost && (
-            <div className="mb-4">
-                <button onClick={() => setViewingPost(null)} className="flex items-center gap-2 text-slate-400 hover:text-white mb-4 transition-colors">
-                    <ArrowLeft size={18} /> Back to Feed
-                </button>
+                        {/* Shared Post Preview */}
+                        {sharingPost && (
+                            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 opacity-80 pointer-events-none">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <Quote size={12} className="text-slate-500" />
+                                    <span className="text-xs font-bold text-slate-400">Replying to {sharingPost.authorName}</span>
+                                </div>
+                                <p className="text-sm text-slate-300 line-clamp-2">{sharingPost.content}</p>
+                            </div>
+                        )}
+
+                        <textarea 
+                            value={content}
+                            onChange={(e) => setContent(e.target.value)}
+                            placeholder="What's happening on the mesh?"
+                            className="w-full h-32 bg-slate-950 border border-slate-800 rounded-xl p-4 text-white resize-none focus:outline-none focus:border-onion-500 transition-colors"
+                        />
+
+                        {/* Media Preview */}
+                        {attachedImage && (
+                            <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black">
+                                <img src={attachedImage} alt="Preview" className="max-h-48 w-full object-contain" />
+                                <button onClick={() => setAttachedImage(null)} className="absolute top-2 right-2 bg-black/60 text-white p-1 rounded-full hover:bg-red-600 transition-colors"><X size={16}/></button>
+                            </div>
+                        )}
+                        {attachedMedia && (
+                            <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-3 flex items-center gap-3">
+                                {attachedMedia.type === 'audio' ? <Mic size={24} className="text-onion-400" /> : <Video size={24} className="text-blue-400" />}
+                                <div className="flex-1">
+                                    <p className="text-sm font-bold text-white">{attachedMedia.type === 'audio' ? 'Audio Clip' : 'Video Clip'}</p>
+                                    <p className="text-xs text-slate-500">{formatBytes(attachedMedia.size)}</p>
+                                </div>
+                                <button onClick={() => setAttachedMedia(null)} className="text-slate-500 hover:text-red-400"><Trash2 size={18}/></button>
+                            </div>
+                        )}
+
+                        {/* Tools */}
+                        {!recordingMode ? (
+                            <div className="flex gap-2">
+                                <button onClick={() => setShowCamera(true)} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" title="Photo"><CameraIcon size={20} /></button>
+                                <button onClick={() => setRecordingMode('video')} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" title="Video"><Video size={20} /></button>
+                                <button onClick={() => setRecordingMode('audio')} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" title="Audio"><Mic size={20} /></button>
+                                <button onClick={triggerFileSelect} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" title="File"><FileText size={20} /></button>
+                                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+                            </div>
+                        ) : (
+                            <MediaRecorder type={recordingMode} maxDuration={MAX_POST_MEDIA_DURATION} onCapture={handleMediaCapture} onCancel={() => setRecordingMode(null)} />
+                        )}
+                        
+                        <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
+                            <MapPin size={16} className="text-slate-500" />
+                            <input type="text" placeholder="Add location (optional)" value={postLocation} onChange={(e) => setPostLocation(e.target.value)} className="bg-transparent border-none outline-none text-white text-sm w-full placeholder-slate-600" />
+                        </div>
+                    </div>
+
+                    <div className="p-4 border-t border-slate-800 bg-slate-950/50 rounded-b-2xl">
+                        <button onClick={handlePostSubmit} disabled={isProcessing || (!content.trim() && !attachedImage && !attachedMedia && !sharingPost)} className="w-full bg-onion-600 hover:bg-onion-500 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            {isProcessing ? <Loader2 className="animate-spin" /> : <Send size={18} />}
+                            {sharingPost ? 'Share Now' : 'Broadcast Now'}
+                        </button>
+                    </div>
+                </div>
             </div>
         )}
 
         {/* Post List */}
-        <div className="space-y-4">
+        <div className="space-y-6">
+            {displayedPosts.length === 0 && (
+                <div className="text-center py-20 text-slate-500">
+                    <Globe size={48} className="mx-auto mb-4 opacity-50" />
+                    <p>No broadcasts found.</p>
+                    <p className="text-sm mt-2">Connect with peers or adjust filters.</p>
+                </div>
+            )}
+
             {displayedPosts.map(post => {
-                const isMyPost = post.authorId === user.id;
-                const score = Object.values(post.votes).filter(v => v === 'up').length - Object.values(post.votes).filter(v => v === 'down').length;
+                const isExpanded = expandedPostId === post.id;
+                const isHidden = hiddenOverrideIds.has(post.id);
+                const isEdited = post.isEdited;
+                const upVotes = Object.values(post.votes).filter(v => v === 'up').length;
+                const downVotes = Object.values(post.votes).filter(v => v === 'down').length;
                 const myVote = post.votes[user.id];
+                const commentCount = post.comments;
                 const { handle, suffix } = formatUserIdentity(post.authorName);
+                const isMine = post.authorId === user.id;
+                const isMenuOpen = activeMenuId === post.id;
+                const isEditing = editingPostId === post.id;
+                const isReactionPickerOpen = activeReactionPicker?.postId === post.id && !activeReactionPicker.commentId;
+
+                if (isHidden) return (
+                    <div key={post.id} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex justify-between items-center opacity-70">
+                        <span className="text-sm text-slate-500 italic">Post hidden</span>
+                        <button onClick={() => toggleHide(post.id)} className="text-xs text-onion-400 hover:underline">Show</button>
+                    </div>
+                );
 
                 return (
-                    <div key={post.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg transition-all hover:border-slate-700">
+                    <div key={post.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 shadow-lg group">
                         {/* Header */}
                         <div className="p-4 flex items-start justify-between">
                             <div className="flex items-center gap-3">
-                                <div onClick={() => openUserInfo(post)} className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center font-bold text-slate-300 cursor-pointer hover:bg-slate-700">
-                                    {post.authorAvatar ? <img src={post.authorAvatar} className="w-full h-full object-cover rounded-full" /> : handle.charAt(0)}
-                                </div>
-                                <div>
-                                    <div onClick={() => openUserInfo(post)} className="font-bold text-white cursor-pointer hover:underline flex items-center gap-1">
-                                        {handle}
-                                        <span className="text-slate-500 text-xs font-normal font-mono">{suffix}</span>
+                                {post.authorAvatar ? (
+                                    <img src={post.authorAvatar} onClick={() => openUserInfo(post)} alt={post.authorName} className="w-10 h-10 rounded-full bg-slate-800 object-cover border border-slate-700 cursor-pointer" />
+                                ) : (
+                                    <div onClick={() => openUserInfo(post)} className="w-10 h-10 rounded-full bg-gradient-to-br from-onion-400 to-indigo-600 flex items-center justify-center text-white font-bold cursor-pointer shadow-inner">
+                                        {handle.charAt(0)}
                                     </div>
-                                    <div className="text-xs text-slate-500 flex items-center gap-2">
-                                        <span>{new Date(post.timestamp).toLocaleString()}</span>
-                                        {post.privacy === 'friends' ? <Users size={12} /> : <Globe size={12} />}
-                                        {post.isEdited && <span>(edited)</span>}
+                                )}
+                                <div>
+                                    <h3 onClick={() => openUserInfo(post)} className="font-bold text-slate-200 cursor-pointer hover:underline flex items-center gap-1">
+                                        {handle}
+                                        <span className="text-slate-500 font-mono text-xs font-normal opacity-70">{suffix}</span>
+                                    </h3>
+                                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                                        <span>{new Date(post.timestamp).toLocaleDateString()}</span>
+                                        <span>•</span>
+                                        {post.privacy === 'public' ? <Globe size={12} /> : <Users size={12} />}
+                                        {post.location && (
+                                            <>
+                                                <span>•</span>
+                                                <span className="flex items-center gap-1"><MapPin size={10} /> {post.location}</span>
+                                            </>
+                                        )}
+                                        {isEdited && <span className="italic ml-1">(edited)</span>}
+                                        {post.isOrphaned && <span className="text-amber-500 flex items-center gap-1 ml-1"><Link2Off size={10} /> Orphaned</span>}
                                     </div>
                                 </div>
                             </div>
+                            
                             <div className="relative">
-                                <button onClick={(e) => handleMenuClick(e, post.id)} className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800"><MoreHorizontal size={20} /></button>
-                                {activeMenuId === post.id && (
-                                    <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden">
-                                        {isMyPost ? (
-                                            <>
-                                                <button onClick={() => startEditing(post)} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-2"><Edit2 size={14} /> Edit Post</button>
-                                                <button onClick={() => handleDelete(post.id)} className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-slate-700 hover:text-red-300 flex items-center gap-2"><Trash2 size={14} /> Delete</button>
-                                            </>
-                                        ) : (
-                                            <button onClick={() => handleVerifyHash(post)} className="w-full text-left px-4 py-3 text-sm text-emerald-400 hover:bg-slate-700 hover:text-emerald-300 flex items-center gap-2"><ShieldCheck size={14} /> Verify Integrity</button>
-                                        )}
+                                <button onClick={(e) => handleMenuClick(e, post.id)} className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors">
+                                    <MoreHorizontal size={20} />
+                                </button>
+                                {isMenuOpen && (
+                                    <div className="absolute right-0 top-full mt-2 w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-10 overflow-hidden animate-in zoom-in-95">
+                                        <button onClick={() => toggleHide(post.id)} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-2"><Eye size={16} /> Hide</button>
+                                        {isMine && <button onClick={() => startEditing(post)} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-2"><Edit2 size={16} /> Edit</button>}
+                                        {isMine && <button onClick={() => handleDelete(post.id)} className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-slate-800 hover:text-red-300 flex items-center gap-2"><Trash2 size={16} /> Delete</button>}
+                                        <button onClick={() => handleVerifyHash(post)} className="w-full text-left px-4 py-3 text-sm text-emerald-400 hover:bg-slate-800 hover:text-emerald-300 flex items-center gap-2 border-t border-slate-800"><ShieldCheck size={16} /> Verify Integrity</button>
                                     </div>
                                 )}
                             </div>
@@ -376,109 +498,131 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
 
                         {/* Content */}
                         <div className="px-4 pb-2">
-                            {editingPostId === post.id ? (
+                            {isEditing ? (
                                 <div className="space-y-2">
-                                    <textarea value={editContentText} onChange={e => setEditContentText(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-onion-500 h-32" />
+                                    <textarea value={editContentText} onChange={(e) => setEditContentText(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-onion-500 min-h-[100px]" />
                                     <div className="flex justify-end gap-2">
-                                        <button onClick={cancelEditing} className="px-3 py-1.5 text-sm text-slate-400 hover:text-white">Cancel</button>
-                                        <button onClick={() => saveEditing(post.id)} className="px-3 py-1.5 bg-onion-600 text-white text-sm rounded hover:bg-onion-500">Save</button>
+                                        <button onClick={cancelEditing} className="px-3 py-1.5 text-xs text-slate-400 hover:text-white">Cancel</button>
+                                        <button onClick={() => saveEditing(post.id)} className="px-3 py-1.5 bg-onion-600 rounded text-xs text-white font-bold hover:bg-onion-500">Save</button>
                                     </div>
                                 </div>
                             ) : (
                                 <>
                                     <p className="text-slate-200 whitespace-pre-wrap leading-relaxed">{post.content}</p>
-                                    {post.imageUrl && <img src={post.imageUrl} alt="Content" className="mt-3 rounded-lg w-full max-h-96 object-cover border border-slate-800" />}
-                                    {post.media && <div className="mt-3"><MediaPlayer media={post.media} peerId={contacts.find(c => c.id === post.authorId)?.homeNodes[0]} onNotification={addToast} /></div>}
-                                    
-                                    {/* Shared Post Render */}
-                                    {(post.sharedPostId || post.sharedPostSnapshot) && (
-                                        <div className="mt-3 border border-slate-700 rounded-lg p-3 bg-slate-950/50 cursor-pointer hover:bg-slate-950" onClick={() => handleViewSharedPost(post)}>
-                                            <div className="text-xs text-slate-500 flex items-center gap-1 mb-1"><Repeat size={12} /> Shared Broadcast</div>
-                                            {post.sharedPostSnapshot ? (
-                                                <div>
-                                                    <div className="font-bold text-sm text-slate-300">{post.sharedPostSnapshot.authorName}</div>
-                                                    <div className="text-xs text-slate-400 truncate">{post.sharedPostSnapshot.content}</div>
-                                                </div>
-                                            ) : (
-                                                <div className="text-xs text-slate-500 italic">Original post content loading...</div>
-                                            )}
+                                    {post.hashtags && post.hashtags.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                            {post.hashtags.map(tag => (
+                                                <span key={tag} className="text-onion-400 text-sm hover:underline cursor-pointer">#{tag}</span>
+                                            ))}
                                         </div>
                                     )}
                                 </>
                             )}
                         </div>
 
-                        {/* Footer / Actions */}
-                        <div className="px-4 py-3 bg-slate-950/30 border-t border-slate-800 flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <div className="flex items-center bg-slate-800/50 rounded-full p-1">
-                                    <button onClick={() => onLike(post.id)} className={`p-1.5 rounded-full hover:bg-slate-700 transition-colors ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-400'}`}><ThumbsUp size={18} /></button>
-                                    <span className={`text-sm font-bold px-2 ${score > 0 ? 'text-emerald-400' : score < 0 ? 'text-red-400' : 'text-slate-500'}`}>{score}</span>
-                                    <button onClick={() => onDislike(post.id)} className={`p-1.5 rounded-full hover:bg-slate-700 transition-colors ${myVote === 'down' ? 'text-red-400' : 'text-slate-400'}`}><ThumbsDown size={18} /></button>
-                                </div>
-                                <button onClick={() => toggleComments(post.id)} className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors">
-                                    <MessageCircle size={18} /> <span className="text-sm font-medium">{post.comments}</span>
-                                </button>
-                                <button onClick={() => handleShareClick(post)} className="text-slate-400 hover:text-white transition-colors"><Share2 size={18} /></button>
+                        {/* Attachments */}
+                        {post.imageUrl && (
+                            <div className="mt-2 w-full bg-black max-h-96 overflow-hidden flex items-center justify-center cursor-pointer" onClick={() => window.open(post.imageUrl, '_blank')}>
+                                <img src={post.imageUrl} alt="Post content" className="w-full h-full object-contain" />
                             </div>
-                            
-                            {/* Reactions */}
-                            <div className="flex items-center gap-2">
-                                {Object.entries(post.reactions || {}).map(([emoji, users]) => (
-                                    users.length > 0 && <span key={emoji} className="text-sm bg-slate-800 px-2 py-1 rounded-full text-slate-300">{emoji} {users.length}</span>
-                                ))}
-                                <div className="relative">
-                                    <button 
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setActiveReactionPicker(prev => (prev?.postId === post.id && !prev.commentId) ? null : { postId: post.id });
-                                        }}
-                                        className={`p-1 rounded hover:bg-slate-800 transition-colors ${activeReactionPicker?.postId === post.id && !activeReactionPicker.commentId ? 'text-yellow-400' : 'text-slate-400 hover:text-yellow-400'}`}
-                                    >
-                                        <Smile size={18} />
-                                    </button>
-                                    {activeReactionPicker?.postId === post.id && !activeReactionPicker.commentId && (
-                                        <div className="absolute right-0 bottom-full mb-2 flex bg-slate-900 border border-slate-700 rounded-full p-2 gap-2 shadow-xl z-10 animate-in zoom-in-95">
-                                            {SOCIAL_REACTIONS.map(emoji => (
-                                                <button 
-                                                    key={emoji} 
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        onPostReaction(post.id, emoji);
-                                                        setActiveReactionPicker(null);
-                                                    }} 
-                                                    className="hover:scale-125 transition-transform text-lg"
-                                                >
-                                                    {emoji}
-                                                </button>
-                                            ))}
+                        )}
+                        {post.media && (
+                            <div className="mt-2 px-4">
+                                <MediaPlayer media={post.media} peerId={user.homeNodeOnion} autoPlay={false} onNotification={addToast} />
+                            </div>
+                        )}
+
+                        {/* Shared Post Embedding */}
+                        {post.sharedPostId && (
+                            <div className="mx-4 mt-2 p-3 bg-slate-950 border border-slate-800 rounded-lg cursor-pointer hover:border-slate-700 transition-colors" onClick={() => handleViewSharedPost(post)}>
+                                {post.sharedPostSnapshot ? (
+                                    <>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <Quote size={14} className="text-slate-500" />
+                                            <span className="text-sm font-bold text-slate-300">{formatUserIdentity(post.sharedPostSnapshot.authorName).handle}</span>
+                                            <span className="text-xs text-slate-600">• {new Date(post.sharedPostSnapshot.timestamp).toLocaleDateString()}</span>
                                         </div>
-                                    )}
+                                        <p className="text-sm text-slate-400 line-clamp-3">{post.sharedPostSnapshot.content}</p>
+                                        {post.sharedPostSnapshot.imageUrl && <div className="mt-2 h-32 rounded bg-slate-900 overflow-hidden"><img src={post.sharedPostSnapshot.imageUrl} className="w-full h-full object-cover opacity-50" /></div>}
+                                    </>
+                                ) : (
+                                    <div className="flex items-center justify-center py-4 text-slate-600 gap-2"><Link2Off size={16} /><span>Original post unavailable</span></div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Actions Bar */}
+                        <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between mt-2">
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-1 bg-slate-950 rounded-full px-3 py-1.5 border border-slate-800">
+                                    <button onClick={() => onLike(post.id)} disabled={isMine} className={`hover:text-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-500'}`}><ThumbsUp size={18} /></button>
+                                    <span className={`text-sm font-medium ${upVotes > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>{upVotes || 0}</span>
+                                    <div className="w-px h-4 bg-slate-800 mx-2"></div>
+                                    <button onClick={() => onDislike(post.id)} disabled={isMine} className={`hover:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'down' ? 'text-red-400' : 'text-slate-500'}`}><ThumbsDown size={18} /></button>
                                 </div>
+
+                                <button onClick={() => toggleComments(post.id)} className={`flex items-center gap-2 text-sm transition-colors ${isExpanded ? 'text-onion-400' : 'text-slate-500 hover:text-white'}`}>
+                                    <MessageCircle size={18} />
+                                    <span>{commentCount}</span>
+                                </button>
+
+                                <button onClick={() => onShare(post.id)} className="text-slate-500 hover:text-blue-400 transition-colors" title="Share"><Repeat size={18} /></button>
+                            </div>
+
+                            {/* Reactions */}
+                            <div className="relative">
+                                <div className="flex items-center gap-2">
+                                    {Object.entries(post.reactions || {}).map(([emoji, users]) => users.length > 0 && (
+                                        <span key={emoji} onClick={() => !isMine && onPostReaction(post.id, emoji)} className={`text-xs px-2 py-1 rounded-full border transition-all ${users.includes(user.id) ? 'bg-onion-900/30 border-onion-500/50 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'} ${isMine ? 'cursor-default' : 'cursor-pointer hover:bg-slate-800'}`}>{emoji} {users.length}</span>
+                                    ))}
+                                    <button onClick={(e) => { e.stopPropagation(); setActiveReactionPicker({postId: post.id}); }} disabled={isMine} className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isMine ? 'text-slate-700 cursor-not-allowed' : 'text-slate-500 hover:bg-slate-800 hover:text-yellow-400'}`}><Smile size={18} /></button>
+                                </div>
+                                {isReactionPickerOpen && (
+                                    <div className="absolute bottom-full right-0 mb-2 bg-slate-900 border border-slate-700 rounded-full shadow-xl flex p-1 z-50 gap-1 animate-in zoom-in-95">
+                                        {SOCIAL_REACTIONS.map(emoji => (
+                                            <button key={emoji} onClick={() => { onPostReaction(post.id, emoji); setActiveReactionPicker(null); }} className="w-8 h-8 flex items-center justify-center hover:bg-slate-800 rounded-full text-lg transition-transform hover:scale-125">{emoji}</button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
 
                         {/* Comments Section */}
-                        {expandedPostId === post.id && (
-                            <div className="border-t border-slate-800 bg-slate-950 p-4">
-                                <div className="space-y-4 mb-4 max-h-96 overflow-y-auto">
-                                    {post.commentsList.map(comment => (
-                                        <RecursiveComment key={comment.id} comment={comment} postId={post.id} />
-                                    ))}
+                        {isExpanded && (
+                            <div className="bg-slate-950 border-t border-slate-800 p-4 animate-in slide-in-from-top-2">
+                                {/* Comment Input */}
+                                <div className="flex gap-3 mb-6">
+                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-onion-400 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">{user.displayName.charAt(0)}</div>
+                                    <div className="flex-1">
+                                        {replyingTo && replyingTo.postId === post.id && (
+                                            <div className="flex justify-between items-center bg-slate-900 border border-slate-800 rounded-t-lg px-3 py-1.5 text-xs">
+                                                <span className="text-onion-400 font-bold">Replying to comment...</span>
+                                                <button onClick={() => setReplyingTo(null)} className="text-slate-500 hover:text-white"><X size={14} /></button>
+                                            </div>
+                                        )}
+                                        <div className={`flex items-center gap-2 bg-slate-900 border border-slate-800 ${replyingTo?.postId === post.id ? 'rounded-b-lg border-t-0' : 'rounded-lg'} px-3 py-2 focus-within:border-onion-500 transition-colors`}>
+                                            <input 
+                                                type="text" 
+                                                placeholder="Write a secure comment..." 
+                                                value={commentText} 
+                                                onChange={(e) => setCommentText(e.target.value)}
+                                                onKeyDown={(e) => e.key === 'Enter' && handleSubmitComment(post.id)}
+                                                className="bg-transparent border-none outline-none text-sm text-white w-full placeholder-slate-600"
+                                            />
+                                            <button onClick={() => handleSubmitComment(post.id)} disabled={!commentText.trim()} className="text-onion-500 hover:text-onion-400 disabled:opacity-50 disabled:cursor-not-allowed"><Send size={16} /></button>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="flex gap-2">
-                                    {replyingTo?.postId === post.id && (
-                                        <div className="flex items-center bg-slate-800 text-xs text-slate-300 px-2 rounded-l">Replying... <button onClick={() => setReplyingTo(null)} className="ml-2 hover:text-white"><X size={12} /></button></div>
+
+                                {/* Comments List */}
+                                <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
+                                    {post.commentsList && post.commentsList.length > 0 ? (
+                                        post.commentsList.map(comment => (
+                                            <RecursiveComment key={comment.id} comment={comment} postId={post.id} />
+                                        ))
+                                    ) : (
+                                        <div className="text-center text-slate-600 py-4 text-sm italic">No comments yet. Be the first to verify this block.</div>
                                     )}
-                                    <input 
-                                        type="text" 
-                                        placeholder={replyingTo?.postId === post.id ? "Write a reply..." : "Write a comment..."}
-                                        value={commentText}
-                                        onChange={(e) => setCommentText(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleSubmitComment(post.id)}
-                                        className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-onion-500"
-                                    />
-                                    <button onClick={() => handleSubmitComment(post.id)} className="bg-onion-600 hover:bg-onion-500 text-white p-2 rounded-lg"><Send size={16} /></button>
                                 </div>
                             </div>
                         )}
@@ -486,90 +630,17 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                 );
             })}
             
-            {/* Load More Trigger */}
             {hasMorePosts && (
-                <button onClick={() => setVisiblePostsCount(prev => prev + 10)} className="w-full py-4 bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-colors font-bold text-sm">
-                    Load More Broadcasts
-                </button>
-            )}
-            
-            {displayedPosts.length === 0 && (
-                <div className="text-center py-20 text-slate-500 bg-slate-900/50 rounded-xl border border-dashed border-slate-800">
-                    <Globe size={48} className="mx-auto mb-4 opacity-50" />
-                    <p>No broadcasts found.</p>
-                    <p className="text-sm">Try adjusting filters or connecting to more peers.</p>
+                <div className="flex justify-center pt-6">
+                    <button onClick={() => setVisiblePostsCount(prev => prev + 10)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-6 py-2 rounded-full text-sm font-bold transition-colors shadow-lg">Load More Broadcasts</button>
                 </div>
             )}
         </div>
 
-        {/* Create Post Modal */}
-        {showBroadcastModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-                <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
-                    <div className="p-4 border-b border-slate-800 flex justify-between items-center">
-                        <h3 className="font-bold text-white flex items-center gap-2"><Radio size={18} className="text-onion-500" /> {sharingPost ? 'Share Broadcast' : 'New Broadcast'}</h3>
-                        <button onClick={() => setShowBroadcastModal(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
-                    </div>
-                    <div className="p-4 space-y-4">
-                        <textarea 
-                            value={content} 
-                            onChange={(e) => setContent(e.target.value)} 
-                            placeholder="What's happening on the mesh?" 
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white h-32 focus:outline-none focus:border-onion-500 resize-none"
-                        />
-                        
-                        {/* Attachments Preview */}
-                        {attachedImage && (
-                            <div className="relative w-fit">
-                                <img src={attachedImage} className="h-24 rounded-lg border border-slate-700" />
-                                <button onClick={() => setAttachedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1"><X size={12} /></button>
-                            </div>
-                        )}
-                        {attachedMedia && (
-                            <div className="flex items-center gap-2 bg-slate-800 p-2 rounded-lg w-fit">
-                                <FileText size={16} className="text-indigo-400" />
-                                <span className="text-xs text-slate-300">{formatBytes(attachedMedia.size)}</span>
-                                <button onClick={() => setAttachedMedia(null)} className="text-slate-500 hover:text-white"><X size={14} /></button>
-                            </div>
-                        )}
-                        {sharingPost && (
-                            <div className="bg-slate-800 p-3 rounded-lg border border-slate-700 opacity-70">
-                                <div className="text-xs font-bold text-slate-300">{sharingPost.authorName}</div>
-                                <div className="text-xs text-slate-400 truncate">{sharingPost.content}</div>
-                            </div>
-                        )}
-
-                        <div className="flex justify-between items-center pt-2">
-                            <div className="flex gap-2">
-                                <button onClick={() => setRecordingMode('audio')} className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg"><Mic size={18} /></button>
-                                <button onClick={() => setRecordingMode('video')} className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg"><Video size={18} /></button>
-                                <button onClick={() => setShowCamera(true)} className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg"><CameraIcon size={18} /></button>
-                                <button onClick={() => fileInputRef.current?.click()} className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg"><ImageIcon size={18} /></button>
-                                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <select value={privacy} onChange={(e) => setPrivacy(e.target.value as any)} className="bg-slate-950 text-slate-300 text-sm border border-slate-800 rounded-lg px-2 py-1.5 focus:outline-none">
-                                    <option value="public">Public (Global)</option>
-                                    <option value="friends">Friends Only</option>
-                                </select>
-                                <button onClick={handlePostSubmit} disabled={isProcessing} className="bg-onion-600 hover:bg-onion-500 text-white px-4 py-2 rounded-lg font-bold text-sm disabled:opacity-50 flex items-center gap-2">
-                                    {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} Post
-                                </button>
-                            </div>
-                        </div>
-                        
-                        {recordingMode && (
-                            <div className="p-4 bg-slate-950 rounded-xl border border-slate-800">
-                                <MediaRecorder type={recordingMode} maxDuration={MAX_POST_MEDIA_DURATION} onCapture={handleMediaCapture} onCancel={() => setRecordingMode(null)} />
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        )}
-
-        <CameraModal isOpen={showCamera} onClose={() => setShowCamera(false)} onCapture={handleCameraCapture} />
+        {/* Floating Scroll Top (Hidden for now, maybe add later) */}
         
+        {/* Modals */}
+        <CameraModal isOpen={showCamera} onClose={() => setShowCamera(false)} onCapture={handleCameraCapture} />
         {userInfoTarget && (
             <UserInfoModal 
                 target={userInfoTarget}
@@ -580,8 +651,8 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                 onConnect={onConnectUser}
                 onFollow={onFollowUser}
                 onUnfollow={onUnfollowUser}
-                onMessage={(cid) => { onNavigateToChat(cid); setUserInfoTarget(null); }}
-                onViewPosts={(uid) => { onViewUserPosts(uid); setUserInfoTarget(null); }}
+                onMessage={(id) => { onNavigateToChat(id); setUserInfoTarget(null); }}
+                onViewPosts={(id) => { onViewUserPosts(id); setUserInfoTarget(null); }}
                 posts={posts}
             />
         )}
