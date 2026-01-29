@@ -508,6 +508,16 @@ const Chat: React.FC<ChatProps> = ({
                  </div>
                </div>
              )})}
+             
+             {isTyping && (
+                <div className="flex items-center gap-2 ml-4 mb-2 animate-in fade-in slide-in-from-bottom-2">
+                    <div className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center">
+                        <span className="animate-pulse text-onion-400 tracking-widest text-lg leading-none pb-2">...</span>
+                    </div>
+                    <span className="text-xs text-slate-500 italic">Typing...</span>
+                </div>
+             )}
+             
              <div ref={messagesEndRef} />
           </div>
 
