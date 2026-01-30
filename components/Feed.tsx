@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Post, UserProfile, ToastMessage, Contact, MediaMetadata, Comment } from '../types';
-import { MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban } from 'lucide-react';
+import { MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban, Paperclip } from 'lucide-react';
 import { fileToBase64, getTransferConfig, SOCIAL_REACTIONS, formatUserIdentity, formatBytes } from '../utils';
 import { MAX_ATTACHMENT_SIZE_BYTES, MAX_ATTACHMENT_SIZE_MB, MAX_POST_MEDIA_DURATION } from '../constants';
 import { signData, verifySignature } from '../services/cryptoService';
@@ -296,7 +296,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                   <MessageCircle size={12} /> Reply
                               </button>
                               <div className="flex gap-1">
-                                  {SOCIAL_REACTIONS.slice(0, 3).map(emoji => (
+                                  {SOCIAL_REACTIONS.map(emoji => (
                                       <button key={emoji} onClick={() => onCommentReaction(postId, comment.id, emoji)} disabled={isMyComment} className="text-[10px] hover:scale-125 transition-transform opacity-50 hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed">{emoji}</button>
                                   ))}
                               </div>
@@ -424,6 +424,18 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                             className="w-full bg-transparent text-lg text-white placeholder-slate-500 outline-none resize-none min-h-[120px]"
                         />
 
+                        {/* Location Input - Restored */}
+                        <div className="flex items-center gap-2 bg-slate-950/50 border border-slate-800 rounded-lg px-3 py-2">
+                            <MapPin size={16} className="text-slate-500" />
+                            <input 
+                                type="text" 
+                                placeholder="Add location (optional)" 
+                                value={postLocation} 
+                                onChange={(e) => setPostLocation(e.target.value)} 
+                                className="bg-transparent border-none outline-none text-white text-sm w-full placeholder-slate-600" 
+                            />
+                        </div>
+
                         {/* Attachments Preview */}
                         {attachedImage && (
                             <div className="relative rounded-xl overflow-hidden border border-slate-700 group">
@@ -464,11 +476,12 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
 
                     {/* Footer Controls */}
                     <div className="p-4 border-t border-slate-800 bg-slate-950/50 flex flex-col gap-3">
+                        {/* Media Buttons Reordered: Video, Audio, Photo, File */}
                         <div className="flex items-center gap-4 text-onion-500">
-                            <button onClick={() => setShowCamera(true)} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Camera"><CameraIcon size={20} /></button>
-                            <button onClick={triggerFileSelect} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Image/File"><ImageIcon size={20} /></button>
                             <button onClick={() => setRecordingMode('video')} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Record Video"><Video size={20} /></button>
                             <button onClick={() => setRecordingMode('audio')} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Record Audio"><Mic size={20} /></button>
+                            <button onClick={() => setShowCamera(true)} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Take Photo"><CameraIcon size={20} /></button>
+                            <button onClick={triggerFileSelect} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Attach File"><Paperclip size={20} /></button>
                             <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
                         </div>
                         <button 
@@ -643,11 +656,29 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                               </button>
                           </div>
 
-                          {/* Reaction Picker Button */}
-                          <div className="relative">
-                              <button onClick={() => setActiveReactionPicker(activeReactionPicker?.postId === post.id ? null : {postId: post.id})} className="text-slate-400 hover:text-yellow-400 transition-colors">
+                          {/* Reactions (Inline with Buttons) */}
+                          <div className="relative flex items-center gap-2">
+                              {/* Existing Reactions as Clickable Pills */}
+                              {post.reactions && Object.entries(post.reactions).map(([emoji, users]) => (
+                                  users.length > 0 && (
+                                      <button 
+                                        key={emoji} 
+                                        onClick={() => !isMine && onPostReaction(post.id, emoji)}
+                                        disabled={isMine}
+                                        className={`text-xs px-2 py-1 rounded-full border transition-all flex items-center gap-1 ${users.includes(user.id) ? 'bg-onion-900/30 border-onion-500/50 text-white' : 'bg-slate-800/50 border-slate-700 text-slate-300 hover:bg-slate-800'}`}
+                                      >
+                                          <span>{emoji}</span>
+                                          <span className="font-bold">{users.length}</span>
+                                      </button>
+                                  )
+                              ))}
+
+                              {/* Add Reaction Button */}
+                              <button onClick={(e) => { e.stopPropagation(); setActiveReactionPicker(activeReactionPicker?.postId === post.id ? null : {postId: post.id}); }} disabled={isMine} className="text-slate-400 hover:text-yellow-400 transition-colors">
                                   <Smile size={20} />
                               </button>
+
+                              {/* Picker Popup */}
                               {activeReactionPicker?.postId === post.id && !activeReactionPicker.commentId && (
                                   <div className="absolute bottom-full right-0 mb-2 bg-slate-900 border border-slate-700 rounded-full shadow-xl flex p-1 z-20 gap-1 animate-in zoom-in-95">
                                       {SOCIAL_REACTIONS.map(emoji => (
@@ -659,20 +690,6 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                               )}
                           </div>
                       </div>
-
-                      {/* Reaction Summary */}
-                      {post.reactions && Object.keys(post.reactions).length > 0 && (
-                          <div className="px-4 pb-3 flex gap-1 flex-wrap">
-                              {Object.entries(post.reactions).map(([emoji, users]) => (
-                                  users.length > 0 && (
-                                      <div key={emoji} className="bg-slate-800/50 border border-slate-800 rounded-full px-2 py-0.5 text-xs text-slate-300 flex items-center gap-1">
-                                          <span>{emoji}</span>
-                                          <span className="font-bold">{users.length}</span>
-                                      </div>
-                                  )
-                              ))}
-                          </div>
-                      )}
 
                       {/* Comments Section */}
                       {expandedPostId === post.id && (
