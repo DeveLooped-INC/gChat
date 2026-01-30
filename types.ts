@@ -31,11 +31,11 @@ export interface UserProfile {
   homeNodeOnion: string; // The address of the node this user lives on
   createdAt: number;
   isDiscoverable?: boolean;
-  
+
   // Social Graph
   followersCount: number;
   followingIds: string[];
-  
+
   // Privacy
   privacySettings: PrivacySettings;
 }
@@ -66,10 +66,10 @@ export interface Contact {
 }
 
 export interface AvailablePeer {
-  id: string; 
+  id: string;
   displayName: string;
   username: string;
-  viaPeerId: string; 
+  viaPeerId: string;
   hops: number;
   lastSeen: number;
 }
@@ -79,7 +79,7 @@ export interface ConnectionRequest {
   fromUserId: string;
   fromUsername: string;
   fromDisplayName: string;
-  fromHomeNode: string; 
+  fromHomeNode: string;
   fromEncryptionPublicKey: string; // Essential for Chat
   timestamp: number;
 }
@@ -93,7 +93,7 @@ export interface Group {
   id: string;
   name: string;
   members: string[]; // List of User IDs
-  admins: string[]; 
+  admins: string[];
   ownerId: string;
   bannedIds: string[];
   settings: GroupSettings;
@@ -187,11 +187,11 @@ export interface Post {
   isSaved?: boolean;
   sharedPostId?: string; // ID of the original post if this is a share
   sharedPostSnapshot?: { // Snapshot of the original post for display if local lookup fails
-      authorName: string;
-      content: string;
-      imageUrl?: string;
-      media?: MediaMetadata;
-      timestamp: number;
+    authorName: string;
+    content: string;
+    imageUrl?: string;
+    media?: MediaMetadata;
+    timestamp: number;
   };
 }
 
@@ -206,14 +206,18 @@ export interface ToastMessage {
   title: string;
   message: string;
   type: 'success' | 'info' | 'warning' | 'error';
+  category?: NotificationCategory;
   action?: () => void;
 }
+
+export type NotificationCategory = 'admin' | 'social' | 'chat';
 
 export interface NotificationItem {
   id: string;
   title: string;
   message: string;
   type: 'success' | 'info' | 'warning' | 'error';
+  category: NotificationCategory;
   timestamp: number;
   read: boolean;
   linkRoute?: AppRoute;
@@ -227,4 +231,13 @@ export enum AppRoute {
   CONTACTS = 'contacts', // User Contacts
   NODE_SETTINGS = 'node_settings', // Admin Only Settings
   NOTIFICATIONS = 'notifications'
+}
+
+export interface TorStats {
+  circuits: number;
+  guards: number;
+  status: string;
+  bootstrap?: number;
+  readBytes?: number;
+  writeBytes?: number;
 }
