@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Post, UserProfile, ToastMessage, Contact, MediaMetadata, Comment } from '../types';
 import { MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban, Paperclip } from 'lucide-react';
@@ -84,6 +83,16 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
           if (onConsumeInitialState) onConsumeInitialState();
       }
   }, [initialState, posts, onConsumeInitialState, addToast]);
+
+  // Sync viewingPost with live data updates (reactions, comments, edits)
+  useEffect(() => {
+      if (viewingPost) {
+          const livePost = posts.find(p => p.id === viewingPost.id);
+          if (livePost && livePost !== viewingPost) {
+              setViewingPost(livePost);
+          }
+      }
+  }, [posts, viewingPost]);
 
   useEffect(() => {
     const handleClickOutside = () => {
