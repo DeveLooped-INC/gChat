@@ -12,12 +12,16 @@
 1.  Run `npm start` in your Termux terminal.
 2.  The script will attempt to launch your Android browser automatically.
 3.  If it doesn't open, manually open Chrome or Firefox and go to `http://localhost:3000`.
+4.  **Do not close the Termux app**, as this runs the Tor process.
+
+### Mobile Mode (Apple)
+1.  Could be Coming Soon!
 
 ## 2. Initialization
 When you first launch gChat, you will see a terminal-like initialization screen.
 1.  Click **"Initialize Node"**.
 2.  Wait for "Tor Bootstrapped 100%".
-3.  Enter a **Display Name** and a unique **Username**.
+3.  Enter a **Display Name** and a **Username**.
 4.  Click **"Launch gChat"**.
 
 ## 3. The Feed & Gossip
