@@ -302,7 +302,7 @@ const Chat: React.FC<ChatProps> = ({
     <div className="flex h-full w-full bg-slate-950 relative overflow-hidden">
 
       {/* Sidebar */}
-      <div className={`w - full md: w - 80 border - r border - slate - 800 bg - slate - 900 flex flex - col ${selectedChatId ? 'hidden md:flex' : 'flex'} `}>
+      <div className={`w-full md:w-80 border-r border-slate-800 bg-slate-900 flex flex-col ${selectedChatId ? 'hidden md:flex' : 'flex'} `}>
         <div className="p-4 border-b border-slate-800 flex justify-between items-center flex-none">
           <h2 className="text-xl font-bold text-white">Messages</h2>
           <button onClick={() => setShowGroupModal(true)} className="text-slate-400 hover:text-white p-2 hover:bg-slate-800 rounded-full" title="New Group"><Plus size={20} /></button>
@@ -316,7 +316,7 @@ const Chat: React.FC<ChatProps> = ({
         <div className="flex-1 overflow-y-auto">
           {groups && groups.length > 0 && <div className="px-4 py-2 text-xs font-bold text-slate-500 uppercase">Groups</div>}
           {(groups || []).map(group => (
-            <div key={group.id} onClick={() => setSelectedChatId(group.id)} className={`p - 4 hover: bg - slate - 800 cursor - pointer transition - colors border - l - 4 ${selectedChatId === group.id ? 'bg-slate-800 border-indigo-500' : 'border-transparent'} `}>
+            <div key={group.id} onClick={() => setSelectedChatId(group.id)} className={`p-4 hover:bg-slate-800 cursor-pointer transition-colors border-l-4 ${selectedChatId === group.id ? 'bg-slate-800 border-indigo-500' : 'border-transparent'} `}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center border border-indigo-500/30">{group.isMuted ? <BellOff size={18} /> : <Users size={18} />}</div>
@@ -329,12 +329,12 @@ const Chat: React.FC<ChatProps> = ({
           {contacts.map(contact => {
             const { handle, suffix } = formatUserIdentity(contact.username || contact.displayName);
             return (
-              <div key={contact.id} onClick={() => setSelectedChatId(contact.id)} className={`p - 4 hover: bg - slate - 800 cursor - pointer transition - colors border - l - 4 ${selectedChatId === contact.id ? 'bg-slate-800 border-onion-500' : 'border-transparent'} `}>
+              <div key={contact.id} onClick={() => setSelectedChatId(contact.id)} className={`p-4 hover:bg-slate-800 cursor-pointer transition-colors border-l-4 ${selectedChatId === contact.id ? 'bg-slate-800 border-onion-500' : 'border-transparent'} `}>
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3">
                     <div className="relative">
                       <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-white font-bold">{handle.charAt(0)}</div>
-                      <div className={`absolute bottom - 0 right - 0 w - 3 h - 3 rounded - full border - 2 border - slate - 900 ${contact.status === 'online' ? 'bg-emerald-500' : 'bg-slate-500'} `} />
+                      <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-slate-900 ${contact.status === 'online' ? 'bg-emerald-500' : 'bg-slate-500'} `} />
                     </div>
                     <div>
                       <h3 className="font-medium text-slate-200 flex items-center gap-1">
@@ -353,9 +353,9 @@ const Chat: React.FC<ChatProps> = ({
 
       {/* Main Chat Area */}
       {selectedChatId ? (
-        <div className={`flex - 1 flex flex - col h - full ${!selectedChatId ? 'hidden md:flex' : 'flex'} `}>
+        <div className={`flex-1 flex flex-col h-full ${!selectedChatId ? 'hidden md:flex' : 'flex'} `}>
           {/* Header */}
-          <div className={`h - 16 flex - none border - b flex items - center justify - between px - 6 relative z - 20 transition - colors duration - 300 ${isEphemeralMode ? 'bg-amber-950/30 border-amber-900/50' : 'bg-slate-900/50 border-slate-800'} `}>
+          <div className={`h-16 flex-none border-b flex items-center justify-between px-6 relative z-20 transition-colors duration-300 ${isEphemeralMode ? 'bg-amber-950/30 border-amber-900/50' : 'bg-slate-900/50 border-slate-800'} `}>
             <div className="flex items-center space-x-3">
               <button className="md:hidden text-slate-400 mr-2" onClick={() => setSelectedChatId(null)}>←</button>
               {activeGroup ? (
@@ -364,7 +364,7 @@ const Chat: React.FC<ChatProps> = ({
                 <div onClick={() => openUserInfo(activeContact?.id || '')} className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white text-sm font-bold cursor-pointer hover:bg-slate-600">{activeContact?.displayName.charAt(0)}</div>
               )}
               <div>
-                <h3 onClick={() => { if (!activeGroup) openUserInfo(activeContact?.id || ''); }} className={`font - bold text - slate - 100 flex items - center gap - 2 ${!activeGroup ? 'cursor-pointer hover:underline' : ''} `}>
+                <h3 onClick={() => { if (!activeGroup) openUserInfo(activeContact?.id || ''); }} className={`font-bold text-slate-100 flex items-center gap-2 ${!activeGroup ? 'cursor-pointer hover:underline' : ''} `}>
                   {headerName.handle}
                   {headerName.suffix && <span className="text-slate-500 font-mono text-xs opacity-70">{headerName.suffix}</span>}
                   {isEphemeralMode && <Bomb size={14} className="text-amber-500" />}
