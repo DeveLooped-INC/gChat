@@ -7,6 +7,7 @@ import { verifySignature, decryptMessage } from '../services/cryptoService';
 import { createPostPayload, mergePosts, appendReply, updateCommentTree, findCommentInTree } from '../utils/dataHelpers';
 import { useAppState } from './useAppState';
 import { storageService } from '../services/storage';
+import { saveMedia, hasMedia } from '../services/mediaStorage';
 
 const MAX_GOSSIP_HOPS = 6;
 
@@ -43,6 +44,51 @@ export const useNetworkLayer = ({
 
     // Packet Queue for pre-load handling
     const packetQueue = useRef<{ packet: NetworkPacket, senderNodeId: string }[]>([]);
+
+    // --- HELPER: Auto-Download Media ---
+    const checkAndAutoDownload = useCallback(async (url: string | undefined, context: 'friends' | 'private', authorId?: string) => {
+        if (!url || !state.mediaSettings.enabled || url.startsWith('data:')) return;
+
+        // Check Logic Switches
+        if (context === 'friends') {
+            if (!state.mediaSettings.autoDownloadFriends) return;
+            // Verify Relationship (Connection or Followed)
+            if (authorId) {
+                const isFollowed = state.userRef.current.followingIds?.includes(authorId);
+                const isConnection = state.contactsRef.current.some(c => c.id === authorId);
+                if (!isFollowed && !isConnection) {
+                    console.log(`[AutoDownload] Skipped ${url}: Sender ${authorId.substring(0, 8)}... is not a friend/connection.`);
+                    return;
+                }
+            }
+        }
+        if (context === 'private' && !state.mediaSettings.autoDownloadPrivate) return;
+
+        try {
+            // Check if we already have it
+            const mediaId = url.split('/').pop();
+            if (mediaId && await hasMedia(mediaId)) return;
+
+            // HEAD Request for Size
+            const headRes = await fetch(url, { method: 'HEAD' });
+            if (!headRes.ok) return;
+            const size = parseInt(headRes.headers.get('content-length') || '0');
+            const maxBytes = state.mediaSettings.maxFileSizeMB * 1024 * 1024;
+
+            if (size > 0 && size <= maxBytes) {
+                console.log(`[AutoDownload] Fetching ${url} (${(size / 1024 / 1024).toFixed(2)}MB)...`);
+                const res = await fetch(url);
+                const blob = await res.blob();
+                if (mediaId) await saveMedia(mediaId, blob);
+            } else {
+                console.log(`[AutoDownload] Skipped ${url}: Size ${size} > Limit ${maxBytes}`);
+            }
+        } catch (e) {
+            console.error("[AutoDownload] Failed", e);
+        }
+    }, [state.mediaSettings]);
+
+
 
     // --- HELPER: Broadcast Post State (Ensures propagation of edits/comments) ---
     const broadcastPostState = useCallback((post: Post) => {
@@ -276,9 +322,9 @@ export const useNetworkLayer = ({
                             }
                         });
 
-                        // Notification Logic
+                        // Notification Logic: Only notify if it's a BRAND NEW post we haven't seen before
                         const isRecent = (Date.now() - post.timestamp) < (maxSyncAgeHours * 60 * 60 * 1000);
-                        if (isRecent && post.authorId !== currentUser.id) {
+                        if (isRecent && post.authorId !== currentUser.id && existingIdx === -1) {
                             const { handle } = formatUserIdentity(post.authorName);
                             const preview = post.content ? post.content.substring(0, 30) : 'Media content';
                             addNotificationRef.current('New Broadcast', `${handle} posted: ${preview}...`, 'info', 'social', AppRoute.FEED, post.id);
@@ -398,6 +444,10 @@ export const useNetworkLayer = ({
                         const { handle } = formatUserIdentity(postData.authorName);
                         // Corrected linkId to postData.id so navigation works
                         addNotificationRef.current('Friend Post', `${handle} shared a secure broadcast.`, 'info', 'social', AppRoute.FEED, postData.id);
+
+                        // Auto-Download Media
+                        if (postData.imageUrl) checkAndAutoDownload(postData.imageUrl, 'friends', postData.authorId);
+
                         return [postData, ...prev];
                     });
                 }
@@ -504,6 +554,9 @@ export const useNetworkLayer = ({
                             if (!group || !group.isMuted) {
                                 const title = group ? `Group: ${group.name}` : `From ${senderContact.displayName}`;
                                 addNotificationRef.current('New Message', title, 'info', 'chat', AppRoute.CHAT, threadId);
+
+                                // Auto-Download Attachment
+                                if (attachmentUrl) checkAndAutoDownload(attachmentUrl, 'private');
                             }
                         }
                     }
