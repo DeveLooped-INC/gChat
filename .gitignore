@@ -3,6 +3,7 @@ bin
 node_modules
 .pnp
 .pnp.js
+package-lock.json
 
 # Testing
 coverage
