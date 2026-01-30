@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { UserProfile, NetworkPacket, AvailablePeer, Post, ToastMessage, AppRoute, MediaMetadata, EncryptedPayload, Message, Group, ConnectionRequest, NotificationItem } from '../types';
+import { UserProfile, NetworkPacket, AvailablePeer, Post, ToastMessage, AppRoute, MediaMetadata, EncryptedPayload, Message, Group, ConnectionRequest, NotificationItem, NotificationCategory } from '../types';
 import { networkService } from '../services/networkService';
 import { calculatePostHash, formatUserIdentity } from '../utils';
 import { verifySignature, decryptMessage } from '../services/cryptoService';
@@ -13,7 +13,7 @@ const MAX_GOSSIP_HOPS = 6;
 interface UseNetworkLayerProps {
     user: UserProfile;
     state: ReturnType<typeof useAppState>;
-    addNotification: (title: string, message: string, type: ToastMessage['type'], linkRoute?: AppRoute, linkId?: string) => void;
+    addNotification: (title: string, message: string, type: ToastMessage['type'], category: NotificationCategory, linkRoute?: AppRoute, linkId?: string) => void;
     onUpdateUser: (u: UserProfile) => void;
     activeChatId: string | null;
     maxSyncAgeHours: number;
@@ -29,32 +29,32 @@ export const useNetworkLayer = ({
     maxSyncAgeHours,
     performGracefulShutdown
 }: UseNetworkLayerProps) => {
-    
+
     const [isOnline, setIsOnline] = useState<boolean>(false);
     const [discoveredPeers, setDiscoveredPeers] = useState<AvailablePeer[]>([]);
     const [pendingNodeRequests, setPendingNodeRequests] = useState<string[]>([]);
-    
+
     const processedPacketIds = useRef<Set<string>>(new Set());
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    
+
     // Ensure we always use the latest addNotification to avoid stale state in async loops
     const addNotificationRef = useRef(addNotification);
     useEffect(() => { addNotificationRef.current = addNotification; }, [addNotification]);
 
     // Packet Queue for pre-load handling
-    const packetQueue = useRef<{packet: NetworkPacket, senderNodeId: string}[]>([]);
+    const packetQueue = useRef<{ packet: NetworkPacket, senderNodeId: string }[]>([]);
 
     // --- HELPER: Broadcast Post State (Ensures propagation of edits/comments) ---
     const broadcastPostState = useCallback((post: Post) => {
         if (post.privacy !== 'public') return;
-        
+
         // Calculate fresh hash representing current state (content + comments + votes)
         const hash = calculatePostHash(post);
-        
+
         const packet: NetworkPacket = {
             id: crypto.randomUUID(),
             type: 'INVENTORY_ANNOUNCE',
-            hops: MAX_GOSSIP_HOPS, 
+            hops: MAX_GOSSIP_HOPS,
             senderId: state.userRef.current.homeNodeOnion,
             payload: {
                 postId: post.id,
@@ -74,7 +74,7 @@ export const useNetworkLayer = ({
 
         const nextPacket = { ...packet, hops: currentHops - 1 };
         const allPeers = state.peersRef.current.map(p => p.onionAddress);
-        
+
         const possibleRecipients = allPeers.filter(addr => {
             const isSource = addr === sourceNodeId;
             const isOrigin = addr === packet.senderId;
@@ -94,7 +94,7 @@ export const useNetworkLayer = ({
 
     // --- PACKET HANDLING LOGIC ---
     // We use a REF to hold the latest version of this function to avoid stale closures in the socket listener
-    const handlePacketRef = useRef<(packet: NetworkPacket, senderNodeId: string, isReplay?: boolean) => Promise<void>>(async () => {});
+    const handlePacketRef = useRef<(packet: NetworkPacket, senderNodeId: string, isReplay?: boolean) => Promise<void>>(async () => { });
 
     const handlePacket = useCallback(async (packet: NetworkPacket, senderNodeId: string, isReplay = false) => {
         // CRITICAL FIX: If state is not loaded (contacts empty), queue packet.
@@ -117,7 +117,7 @@ export const useNetworkLayer = ({
                     senderNodeId,
                     timestamp: Date.now()
                 }, packet.targetUserId);
-                return; 
+                return;
             }
         }
 
@@ -140,10 +140,10 @@ export const useNetworkLayer = ({
                 timestamp: Date.now()
             }, impliedTargetId);
         }
-        
+
         // --- DEDUPLICATION ---
         if (packet.id && processedPacketIds.current.has(packet.id)) {
-            return; 
+            return;
         }
         if (packet.id) processedPacketIds.current.add(packet.id);
 
@@ -158,21 +158,21 @@ export const useNetworkLayer = ({
         }
 
         // Detect unknown nodes
-        if (senderNodeId && 
-            !state.peersRef.current.some(p => p.onionAddress === senderNodeId) && 
-            packet.type !== 'NODE_SHUTDOWN' && 
-            packet.type !== 'USER_EXIT' && 
+        if (senderNodeId &&
+            !state.peersRef.current.some(p => p.onionAddress === senderNodeId) &&
+            packet.type !== 'NODE_SHUTDOWN' &&
+            packet.type !== 'USER_EXIT' &&
             packet.type !== 'INVENTORY_ANNOUNCE' &&
             packet.type !== 'INVENTORY_SYNC_REQUEST'
         ) {
             setPendingNodeRequests(prev => {
                 if (prev.includes(senderNodeId)) return prev;
-                addNotificationRef.current('New Node Signal', `Unknown peer ${senderNodeId.substring(0,8)}... pinged you.`, 'info', AppRoute.NODE_SETTINGS);
+                addNotificationRef.current('New Node Signal', `Unknown peer ${senderNodeId.substring(0, 8)}... pinged you.`, 'info', 'admin', AppRoute.NODE_SETTINGS);
                 return [...prev, senderNodeId];
             });
         }
 
-        switch(packet.type) {
+        switch (packet.type) {
             case 'TYPING': {
                 const { userId } = packet.payload;
                 if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -187,7 +187,7 @@ export const useNetworkLayer = ({
                 if (packet.targetUserId === currentUser.id) {
                     const updatedUser = { ...currentUser, followersCount: (currentUser.followersCount || 0) + 1 };
                     onUpdateUser(updatedUser);
-                    addNotificationRef.current('New Follower', 'Someone started following you!', 'success', AppRoute.NODE_SETTINGS);
+                    addNotificationRef.current('New Follower', 'Someone started following you!', 'success', 'social', AppRoute.NODE_SETTINGS);
                 }
                 break;
             }
@@ -204,7 +204,7 @@ export const useNetworkLayer = ({
                 const { postId, contentHash } = packet.payload;
                 const existingPost = state.postsRef.current.find(p => p.id === postId);
                 const localHash = existingPost ? calculatePostHash(existingPost) : null;
-                
+
                 if (!existingPost || localHash !== contentHash) {
                     console.log(`[Network] Detected out-of-sync post ${postId}. Fetching from ${senderNodeId}...`);
                     const reqPacket: NetworkPacket = {
@@ -240,7 +240,7 @@ export const useNetworkLayer = ({
                 const post = packet.payload as Post;
                 const payload = createPostPayload(post);
                 const isValid = verifySignature(payload, post.truthHash, post.authorPublicKey);
-                
+
                 if (isValid) {
                     const calculatedHash = calculatePostHash(post);
                     const postWithHash = { ...post, contentHash: calculatedHash };
@@ -269,7 +269,7 @@ export const useNetworkLayer = ({
                                 // Merge Logic inside setter to be safe against concurrent updates
                                 const existing = prev[idx];
                                 const merged = mergePosts(existing, postWithHash);
-                                merged.contentHash = calculatePostHash(merged); 
+                                merged.contentHash = calculatePostHash(merged);
                                 const next = [...prev];
                                 next[idx] = merged;
                                 return next;
@@ -281,9 +281,9 @@ export const useNetworkLayer = ({
                         if (isRecent && post.authorId !== currentUser.id) {
                             const { handle } = formatUserIdentity(post.authorName);
                             const preview = post.content ? post.content.substring(0, 30) : 'Media content';
-                            addNotificationRef.current('New Broadcast', `${handle} posted: ${preview}...`, 'info', AppRoute.FEED, post.id);
+                            addNotificationRef.current('New Broadcast', `${handle} posted: ${preview}...`, 'info', 'social', AppRoute.FEED, post.id);
                         }
-                        
+
                         // PROPAGATION TRIGGER: Announce new state to my peers
                         broadcastPostState(postWithHash);
                     }
@@ -298,10 +298,10 @@ export const useNetworkLayer = ({
                 const { inventory, since } = packet.payload;
                 const theirInv = inventory as { id: string, hash: string }[];
                 const myPosts = state.postsRef.current.filter(p => p.timestamp > since && p.privacy === 'public');
-                
+
                 const missingOrUpdatedOnTheirSide = myPosts.filter(myP => {
                     const theirEntry = theirInv.find(i => i.id === myP.id);
-                    if (!theirEntry) return true; 
+                    if (!theirEntry) return true;
                     const myCurrentHash = calculatePostHash(myP);
                     return theirEntry.hash !== myCurrentHash;
                 });
@@ -350,9 +350,9 @@ export const useNetworkLayer = ({
                                 }
                             }
                         });
-                        return next.sort((a,b) => b.timestamp - a.timestamp);
+                        return next.sort((a, b) => b.timestamp - a.timestamp);
                     });
-                    if (addedCount > 0) addNotificationRef.current('Sync', `Updated ${addedCount} posts via Inventory Sync.`, 'success');
+                    if (addedCount > 0) addNotificationRef.current('Sync', `Updated ${addedCount} posts via Inventory Sync.`, 'success', 'admin');
                 }
                 break;
             }
@@ -363,9 +363,9 @@ export const useNetworkLayer = ({
                     const existingPeer = state.peersRef.current.find(p => p.onionAddress === info.onionAddress);
 
                     if (existingPeer) {
-                        state.setPeers(prev => prev.map(p => 
-                            p.onionAddress === info.onionAddress 
-                                ? { ...p, alias: info.alias || p.alias, status: 'online', lastSeen: Date.now() } 
+                        state.setPeers(prev => prev.map(p =>
+                            p.onionAddress === info.onionAddress
+                                ? { ...p, alias: info.alias || p.alias, status: 'online', lastSeen: Date.now() }
                                 : p
                         ));
                         setDiscoveredPeers(prev => prev.filter(p => p.id !== info.onionAddress));
@@ -397,7 +397,7 @@ export const useNetworkLayer = ({
                         if (prev.some(p => p.id === postData.id)) return prev;
                         const { handle } = formatUserIdentity(postData.authorName);
                         // Corrected linkId to postData.id so navigation works
-                        addNotificationRef.current('Friend Post', `${handle} shared a secure broadcast.`, 'info', AppRoute.FEED, postData.id);
+                        addNotificationRef.current('Friend Post', `${handle} shared a secure broadcast.`, 'info', 'social', AppRoute.FEED, postData.id);
                         return [postData, ...prev];
                     });
                 }
@@ -406,7 +406,7 @@ export const useNetworkLayer = ({
 
             case 'USER_EXIT': {
                 const { userId } = packet.payload;
-                state.setContacts(prev => prev.map(c => 
+                state.setContacts(prev => prev.map(c =>
                     c.id === userId ? { ...c, status: 'offline' } : c
                 ));
                 break;
@@ -414,9 +414,9 @@ export const useNetworkLayer = ({
 
             case 'NODE_SHUTDOWN': {
                 const { onionAddress } = packet.payload;
-                state.setPeers(prev => prev.map(p => 
-                    p.onionAddress === onionAddress 
-                        ? { ...p, status: 'offline', lastSeen: Date.now() } 
+                state.setPeers(prev => prev.map(p =>
+                    p.onionAddress === onionAddress
+                        ? { ...p, status: 'offline', lastSeen: Date.now() }
                         : p
                 ));
                 setDiscoveredPeers(prev => prev.filter(p => p.id !== onionAddress));
@@ -436,21 +436,21 @@ export const useNetworkLayer = ({
                         return c;
                     }));
                 }
-                
+
                 const existingContact = state.contactsRef.current.find(c => c.id === req.fromUserId);
                 if (existingContact) {
                     if (!existingContact.homeNodes.includes(req.fromHomeNode)) {
-                        state.setContacts(prev => prev.map(c => c.id === req.fromUserId ? {...c, homeNodes: [req.fromHomeNode]} : c));
+                        state.setContacts(prev => prev.map(c => c.id === req.fromUserId ? { ...c, homeNodes: [req.fromHomeNode] } : c));
                     }
-                    return; 
+                    return;
                 }
 
                 state.setConnectionRequests(prev => {
                     if (prev.some(r => r.fromUserId === req.fromUserId)) return prev;
-                    addNotificationRef.current('New Connection', `${req.fromDisplayName} wants to connect.`, 'success', AppRoute.CONTACTS);
+                    addNotificationRef.current('New Connection', `${req.fromDisplayName} wants to connect.`, 'success', 'admin', AppRoute.CONTACTS);
                     return [...prev, req];
                 });
-                
+
                 if (req.fromHomeNode) networkService.connect(req.fromHomeNode);
                 break;
             }
@@ -458,15 +458,15 @@ export const useNetworkLayer = ({
             case 'MESSAGE': {
                 const encPayload = packet.payload as EncryptedPayload;
                 const currentEncryptionKey = state.userRef.current.keys.encryption.secretKey;
-                
+
                 let senderContact = state.contactsRef.current.find(c => {
                     if (!c.encryptionPublicKey) return false;
                     return decryptMessage(encPayload.ciphertext, encPayload.nonce, c.encryptionPublicKey, currentEncryptionKey) !== null;
                 });
 
-                if(senderContact && senderContact.encryptionPublicKey) {
+                if (senderContact && senderContact.encryptionPublicKey) {
                     const decrypted = decryptMessage(encPayload.ciphertext, encPayload.nonce, senderContact.encryptionPublicKey, currentEncryptionKey);
-                    if(decrypted) {
+                    if (decrypted) {
                         let content = decrypted;
                         let media: MediaMetadata | undefined = undefined;
                         let attachmentUrl: string | undefined = undefined;
@@ -480,8 +480,8 @@ export const useNetworkLayer = ({
                             attachmentUrl = parsed.attachment;
                             replyToId = parsed.replyToId;
                             privacy = parsed.privacy || 'public';
-                        } catch(e){}
-                        
+                        } catch (e) { }
+
                         const threadId = encPayload.groupId || senderContact.id;
                         const newMsg: Message = {
                             id: encPayload.id || crypto.randomUUID(),
@@ -490,7 +490,7 @@ export const useNetworkLayer = ({
                             content: content,
                             timestamp: Date.now(),
                             delivered: true,
-                            read: activeChatId === threadId && !isReplay, 
+                            read: activeChatId === threadId && !isReplay,
                             isMine: false,
                             media, attachmentUrl, replyToId, privacy
                         };
@@ -498,26 +498,26 @@ export const useNetworkLayer = ({
                             if (prev.some(m => m.id === newMsg.id)) return prev;
                             return [...prev, newMsg];
                         });
-                        
+
                         if (isReplay || activeChatId !== threadId) {
                             const group = state.groupsRef.current.find(g => g.id === encPayload.groupId);
                             if (!group || !group.isMuted) {
                                 const title = group ? `Group: ${group.name}` : `From ${senderContact.displayName}`;
-                                addNotificationRef.current('New Message', title, 'info', AppRoute.CHAT, threadId);
+                                addNotificationRef.current('New Message', title, 'info', 'chat', AppRoute.CHAT, threadId);
                             }
                         }
                     }
                 }
                 break;
             }
-            
+
             case 'CHAT_REACTION': {
                 const { messageId, emoji, userId, action } = packet.payload;
                 state.setMessages(prev => prev.map(m => {
                     if (m.id !== messageId) return m;
                     const currentReactions = { ...(m.reactions || {}) };
                     if (!currentReactions[emoji]) currentReactions[emoji] = [];
-                    
+
                     if (action === 'remove') {
                         currentReactions[emoji] = currentReactions[emoji].filter(id => id !== userId);
                     } else {
@@ -547,7 +547,7 @@ export const useNetworkLayer = ({
                 const group = packet.payload as Group;
                 state.setGroups(prev => {
                     if (prev.some(g => g.id === group.id)) return prev;
-                    addNotificationRef.current('Group Invite', `Added to group "${group.name}"`, 'success', AppRoute.CHAT, group.id);
+                    addNotificationRef.current('Group Invite', `Added to group "${group.name}"`, 'success', 'chat', AppRoute.CHAT, group.id);
                     return [...prev, group];
                 });
                 break;
@@ -613,23 +613,23 @@ export const useNetworkLayer = ({
                 let editedPost: Post | undefined;
                 state.setPosts(prev => prev.map(p => {
                     if (p.id === editPostId) {
-                        const updated = { ...p, content: newContent, isEdited: true, contentHash: calculatePostHash({...p, content: newContent, isEdited: true}) };
+                        const updated = { ...p, content: newContent, isEdited: true, contentHash: calculatePostHash({ ...p, content: newContent, isEdited: true }) };
                         editedPost = updated;
                         return updated;
                     }
                     return p;
                 }));
-                if(editedPost) broadcastPostState(editedPost);
+                if (editedPost) broadcastPostState(editedPost);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
             case 'COMMENT': {
                 const { postId, comment: newComment, parentCommentId } = packet.payload;
                 let postAfterComment: Post | undefined;
-                
+
                 state.setPosts(prev => prev.map(p => {
                     if (p.id !== postId) return p;
-                    
+
                     if (findCommentInTree(p.commentsList, newComment.id)) return p;
 
                     let updatedPost = p;
@@ -642,17 +642,17 @@ export const useNetworkLayer = ({
                     postAfterComment = updatedPost;
                     return updatedPost;
                 }));
-                
+
                 const postForComment = state.postsRef.current.find(p => p.id === postId);
                 if (postForComment) {
                     const { handle } = formatUserIdentity(newComment.authorName || 'Someone');
                     if (postForComment.authorId === currentUser.id && newComment.authorId !== currentUser.id) {
-                        addNotificationRef.current('New Comment', `${handle} commented on your broadcast`, 'info', AppRoute.FEED, postId);
+                        addNotificationRef.current('New Comment', `${handle} commented on your broadcast`, 'info', 'social', AppRoute.FEED, postId);
                     }
                     if (parentCommentId) {
                         const parent = findCommentInTree(postForComment.commentsList, parentCommentId);
                         if (parent && parent.authorId === currentUser.id && newComment.authorId !== currentUser.id) {
-                            addNotificationRef.current('New Reply', `${handle} replied to your comment`, 'info', AppRoute.FEED, postId);
+                            addNotificationRef.current('New Reply', `${handle} replied to your comment`, 'info', 'social', AppRoute.FEED, postId);
                         }
                     }
                 }
@@ -685,11 +685,11 @@ export const useNetworkLayer = ({
                     if (targetComment && targetComment.authorId === currentUser.id && cvUserId !== currentUser.id) {
                         const voter = state.contactsRef.current.find(c => c.id === cvUserId);
                         const { handle } = formatUserIdentity(voter?.displayName || 'Someone');
-                        addNotificationRef.current('Comment Vote', `${handle} ${cvType}voted your comment`, 'success', AppRoute.FEED, cvPostId);
+                        addNotificationRef.current('Comment Vote', `${handle} ${cvType}voted your comment`, 'success', 'social', AppRoute.FEED, cvPostId);
                     }
                 }
 
-                if(postAfterCV) broadcastPostState(postAfterCV);
+                if (postAfterCV) broadcastPostState(postAfterCV);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
             }
@@ -719,7 +719,7 @@ export const useNetworkLayer = ({
                     if (targetComment && targetComment.authorId === currentUser.id && userId !== currentUser.id) {
                         const reactor = state.contactsRef.current.find(c => c.id === userId);
                         const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
-                        addNotificationRef.current('New Reaction', `${handle} reacted ${emoji} to your comment`, 'success', AppRoute.FEED, postId);
+                        addNotificationRef.current('New Reaction', `${handle} reacted ${emoji} to your comment`, 'success', 'social', AppRoute.FEED, postId);
                     }
                 }
 
@@ -761,7 +761,7 @@ export const useNetworkLayer = ({
                 if (postForReact && postForReact.authorId === currentUser.id && userId !== currentUser.id) {
                     const reactor = state.contactsRef.current.find(c => c.id === userId);
                     const { handle } = formatUserIdentity(reactor?.displayName || 'Someone');
-                    addNotificationRef.current('New Reaction', `${handle} reacted ${emoji} to your broadcast`, 'success', AppRoute.FEED, postId);
+                    addNotificationRef.current('New Reaction', `${handle} reacted ${emoji} to your broadcast`, 'success', 'social', AppRoute.FEED, postId);
                 }
 
                 if (postAfterReact) broadcastPostState(postAfterReact);
@@ -780,7 +780,7 @@ export const useNetworkLayer = ({
     useEffect(() => {
         // Subscribe to network events
         const unsubscribeStatus = networkService.subscribeToStatus((online) => setIsOnline(online));
-        
+
         networkService.onMessage = (packet, sender) => {
             handlePacketRef.current(packet, sender);
         };
@@ -804,20 +804,20 @@ export const useNetworkLayer = ({
         if (isOnline && user.isDiscoverable) {
             const announce = () => {
                 const aliasToUse = state.nodeConfig.alias || user.displayName;
-                const packet: NetworkPacket = { 
-                    id: crypto.randomUUID(), 
-                    hops: MAX_GOSSIP_HOPS, 
-                    type: 'ANNOUNCE_PEER', 
-                    senderId: user.homeNodeOnion, 
-                    payload: { onionAddress: user.homeNodeOnion, alias: aliasToUse, description: state.nodeConfig.description } 
+                const packet: NetworkPacket = {
+                    id: crypto.randomUUID(),
+                    hops: MAX_GOSSIP_HOPS,
+                    type: 'ANNOUNCE_PEER',
+                    senderId: user.homeNodeOnion,
+                    payload: { onionAddress: user.homeNodeOnion, alias: aliasToUse, description: state.nodeConfig.description }
                 };
                 processedPacketIds.current.add(packet.id!);
                 networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
             };
-            
+
             // Announce on connect
             announce();
-            
+
             // Re-announce periodically
             const interval = setInterval(announce, 1000 * 60 * 60); // Every hour
             return () => clearInterval(interval);
