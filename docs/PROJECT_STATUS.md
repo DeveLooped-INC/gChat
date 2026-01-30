@@ -2,10 +2,17 @@
 # Project Status
 
 ## Overview
-**Current Version**: 1.3.0 (The Social Sync Update)
+**Current Version**: 1.3.1 (The Polished Mesh Update)
 **Status**: Stable / Feature Rich
 
 gChat has evolved into a robust decentralized platform. It now features a sophisticated **State Synchronization Engine** that ensures nodes stay in sync even after periods of disconnection, and a comprehensive **Social Layer** including threaded comments, reactions, and moderation.
+
+## ✅ Recent Changelog (v1.3.1)
+*   **Fix**: Camera Modal now correctly overlays the "New Broadcast" modal (Z-Index fix).
+*   **Fix**: "New Broadcast" notifications now trigger reliably for public posts from unknown nodes (refactored state logic).
+*   **Fix**: `INVENTORY_ANNOUNCE` packets are now daisy-chained (forwarded) to ensure posts propagate beyond immediate neighbors.
+*   **Fix**: Peer Heartbeat (`ANNOUNCE_PEER`) now works even if a Node Alias is not explicitly set in settings (fallbacks to Display Name).
+*   **Improvement**: Enhanced debug logging for Inventory Sync operations.
 
 ## ✅ Completed Features
 
