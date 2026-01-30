@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
-import { UserProfile, Contact, Post, Group, Message, NotificationItem, NodePeer, ConnectionRequest, AppRoute, NotificationCategory } from '../types';
+import { UserProfile, Contact, Post, Group, Message, NotificationItem, NodePeer, ConnectionRequest, AppRoute, NotificationCategory, MediaSettings } from '../types';
 import { networkService } from '../services/networkService';
 import { storageService } from '../services/storage';
 
@@ -190,6 +190,21 @@ export const useAppState = (user: UserProfile) => {
         });
     };
 
+    // Media Settings
+    const [mediaSettings, setMediaSettings] = useState<MediaSettings>(() => {
+        try {
+            const saved = localStorage.getItem('gchat_media_settings');
+            if (saved) return JSON.parse(saved);
+            return { enabled: false, maxFileSizeMB: 10, autoDownloadFriends: false, autoDownloadPrivate: false };
+        } catch {
+            return { enabled: false, maxFileSizeMB: 10, autoDownloadFriends: false, autoDownloadPrivate: false };
+        }
+    });
+
+    useEffect(() => {
+        localStorage.setItem('gchat_media_settings', JSON.stringify(mediaSettings));
+    }, [mediaSettings]);
+
     return {
         contacts, setContacts,
         posts, setPosts,
@@ -198,6 +213,7 @@ export const useAppState = (user: UserProfile) => {
         notifications, setNotifications,
         peers, setPeers,
         nodeConfig, setNodeConfig,
+        mediaSettings, setMediaSettings,
         connectionRequests, setConnectionRequests,
         typingContactId, setTypingContactId, // Exposed here
         isLoaded,
