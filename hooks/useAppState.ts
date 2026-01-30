@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
-import { UserProfile, Contact, Post, Group, Message, NotificationItem, NodePeer, ConnectionRequest, AppRoute } from '../types';
+import { UserProfile, Contact, Post, Group, Message, NotificationItem, NodePeer, ConnectionRequest, AppRoute, NotificationCategory } from '../types';
 import { networkService } from '../services/networkService';
 import { storageService } from '../services/storage';
 
@@ -9,7 +9,7 @@ const PEERS_KEY = 'gchat_node_peers';
 
 export const useAppState = (user: UserProfile) => {
     // --- DATA STATES ---
-    
+
     // CRITICAL FIX: Initialize peers directly from LocalStorage (Lazy Init).
     // This prevents the "Save" effect from running with an empty array on mount and wiping the data.
     const [peers, setPeers] = useState<NodePeer[]>(() => {
@@ -23,7 +23,7 @@ export const useAppState = (user: UserProfile) => {
     });
 
     // Config is also synchronous LS
-    const [nodeConfig, setNodeConfig] = useState<{alias: string, description: string}>(() => {
+    const [nodeConfig, setNodeConfig] = useState<{ alias: string, description: string }>(() => {
         try { return JSON.parse(localStorage.getItem(NODE_CONFIG_KEY) || '{"alias":"", "description":""}'); }
         catch { return { alias: '', description: '' }; }
     });
@@ -35,7 +35,7 @@ export const useAppState = (user: UserProfile) => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [connectionRequests, setConnectionRequests] = useState<ConnectionRequest[]>([]);
-    
+
     // Ephemeral State
     const [typingContactId, setTypingContactId] = useState<string | null>(null);
 
@@ -63,7 +63,7 @@ export const useAppState = (user: UserProfile) => {
                 setConnectionRequests(dbRequests);
 
                 // Note: Peers are already loaded via useState lazy init above.
-                
+
                 setIsLoaded(true);
             } catch (e) {
                 console.error("CRITICAL: Failed to load app state from DB", e);
@@ -84,7 +84,7 @@ export const useAppState = (user: UserProfile) => {
     const postsRef = useRef(posts);
     const groupsRef = useRef(groups);
     const messagesRef = useRef(messages);
-    
+
     useLayoutEffect(() => { userRef.current = user; }, [user]);
     useLayoutEffect(() => { contactsRef.current = contacts; }, [contacts]);
     useLayoutEffect(() => { peersRef.current = peers; }, [peers]);
@@ -95,16 +95,16 @@ export const useAppState = (user: UserProfile) => {
 
     // --- PERSISTENCE (WRITE TO IDB) ---
     // Switched from saveBulk (Upsert only) to syncState (Upsert + Delete Missing)
-    useEffect(() => { if(isLoaded) storageService.syncState('contacts', contacts, user.id); }, [contacts, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.syncState('posts', posts, user.id); }, [posts, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.syncState('groups', groups, user.id); }, [groups, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.syncState('messages', messages, user.id); }, [messages, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.syncState('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
-    useEffect(() => { if(isLoaded) storageService.syncState('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
-    
+    useEffect(() => { if (isLoaded) storageService.syncState('contacts', contacts, user.id); }, [contacts, user.id, isLoaded]);
+    useEffect(() => { if (isLoaded) storageService.syncState('posts', posts, user.id); }, [posts, user.id, isLoaded]);
+    useEffect(() => { if (isLoaded) storageService.syncState('groups', groups, user.id); }, [groups, user.id, isLoaded]);
+    useEffect(() => { if (isLoaded) storageService.syncState('messages', messages, user.id); }, [messages, user.id, isLoaded]);
+    useEffect(() => { if (isLoaded) storageService.syncState('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
+    useEffect(() => { if (isLoaded) storageService.syncState('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
+
     // Config and Peers stay in LocalStorage
     useEffect(() => { localStorage.setItem(NODE_CONFIG_KEY, JSON.stringify(nodeConfig)); }, [nodeConfig]);
-    
+
     useEffect(() => {
         localStorage.setItem(PEERS_KEY, JSON.stringify(peers));
         networkService.updateKnownPeers(peers.map(p => p.onionAddress));
@@ -143,7 +143,7 @@ export const useAppState = (user: UserProfile) => {
         const myPosts = posts.filter(p => p.authorId === user.id);
         let likes = 0;
         let dislikes = 0;
-        
+
         myPosts.forEach(p => {
             Object.values(p.votes).forEach(v => {
                 if (v === 'up') likes++;
@@ -159,6 +159,36 @@ export const useAppState = (user: UserProfile) => {
             followers: user.followersCount || 0
         };
     }, [posts, user.id, user.followersCount, contacts.length]);
+
+    // Notification Settings (Synchronous LS)
+    const [notificationSettings, setNotificationSettings] = useState<{ mutedCategories: NotificationCategory[] }>(() => {
+        try {
+            const saved = localStorage.getItem('gchat_notification_settings_v2');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                return { mutedCategories: parsed.mutedCategories || [] };
+            }
+            // Migration or Init
+            return { mutedCategories: [] };
+        } catch {
+            return { mutedCategories: [] };
+        }
+    });
+
+    useEffect(() => {
+        localStorage.setItem('gchat_notification_settings_v2', JSON.stringify(notificationSettings));
+    }, [notificationSettings]);
+
+    const toggleMuteCategory = (category: NotificationCategory) => {
+        setNotificationSettings(prev => {
+            const isMuted = prev.mutedCategories.includes(category);
+            return {
+                mutedCategories: isMuted
+                    ? prev.mutedCategories.filter(c => c !== category)
+                    : [...prev.mutedCategories, category]
+            };
+        });
+    };
 
     return {
         contacts, setContacts,
@@ -183,6 +213,8 @@ export const useAppState = (user: UserProfile) => {
         contactsUnread,
         feedUnread,
         settingsUnread,
-        userStats
+        userStats,
+        notificationSettings,
+        toggleMuteCategory
     };
 };
