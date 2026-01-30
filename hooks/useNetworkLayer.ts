@@ -215,6 +215,8 @@ export const useNetworkLayer = ({
                     };
                     networkService.sendMessage(senderNodeId, reqPacket);
                 }
+                // PROPAGATION: Daisy chain this announcement so neighbors of neighbors hear it
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
             }
 
@@ -292,6 +294,7 @@ export const useNetworkLayer = ({
             }
 
             case 'INVENTORY_SYNC_REQUEST': {
+                console.log(`[Network] Handling Sync Request from ${senderNodeId}`);
                 const { inventory, since } = packet.payload;
                 const theirInv = inventory as { id: string, hash: string }[];
                 const myPosts = state.postsRef.current.filter(p => p.timestamp > since && p.privacy === 'public');
@@ -302,6 +305,8 @@ export const useNetworkLayer = ({
                     const myCurrentHash = calculatePostHash(myP);
                     return theirEntry.hash !== myCurrentHash;
                 });
+
+                console.log(`[Network] Found ${missingOrUpdatedOnTheirSide.length} updates for ${senderNodeId}`);
 
                 if (missingOrUpdatedOnTheirSide.length > 0) {
                     const respPacket: NetworkPacket = {
@@ -318,6 +323,7 @@ export const useNetworkLayer = ({
             case 'INVENTORY_SYNC_RESPONSE': {
                 const incomingPosts = packet.payload as Post[];
                 if (Array.isArray(incomingPosts)) {
+                    console.log(`[Network] Received Sync Response with ${incomingPosts.length} posts`);
                     let addedCount = 0;
                     state.setPosts(prev => {
                         const next = [...prev];
@@ -795,14 +801,15 @@ export const useNetworkLayer = ({
 
     // Announcement Heartbeat
     useEffect(() => {
-        if (isOnline && user.isDiscoverable && state.nodeConfig.alias) {
+        if (isOnline && user.isDiscoverable) {
             const announce = () => {
+                const aliasToUse = state.nodeConfig.alias || user.displayName;
                 const packet: NetworkPacket = { 
                     id: crypto.randomUUID(), 
                     hops: MAX_GOSSIP_HOPS, 
                     type: 'ANNOUNCE_PEER', 
                     senderId: user.homeNodeOnion, 
-                    payload: { onionAddress: user.homeNodeOnion, alias: state.nodeConfig.alias, description: state.nodeConfig.description } 
+                    payload: { onionAddress: user.homeNodeOnion, alias: aliasToUse, description: state.nodeConfig.description } 
                 };
                 processedPacketIds.current.add(packet.id!);
                 networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
