@@ -132,7 +132,7 @@ const CameraModal: React.FC<CameraModalProps> = ({ isOpen, onClose, onCapture })
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black animate-in fade-in duration-200">
       <div className="w-full h-full md:max-w-lg md:h-auto md:bg-slate-900 md:rounded-2xl md:overflow-hidden md:border md:border-slate-700 md:shadow-2xl flex flex-col relative">
         
         {/* Header */}
