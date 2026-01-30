@@ -1,11 +1,22 @@
 
-import { Post, Comment } from '../types';
+import { Post, Comment, MediaMetadata } from '../types';
 
-// Helper to reconstruct post payload for verification
-export const createPostPayload = (post: Post) => ({
+// Standardize payload creation for both signing and verification
+// This ensures fields like 'media' and 'imageUrl' are treated consistently (null vs undefined)
+export const createPostPayload = (post: { 
+    authorId: string; 
+    content: string; 
+    imageUrl?: string | null; 
+    media?: MediaMetadata; 
+    timestamp: number;
+    location?: string;
+    hashtags?: string[];
+}) => ({
     authorId: post.authorId,
     content: post.content,
+    // Strict null check: Ensure we output null if it's falsy, to match how it might be deserialized
     imageUrl: post.imageUrl || null, 
+    // Media is undefined if not present. JSON.stringify removes undefined keys.
     media: post.media || undefined,
     timestamp: post.timestamp,
     location: post.location || "",
