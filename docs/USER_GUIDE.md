@@ -23,7 +23,7 @@ When you first launch gChat, you will see a terminal-like initialization screen.
 ## 3. The Feed & Gossip
 The feed is where you see updates from the mesh network.
 *   **Posting**: Use the text box at the top. You can toggle between **Public** (Global) and **Friends Only** (Encrypted).
-*   **Gossip Protocol**: When you post "Publicly", your node automatically sends that post to all your connected peers.
+*   **Gossip Protocol**: When you post "Publicly", your node automatically sends that post to your connected peers, who then forward it further into the mesh. You will receive notifications for new public broadcasts even from users you haven't explicitly friended.
 *   **Sync Network**: If you feel you are missing posts, click the **Refresh/Sync** icon in the Global Feed header. This sends a signal through the mesh (up to 6 hops) asking other nodes to send you their latest public broadcasts.
 *   **Verification**: Click on the **TRUTH_HASH** code to verify cryptographic integrity (Ed25519 signature check).
 
@@ -52,7 +52,7 @@ Navigate to the **Contacts** tab. The card at the top is your identity.
 ### Adding Peers (Mobile)
 1.  Open your phone's Camera app.
 2.  Scan a friend's gChat QR code.
-3.  Tap the link. It will open your local gChat instance (`localhost:3000`) and automatically add them to your roster.
+3.  Tap the link. It will open your local gChat instance (`localhost:3000`) and automatically add the contact.
 
 ### Adding Peers (Manual)
 1.  Click **"Add Contact"**.
