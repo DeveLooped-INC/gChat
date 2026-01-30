@@ -20,6 +20,13 @@ export interface PrivacySettings {
   showFollowersPublicly: boolean;
 }
 
+export interface MediaSettings {
+  enabled: boolean; // Master switch
+  maxFileSizeMB: number; // 0 - 1024
+  autoDownloadFriends: boolean; // Friends-only broadcasts
+  autoDownloadPrivate: boolean; // Private chats/DMs
+}
+
 export interface UserProfile {
   id: string; // Public Key derived from Seed (Signing)
   username: string;
