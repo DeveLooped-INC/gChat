@@ -40,6 +40,11 @@ The visual interface and cryptographic engine.
     *   Backend receives POST request -> Emits `tor-packet` event via Socket.IO.
     *   Frontend receives event -> Decrypts payload -> Updates UI.
 
+3.  **Inventory Propagation**:
+    *   When a node creates a public post, it broadcasts an `INVENTORY_ANNOUNCE` packet.
+    *   Receiving nodes verify the hash. If new, they fetch the full post.
+    *   **Daisy-Chaining**: The announcement packet is decremented (TTL) and forwarded to random peers to ensure the signal reaches nodes not directly connected to the author.
+
 ### 2. Binary Transport Strategy (Media)
 To ensure reliable delivery of binary data (images/audio/video) through the JSON-based Socket.IO and Express pipeline over Tor:
 
