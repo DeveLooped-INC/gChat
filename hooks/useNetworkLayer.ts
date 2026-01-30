@@ -822,7 +822,7 @@ export const useNetworkLayer = ({
                 break;
             }
         }
-    }, [state.setPosts, state.setMessages, state.setGroups, state.setContacts, state.setConnectionRequests, state.setPeers, state.setTypingContactId, state.postsRef, state.contactsRef, state.groupsRef, state.userRef, state.peersRef, broadcastPostState, addNotificationRef, onUpdateUser, user.id, user.homeNodeOnion, daisyChainPacket, state.isLoaded, maxSyncAgeHours]);
+    }, [state.setPosts, state.setMessages, state.setGroups, state.setContacts, state.setConnectionRequests, state.setPeers, state.setTypingContactId, state.postsRef, state.contactsRef, state.groupsRef, state.userRef, state.peersRef, broadcastPostState, addNotificationRef, onUpdateUser, user.id, user.homeNodeOnion, daisyChainPacket, state.isLoaded, maxSyncAgeHours, checkAndAutoDownload]);
 
     // Update Ref whenever handler changes (due to dependency updates)
     useEffect(() => {
