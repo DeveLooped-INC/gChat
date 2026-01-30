@@ -243,36 +243,46 @@ export const useNetworkLayer = ({
                     const calculatedHash = calculatePostHash(post);
                     const postWithHash = { ...post, contentHash: calculatedHash };
 
+                    // Determine if new or updated by checking REF directly
+                    const currentPosts = state.postsRef.current;
+                    const existingIdx = currentPosts.findIndex(p => p.id === post.id);
                     let isNewOrUpdated = false;
 
-                    state.setPosts(prev => {
-                        const idx = prev.findIndex(p => p.id === post.id);
-                        if (idx === -1) {
+                    if (existingIdx === -1) {
+                        isNewOrUpdated = true;
+                    } else {
+                        const existingPost = currentPosts[existingIdx];
+                        const existingHash = calculatePostHash(existingPost);
+                        if (existingHash !== calculatedHash) {
                             isNewOrUpdated = true;
-                            return [postWithHash, ...prev];
-                        } else {
-                            const existing = prev[idx];
-                            const existingHash = calculatePostHash(existing);
-                            if (existingHash !== calculatedHash) {
-                                isNewOrUpdated = true;
+                        }
+                    }
+
+                    if (isNewOrUpdated) {
+                        state.setPosts(prev => {
+                            const idx = prev.findIndex(p => p.id === post.id);
+                            if (idx === -1) {
+                                return [postWithHash, ...prev];
+                            } else {
+                                // Merge Logic inside setter to be safe against concurrent updates
+                                const existing = prev[idx];
                                 const merged = mergePosts(existing, postWithHash);
                                 merged.contentHash = calculatePostHash(merged); 
                                 const next = [...prev];
                                 next[idx] = merged;
                                 return next;
                             }
-                        }
-                        return prev;
-                    });
+                        });
 
-                    if (isNewOrUpdated) {
+                        // Notification Logic
                         const isRecent = (Date.now() - post.timestamp) < (maxSyncAgeHours * 60 * 60 * 1000);
                         if (isRecent && post.authorId !== currentUser.id) {
                             const { handle } = formatUserIdentity(post.authorName);
-                            addNotificationRef.current('New Broadcast', `${handle} posted: ${post.content.substring(0, 30)}...`, 'info', AppRoute.FEED, post.authorId);
+                            const preview = post.content ? post.content.substring(0, 30) : 'Media content';
+                            addNotificationRef.current('New Broadcast', `${handle} posted: ${preview}...`, 'info', AppRoute.FEED, post.id);
                         }
-                        // PROPAGATION TRIGGER: I have received and validated new data.
-                        // I now announce it to MY peers so they can fetch it from me.
+                        
+                        // PROPAGATION TRIGGER: Announce new state to my peers
                         broadcastPostState(postWithHash);
                     }
                 } else {
@@ -380,7 +390,8 @@ export const useNetworkLayer = ({
                     state.setPosts(prev => {
                         if (prev.some(p => p.id === postData.id)) return prev;
                         const { handle } = formatUserIdentity(postData.authorName);
-                        addNotificationRef.current('Friend Post', `${handle} shared a secure broadcast.`, 'info', AppRoute.FEED, postData.authorId);
+                        // Corrected linkId to postData.id so navigation works
+                        addNotificationRef.current('Friend Post', `${handle} shared a secure broadcast.`, 'info', AppRoute.FEED, postData.id);
                         return [postData, ...prev];
                     });
                 }
