@@ -5,6 +5,7 @@ import { MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck
 import { fileToBase64, getTransferConfig, SOCIAL_REACTIONS, formatUserIdentity, formatBytes } from '../utils';
 import { MAX_ATTACHMENT_SIZE_BYTES, MAX_ATTACHMENT_SIZE_MB, MAX_POST_MEDIA_DURATION } from '../constants';
 import { signData, verifySignature } from '../services/cryptoService';
+import { createPostPayload, mergePosts, appendReply, updateCommentTree, findCommentInTree } from '../utils/dataHelpers';
 import CameraModal from './CameraModal';
 import { MediaRecorder, MediaPlayer } from './MediaComponents';
 import { saveMedia } from '../services/mediaStorage';
@@ -135,10 +136,54 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
     const timestamp = Date.now();
     const tagsMatch = content.match(/#[a-z0-9_]+/gi);
     const hashtags = tagsMatch ? tagsMatch.map(t => t.substring(1)) : [];
-    const postContentPayload = { authorId: user.id, content: content, imageUrl: attachedImage || null, media: attachedMedia || undefined, timestamp: timestamp, location: postLocation || "", hashtags };
-    const signature = signData(postContentPayload, user.keys.signing.secretKey);
-    const newPost: Post = { id: crypto.randomUUID(), authorId: user.id, authorName: user.displayName, authorAvatar: user.avatarUrl, authorPublicKey: user.keys.signing.publicKey, content: content, imageUrl: attachedImage || undefined, media: attachedMedia || undefined, timestamp: timestamp, votes: {}, shares: 0, comments: 0, commentsList: [], truthHash: signature, privacy: privacy, location: postLocation || undefined, hashtags: hashtags.length > 0 ? hashtags : undefined, sharedPostId: sharingPost?.id, sharedPostSnapshot: sharingPost ? { authorName: sharingPost.authorName, content: sharingPost.content, imageUrl: sharingPost.imageUrl, media: sharingPost.media, timestamp: sharingPost.timestamp } : undefined };
-    onPost(newPost); resetPostForm(); setIsProcessing(false); setShowBroadcastModal(false);
+    
+    // Construct simplified object for helper
+    const rawPostData = { 
+        authorId: user.id, 
+        content: content, 
+        imageUrl: attachedImage, 
+        media: attachedMedia || undefined, 
+        timestamp: timestamp, 
+        location: postLocation, 
+        hashtags 
+    };
+    
+    // Use Helper to generate payload for signing
+    const payloadToSign = createPostPayload(rawPostData);
+    const signature = signData(payloadToSign, user.keys.signing.secretKey);
+    
+    const newPost: Post = { 
+        id: crypto.randomUUID(), 
+        authorId: user.id, 
+        authorName: user.displayName, 
+        authorAvatar: user.avatarUrl, 
+        authorPublicKey: user.keys.signing.publicKey, 
+        content: content, 
+        imageUrl: attachedImage || undefined, 
+        media: attachedMedia || undefined, 
+        timestamp: timestamp, 
+        votes: {}, 
+        shares: 0, 
+        comments: 0, 
+        commentsList: [], 
+        truthHash: signature, 
+        privacy: privacy, 
+        location: postLocation || undefined, 
+        hashtags: hashtags.length > 0 ? hashtags : undefined, 
+        sharedPostId: sharingPost?.id, 
+        sharedPostSnapshot: sharingPost ? { 
+            authorName: sharingPost.authorName, 
+            content: sharingPost.content, 
+            imageUrl: sharingPost.imageUrl, 
+            media: sharingPost.media, 
+            timestamp: sharingPost.timestamp 
+        } : undefined 
+    };
+    
+    onPost(newPost); 
+    resetPostForm(); 
+    setIsProcessing(false); 
+    setShowBroadcastModal(false);
   };
 
   const resetPostForm = () => { setContent(''); setAttachedImage(null); setAttachedMedia(null); setPostLocation(''); setRecordingMode(null); setSharingPost(null); };
@@ -190,7 +235,14 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
 
   const handleCameraCapture = (base64: string) => { setAttachedImage(base64); };
   const triggerFileSelect = () => { fileInputRef.current?.click(); };
-  const handleVerifyHash = (post: Post) => { const postPayload = { authorId: post.authorId, content: post.content, imageUrl: post.imageUrl || null, media: post.media || undefined, timestamp: post.timestamp, location: post.location || "", hashtags: post.hashtags || [] }; const isValid = verifySignature(postPayload, post.truthHash, post.authorPublicKey); if (isValid) { addToast('Integrity Verified', 'Ed25519 Signature is VALID. Content is authentic.', 'success'); } else { addToast('Verification Failed', 'Digital signature mismatch. Content may be tampered.', 'error'); } };
+  const handleVerifyHash = (post: Post) => { 
+      // Verify using standard helper
+      const payload = createPostPayload(post);
+      const isValid = verifySignature(payload, post.truthHash, post.authorPublicKey); 
+      if (isValid) { addToast('Integrity Verified', 'Ed25519 Signature is VALID. Content is authentic.', 'success'); } 
+      else { addToast('Verification Failed', 'Digital signature mismatch. Content may be tampered.', 'error'); } 
+  };
+  
   const toggleComments = (postId: string) => { if (expandedPostId === postId) { setExpandedPostId(null); setReplyingTo(null); } else { setExpandedPostId(postId); setCommentText(''); } };
   const handleSubmitComment = (postId: string) => { if (!commentText.trim()) return; if (!isOnline) { addToast('Network Unavailable', 'Comment queued in local outbox.', 'warning'); setCommentText(''); return; } const parentId = replyingTo?.postId === postId ? replyingTo.commentId : undefined; onComment(postId, commentText, parentId); setCommentText(''); setReplyingTo(null); };
   const toggleHide = (postId: string) => { const newSet = new Set(hiddenOverrideIds); if(newSet.has(postId)) newSet.delete(postId); else newSet.add(postId); setHiddenOverrideIds(newSet); };
@@ -332,330 +384,360 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
 
         {/* Broadcast Modal */}
         {showBroadcastModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-                <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
-                    <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/50 rounded-t-2xl">
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl m-4 flex flex-col max-h-[90vh]">
+                    <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/50">
                         <h3 className="font-bold text-white flex items-center gap-2">
-                            <Radio size={18} className="text-onion-500" />
-                            {sharingPost ? 'Share Broadcast' : 'New Broadcast'}
+                            {sharingPost ? <Repeat size={20} className="text-onion-500" /> : <Radio size={20} className="text-onion-500" />}
+                            <span>{sharingPost ? 'Reshare Broadcast' : 'New Broadcast'}</span>
                         </h3>
-                        <button onClick={() => { setShowBroadcastModal(false); resetPostForm(); }} className="text-slate-400 hover:text-white"><X size={20} /></button>
+                        <button onClick={() => { setShowBroadcastModal(false); resetPostForm(); }} className="text-slate-400 hover:text-white"><X size={24} /></button>
                     </div>
                     
-                    <div className="p-4 overflow-y-auto space-y-4">
-                        <div className="flex gap-2 mb-2">
-                            <button onClick={() => setPrivacy('public')} className={`flex-1 py-2 rounded-lg text-sm font-bold border transition-colors flex items-center justify-center gap-2 ${privacy === 'public' ? 'bg-onion-900/20 border-onion-500 text-onion-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-                                <Globe size={16} /> Public
-                            </button>
-                            <button onClick={() => setPrivacy('friends')} className={`flex-1 py-2 rounded-lg text-sm font-bold border transition-colors flex items-center justify-center gap-2 ${privacy === 'friends' ? 'bg-indigo-900/20 border-indigo-500 text-indigo-400' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-                                <Users size={16} /> Friends
-                            </button>
+                    <div className="p-6 overflow-y-auto space-y-4">
+                        {/* User Info Preview */}
+                        <div className="flex items-center gap-3 mb-2">
+                            {user.avatarUrl ? (
+                                <img src={user.avatarUrl} className="w-10 h-10 rounded-full bg-slate-800 object-cover" />
+                            ) : (
+                                <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center font-bold text-white">{user.displayName.charAt(0)}</div>
+                            )}
+                            <div>
+                                <p className="text-sm font-bold text-white">{user.displayName}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                    <select 
+                                        value={privacy} 
+                                        onChange={(e) => setPrivacy(e.target.value as 'public' | 'friends')}
+                                        className="bg-slate-800 text-xs text-slate-300 rounded px-2 py-1 border border-slate-700 outline-none focus:border-onion-500"
+                                    >
+                                        <option value="public">Public Mesh</option>
+                                        <option value="friends">Friends Only</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
 
-                        {/* Shared Post Preview */}
-                        {sharingPost && (
-                            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 opacity-80 pointer-events-none">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <Quote size={12} className="text-slate-500" />
-                                    <span className="text-xs font-bold text-slate-400">Replying to {sharingPost.authorName}</span>
-                                </div>
-                                <p className="text-sm text-slate-300 line-clamp-2">{sharingPost.content}</p>
-                            </div>
-                        )}
-
                         <textarea 
-                            value={content}
-                            onChange={(e) => setContent(e.target.value)}
-                            placeholder="What's happening on the mesh?"
-                            className="w-full h-32 bg-slate-950 border border-slate-800 rounded-xl p-4 text-white resize-none focus:outline-none focus:border-onion-500 transition-colors"
+                            value={content} 
+                            onChange={(e) => setContent(e.target.value)} 
+                            placeholder={sharingPost ? "Add your thoughts..." : "What's happening on the mesh?"}
+                            className="w-full bg-transparent text-lg text-white placeholder-slate-500 outline-none resize-none min-h-[120px]"
                         />
 
-                        {/* Media Preview */}
+                        {/* Attachments Preview */}
                         {attachedImage && (
-                            <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black">
-                                <img src={attachedImage} alt="Preview" className="max-h-48 w-full object-contain" />
-                                <button onClick={() => setAttachedImage(null)} className="absolute top-2 right-2 bg-black/60 text-white p-1 rounded-full hover:bg-red-600 transition-colors"><X size={16}/></button>
+                            <div className="relative rounded-xl overflow-hidden border border-slate-700 group">
+                                <img src={attachedImage} className="w-full max-h-60 object-cover" />
+                                <button onClick={() => setAttachedImage(null)} className="absolute top-2 right-2 bg-black/50 text-white p-1 rounded-full hover:bg-black/70"><X size={16} /></button>
                             </div>
                         )}
                         {attachedMedia && (
-                            <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-3 flex items-center gap-3">
-                                {attachedMedia.type === 'audio' ? <Mic size={24} className="text-onion-400" /> : <Video size={24} className="text-blue-400" />}
-                                <div className="flex-1">
-                                    <p className="text-sm font-bold text-white">{attachedMedia.type === 'audio' ? 'Audio Clip' : 'Video Clip'}</p>
-                                    <p className="text-xs text-slate-500">{formatBytes(attachedMedia.size)}</p>
-                                </div>
-                                <button onClick={() => setAttachedMedia(null)} className="text-slate-500 hover:text-red-400"><Trash2 size={18}/></button>
+                            <div className="relative">
+                                <MediaPlayer media={attachedMedia} />
+                                <button onClick={() => setAttachedMedia(null)} className="absolute top-2 right-2 bg-black/50 text-white p-1 rounded-full hover:bg-black/70 z-10"><X size={16} /></button>
                             </div>
                         )}
 
-                        {/* Tools */}
-                        {!recordingMode ? (
-                            <div className="flex gap-2">
-                                <button onClick={() => setShowCamera(true)} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" title="Photo"><CameraIcon size={20} /></button>
-                                <button onClick={() => setRecordingMode('video')} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" title="Video"><Video size={20} /></button>
-                                <button onClick={() => setRecordingMode('audio')} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" title="Audio"><Mic size={20} /></button>
-                                <button onClick={triggerFileSelect} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors" title="File"><FileText size={20} /></button>
-                                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+                        {/* Shared Post Preview */}
+                        {sharingPost && (
+                            <div className="border border-slate-700 rounded-xl p-3 bg-slate-800/30">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center text-[10px] text-white">{sharingPost.authorName.charAt(0)}</div>
+                                    <span className="text-xs font-bold text-slate-300">{sharingPost.authorName}</span>
+                                    <span className="text-[10px] text-slate-500">• {new Date(sharingPost.timestamp).toLocaleDateString()}</span>
+                                </div>
+                                <p className="text-sm text-slate-400 line-clamp-3">{sharingPost.content}</p>
                             </div>
-                        ) : (
-                            <MediaRecorder type={recordingMode} maxDuration={MAX_POST_MEDIA_DURATION} onCapture={handleMediaCapture} onCancel={() => setRecordingMode(null)} />
                         )}
-                        
-                        <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
-                            <MapPin size={16} className="text-slate-500" />
-                            <input type="text" placeholder="Add location (optional)" value={postLocation} onChange={(e) => setPostLocation(e.target.value)} className="bg-transparent border-none outline-none text-white text-sm w-full placeholder-slate-600" />
-                        </div>
+
+                        {/* Recording UI */}
+                        {recordingMode && (
+                            <div className="border border-slate-700 rounded-xl p-2 bg-slate-950">
+                                <div className="flex justify-between items-center mb-2 px-2">
+                                    <span className="text-xs font-bold text-red-400 animate-pulse">RECORDING {recordingMode.toUpperCase()}</span>
+                                    <button onClick={() => setRecordingMode(null)}><X size={14} className="text-slate-500" /></button>
+                                </div>
+                                <MediaRecorder type={recordingMode} maxDuration={MAX_POST_MEDIA_DURATION} onCapture={handleMediaCapture} onCancel={() => setRecordingMode(null)} />
+                            </div>
+                        )}
                     </div>
 
-                    <div className="p-4 border-t border-slate-800 bg-slate-950/50 rounded-b-2xl">
-                        <button onClick={handlePostSubmit} disabled={isProcessing || (!content.trim() && !attachedImage && !attachedMedia && !sharingPost)} className="w-full bg-onion-600 hover:bg-onion-500 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    {/* Footer Controls */}
+                    <div className="p-4 border-t border-slate-800 bg-slate-950/50 flex flex-col gap-3">
+                        <div className="flex items-center gap-4 text-onion-500">
+                            <button onClick={() => setShowCamera(true)} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Camera"><CameraIcon size={20} /></button>
+                            <button onClick={triggerFileSelect} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Image/File"><ImageIcon size={20} /></button>
+                            <button onClick={() => setRecordingMode('video')} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Record Video"><Video size={20} /></button>
+                            <button onClick={() => setRecordingMode('audio')} className="p-2 hover:bg-onion-500/10 rounded-full transition-colors" title="Record Audio"><Mic size={20} /></button>
+                            <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+                        </div>
+                        <button 
+                            onClick={handlePostSubmit} 
+                            disabled={isProcessing || (!content.trim() && !attachedImage && !attachedMedia && !sharingPost)}
+                            className="w-full bg-onion-600 hover:bg-onion-500 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-onion-900/20"
+                        >
                             {isProcessing ? <Loader2 className="animate-spin" /> : <Send size={18} />}
-                            {sharingPost ? 'Share Now' : 'Broadcast Now'}
+                            <span>{sharingPost ? 'Reshare' : 'Broadcast'}</span>
                         </button>
                     </div>
                 </div>
             </div>
         )}
 
-        {/* Post List */}
-        <div className="space-y-6">
-            {displayedPosts.length === 0 && (
-                <div className="text-center py-20 text-slate-500">
-                    <Globe size={48} className="mx-auto mb-4 opacity-50" />
-                    <p>No broadcasts found.</p>
-                    <p className="text-sm mt-2">Connect with peers or adjust filters.</p>
-                </div>
-            )}
+      {/* Feed List */}
+      <div className="space-y-6">
+          {displayedPosts.length === 0 && (
+              <div className="text-center py-20">
+                  <div className="w-20 h-20 bg-slate-900 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
+                      <Globe size={40} className="text-slate-700" />
+                  </div>
+                  <h3 className="text-slate-300 font-bold text-lg">No Broadcasts Yet</h3>
+                  <p className="text-slate-500 text-sm mt-2 max-w-xs mx-auto">Be the first to broadcast on the mesh network or connect with peers to see their updates.</p>
+                  <button onClick={() => setShowBroadcastModal(true)} className="mt-6 text-onion-400 hover:text-onion-300 text-sm font-bold">Start Broadcasting</button>
+              </div>
+          )}
 
-            {displayedPosts.map(post => {
-                const isExpanded = expandedPostId === post.id;
-                const isHidden = hiddenOverrideIds.has(post.id);
-                const isEdited = post.isEdited;
-                const upVotes = Object.values(post.votes).filter(v => v === 'up').length;
-                const downVotes = Object.values(post.votes).filter(v => v === 'down').length;
-                const myVote = post.votes[user.id];
-                const commentCount = post.comments;
-                const { handle, suffix } = formatUserIdentity(post.authorName);
-                const isMine = post.authorId === user.id;
-                const isMenuOpen = activeMenuId === post.id;
-                const isEditing = editingPostId === post.id;
-                const isReactionPickerOpen = activeReactionPicker?.postId === post.id && !activeReactionPicker.commentId;
+          {displayedPosts.map(post => {
+              const isMine = post.authorId === user.id;
+              const { handle, suffix } = formatUserIdentity(post.authorName);
+              const upVotes = Object.values(post.votes || {}).filter(v => v === 'up').length;
+              const downVotes = Object.values(post.votes || {}).filter(v => v === 'down').length;
+              const myVote = (post.votes || {})[user.id];
+              const isHidden = hiddenOverrideIds.has(post.id);
+              const isEditing = editingPostId === post.id;
 
-                if (isHidden) return (
-                    <div key={post.id} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex justify-between items-center opacity-70">
-                        <span className="text-sm text-slate-500 italic">Post hidden</span>
-                        <button onClick={() => toggleHide(post.id)} className="text-xs text-onion-400 hover:underline">Show</button>
-                    </div>
-                );
+              if (isHidden) {
+                  return (
+                      <div key={post.id} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex justify-between items-center">
+                          <span className="text-xs text-slate-500">Post hidden</span>
+                          <button onClick={() => toggleHide(post.id)} className="text-xs text-onion-400 hover:underline">Show</button>
+                      </div>
+                  );
+              }
 
-                return (
-                    <div key={post.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 shadow-lg group">
-                        {/* Header */}
-                        <div className="p-4 flex items-start justify-between">
-                            <div className="flex items-center gap-3">
-                                {post.authorAvatar ? (
-                                    <img src={post.authorAvatar} onClick={() => openUserInfo(post)} alt={post.authorName} className="w-10 h-10 rounded-full bg-slate-800 object-cover border border-slate-700 cursor-pointer" />
-                                ) : (
-                                    <div onClick={() => openUserInfo(post)} className="w-10 h-10 rounded-full bg-gradient-to-br from-onion-400 to-indigo-600 flex items-center justify-center text-white font-bold cursor-pointer shadow-inner">
-                                        {handle.charAt(0)}
-                                    </div>
-                                )}
-                                <div>
-                                    <h3 onClick={() => openUserInfo(post)} className="font-bold text-slate-200 cursor-pointer hover:underline flex items-center gap-1">
-                                        {handle}
-                                        <span className="text-slate-500 font-mono text-xs font-normal opacity-70">{suffix}</span>
-                                    </h3>
-                                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                                        <span>{new Date(post.timestamp).toLocaleDateString()}</span>
-                                        <span>•</span>
-                                        {post.privacy === 'public' ? <Globe size={12} /> : <Users size={12} />}
-                                        {post.location && (
-                                            <>
-                                                <span>•</span>
-                                                <span className="flex items-center gap-1"><MapPin size={10} /> {post.location}</span>
-                                            </>
-                                        )}
-                                        {isEdited && <span className="italic ml-1">(edited)</span>}
-                                        {post.isOrphaned && <span className="text-amber-500 flex items-center gap-1 ml-1"><Link2Off size={10} /> Orphaned</span>}
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div className="relative">
-                                <button onClick={(e) => handleMenuClick(e, post.id)} className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors">
-                                    <MoreHorizontal size={20} />
-                                </button>
-                                {isMenuOpen && (
-                                    <div className="absolute right-0 top-full mt-2 w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-10 overflow-hidden animate-in zoom-in-95">
-                                        <button onClick={() => toggleHide(post.id)} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-2"><Eye size={16} /> Hide</button>
-                                        {isMine && <button onClick={() => startEditing(post)} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-2"><Edit2 size={16} /> Edit</button>}
-                                        {isMine && <button onClick={() => handleDelete(post.id)} className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-slate-800 hover:text-red-300 flex items-center gap-2"><Trash2 size={16} /> Delete</button>}
-                                        <button onClick={() => handleVerifyHash(post)} className="w-full text-left px-4 py-3 text-sm text-emerald-400 hover:bg-slate-800 hover:text-emerald-300 flex items-center gap-2 border-t border-slate-800"><ShieldCheck size={16} /> Verify Integrity</button>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+              return (
+                  <div key={post.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 shadow-sm hover:shadow-md hover:border-slate-700 transition-all">
+                      {/* Post Header */}
+                      <div className="p-4 flex justify-between items-start">
+                          <div className="flex gap-3">
+                              <div 
+                                onClick={() => openUserInfo(post)}
+                                className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-sm font-bold text-slate-300 cursor-pointer hover:opacity-80"
+                              >
+                                  {post.authorAvatar ? (
+                                      <img src={post.authorAvatar} className="w-full h-full rounded-full object-cover" />
+                                  ) : (
+                                      handle.charAt(0)
+                                  )}
+                              </div>
+                              <div>
+                                  <div className="flex items-center gap-2">
+                                      <h4 onClick={() => openUserInfo(post)} className="font-bold text-slate-200 cursor-pointer hover:underline text-sm">{handle}</h4>
+                                      <span className="text-[10px] text-slate-500 font-mono">{suffix}</span>
+                                      {post.privacy === 'friends' && <Lock size={12} className="text-indigo-400" />}
+                                  </div>
+                                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                                      <span>{new Date(post.timestamp).toLocaleDateString()}</span>
+                                      <span>•</span>
+                                      <button onClick={() => handleVerifyHash(post)} className="hover:text-emerald-400 flex items-center gap-1" title="Verify Integrity">
+                                          <ShieldCheck size={10} />
+                                          {post.isEdited && <span className="italic">(edited)</span>}
+                                      </button>
+                                  </div>
+                              </div>
+                          </div>
+                          <div className="relative">
+                              <button onClick={(e) => handleMenuClick(e, post.id)} className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors">
+                                  <MoreHorizontal size={20} />
+                              </button>
+                              {activeMenuId === post.id && (
+                                  <div className="absolute right-0 top-full mt-1 w-40 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden z-20 animate-in zoom-in-95">
+                                      {isMine && (
+                                          <>
+                                              <button onClick={() => startEditing(post)} className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 flex items-center gap-2"><Edit2 size={14} /> Edit</button>
+                                              <button onClick={() => handleDelete(post.id)} className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-slate-700 flex items-center gap-2"><Trash2 size={14} /> Delete</button>
+                                          </>
+                                      )}
+                                      <button onClick={() => toggleHide(post.id)} className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 flex items-center gap-2"><Eye size={14} /> Hide</button>
+                                      <button onClick={() => { onSavePost && onSavePost(post.id); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 flex items-center gap-2"><Save size={14} /> Save</button>
+                                  </div>
+                              )}
+                          </div>
+                      </div>
 
-                        {/* Content */}
-                        <div className="px-4 pb-2">
-                            {isEditing ? (
-                                <div className="space-y-2">
-                                    <textarea value={editContentText} onChange={(e) => setEditContentText(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-onion-500 min-h-[100px]" />
-                                    <div className="flex justify-end gap-2">
-                                        <button onClick={cancelEditing} className="px-3 py-1.5 text-xs text-slate-400 hover:text-white">Cancel</button>
-                                        <button onClick={() => saveEditing(post.id)} className="px-3 py-1.5 bg-onion-600 rounded text-xs text-white font-bold hover:bg-onion-500">Save</button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <>
-                                    <p className="text-slate-200 whitespace-pre-wrap leading-relaxed">{post.content}</p>
-                                    {post.hashtags && post.hashtags.length > 0 && (
-                                        <div className="flex flex-wrap gap-2 mt-2">
-                                            {post.hashtags.map(tag => (
-                                                <span key={tag} className="text-onion-400 text-sm hover:underline cursor-pointer">#{tag}</span>
-                                            ))}
-                                        </div>
-                                    )}
-                                </>
-                            )}
-                        </div>
+                      {/* Post Content */}
+                      <div className="px-4 pb-2">
+                          {isEditing ? (
+                              <div className="space-y-2">
+                                  <textarea 
+                                      value={editContentText} 
+                                      onChange={(e) => setEditContentText(e.target.value)} 
+                                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-slate-200 focus:border-onion-500 outline-none min-h-[100px]"
+                                  />
+                                  <div className="flex gap-2 justify-end">
+                                      <button onClick={cancelEditing} className="px-3 py-1 text-sm text-slate-400 hover:text-white">Cancel</button>
+                                      <button onClick={() => saveEditing(post.id)} className="px-3 py-1 bg-onion-600 rounded text-sm text-white font-bold hover:bg-onion-500">Save</button>
+                                  </div>
+                              </div>
+                          ) : (
+                              <>
+                                  <p className="text-slate-200 whitespace-pre-wrap leading-relaxed mb-3 text-sm">{post.content}</p>
+                                  
+                                  {/* Media */}
+                                  {post.imageUrl && (
+                                      <div className="mb-3 rounded-xl overflow-hidden border border-slate-800">
+                                          <img src={post.imageUrl} className="w-full max-h-96 object-cover" />
+                                      </div>
+                                  )}
+                                  {post.media && (
+                                      <div className="mb-3">
+                                          <MediaPlayer media={post.media} peerId={contacts.find(c => c.id === post.authorId)?.homeNodes[0]} />
+                                      </div>
+                                  )}
 
-                        {/* Attachments */}
-                        {post.imageUrl && (
-                            <div className="mt-2 w-full bg-black max-h-96 overflow-hidden flex items-center justify-center cursor-pointer" onClick={() => window.open(post.imageUrl, '_blank')}>
-                                <img src={post.imageUrl} alt="Post content" className="w-full h-full object-contain" />
-                            </div>
-                        )}
-                        {post.media && (
-                            <div className="mt-2 px-4">
-                                <MediaPlayer media={post.media} peerId={user.homeNodeOnion} autoPlay={false} onNotification={addToast} />
-                            </div>
-                        )}
+                                  {/* Shared Post Embed */}
+                                  {post.sharedPostId && (
+                                      <div 
+                                          className="mb-3 border border-slate-700 rounded-xl p-3 bg-slate-800/20 cursor-pointer hover:bg-slate-800/40 transition-colors"
+                                          onClick={() => handleViewSharedPost(post)}
+                                      >
+                                          {post.sharedPostSnapshot ? (
+                                              <>
+                                                  <div className="flex items-center gap-2 mb-2">
+                                                      <Repeat size={14} className="text-slate-500" />
+                                                      <span className="text-xs font-bold text-slate-300">{post.sharedPostSnapshot.authorName}</span>
+                                                      <span className="text-[10px] text-slate-500">• {new Date(post.sharedPostSnapshot.timestamp).toLocaleDateString()}</span>
+                                                  </div>
+                                                  <p className="text-xs text-slate-400 line-clamp-3 italic">"{post.sharedPostSnapshot.content}"</p>
+                                              </>
+                                          ) : (
+                                              <div className="text-center text-xs text-slate-500 py-2">Original post content unavailable</div>
+                                          )}
+                                      </div>
+                                  )}
+                              </>
+                          )}
+                      </div>
 
-                        {/* Shared Post Embedding */}
-                        {post.sharedPostId && (
-                            <div className="mx-4 mt-2 p-3 bg-slate-950 border border-slate-800 rounded-lg cursor-pointer hover:border-slate-700 transition-colors" onClick={() => handleViewSharedPost(post)}>
-                                {post.sharedPostSnapshot ? (
-                                    <>
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <Quote size={14} className="text-slate-500" />
-                                            <span className="text-sm font-bold text-slate-300">{formatUserIdentity(post.sharedPostSnapshot.authorName).handle}</span>
-                                            <span className="text-xs text-slate-600">• {new Date(post.sharedPostSnapshot.timestamp).toLocaleDateString()}</span>
-                                        </div>
-                                        <p className="text-sm text-slate-400 line-clamp-3">{post.sharedPostSnapshot.content}</p>
-                                        {post.sharedPostSnapshot.imageUrl && <div className="mt-2 h-32 rounded bg-slate-900 overflow-hidden"><img src={post.sharedPostSnapshot.imageUrl} className="w-full h-full object-cover opacity-50" /></div>}
-                                    </>
-                                ) : (
-                                    <div className="flex items-center justify-center py-4 text-slate-600 gap-2"><Link2Off size={16} /><span>Original post unavailable</span></div>
-                                )}
-                            </div>
-                        )}
+                      {/* Actions Bar */}
+                      <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                              <div className="flex items-center bg-slate-800/50 rounded-full px-1 border border-slate-800">
+                                  <button onClick={() => onLike(post.id)} disabled={isMine} className={`p-2 hover:text-emerald-400 transition-colors disabled:opacity-50 ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-400'}`}>
+                                      <ThumbsUp size={18} />
+                                  </button>
+                                  <span className={`text-sm font-bold ${upVotes > downVotes ? 'text-emerald-400' : 'text-slate-500'}`}>{upVotes - downVotes}</span>
+                                  <button onClick={() => onDislike(post.id)} disabled={isMine} className={`p-2 hover:text-red-400 transition-colors disabled:opacity-50 ${myVote === 'down' ? 'text-red-400' : 'text-slate-400'}`}>
+                                      <ThumbsDown size={18} />
+                                  </button>
+                              </div>
+                              
+                              <button onClick={() => toggleComments(post.id)} className={`flex items-center gap-1.5 text-slate-400 hover:text-blue-400 transition-colors ${expandedPostId === post.id ? 'text-blue-400' : ''}`}>
+                                  <MessageCircle size={20} />
+                                  <span className="text-sm font-medium">{post.comments}</span>
+                              </button>
 
-                        {/* Actions Bar */}
-                        <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between mt-2">
-                            <div className="flex items-center gap-4">
-                                <div className="flex items-center gap-1 bg-slate-950 rounded-full px-3 py-1.5 border border-slate-800">
-                                    <button onClick={() => onLike(post.id)} disabled={isMine} className={`hover:text-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-500'}`}><ThumbsUp size={18} /></button>
-                                    <span className={`text-sm font-medium ${upVotes > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>{upVotes || 0}</span>
-                                    <div className="w-px h-4 bg-slate-800 mx-2"></div>
-                                    <button onClick={() => onDislike(post.id)} disabled={isMine} className={`hover:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'down' ? 'text-red-400' : 'text-slate-500'}`}><ThumbsDown size={18} /></button>
-                                </div>
+                              <button onClick={() => onShare(post.id)} className="text-slate-400 hover:text-onion-400 transition-colors flex items-center gap-1.5">
+                                  <Repeat size={20} />
+                                  {post.shares > 0 && <span className="text-sm font-medium">{post.shares}</span>}
+                              </button>
+                          </div>
 
-                                <button onClick={() => toggleComments(post.id)} className={`flex items-center gap-2 text-sm transition-colors ${isExpanded ? 'text-onion-400' : 'text-slate-500 hover:text-white'}`}>
-                                    <MessageCircle size={18} />
-                                    <span>{commentCount}</span>
-                                </button>
+                          {/* Reaction Picker Button */}
+                          <div className="relative">
+                              <button onClick={() => setActiveReactionPicker(activeReactionPicker?.postId === post.id ? null : {postId: post.id})} className="text-slate-400 hover:text-yellow-400 transition-colors">
+                                  <Smile size={20} />
+                              </button>
+                              {activeReactionPicker?.postId === post.id && !activeReactionPicker.commentId && (
+                                  <div className="absolute bottom-full right-0 mb-2 bg-slate-900 border border-slate-700 rounded-full shadow-xl flex p-1 z-20 gap-1 animate-in zoom-in-95">
+                                      {SOCIAL_REACTIONS.map(emoji => (
+                                          <button key={emoji} onClick={() => { onPostReaction(post.id, emoji); setActiveReactionPicker(null); }} className="w-8 h-8 flex items-center justify-center hover:bg-slate-800 rounded-full text-lg transition-transform hover:scale-125">
+                                              {emoji}
+                                          </button>
+                                      ))}
+                                  </div>
+                              )}
+                          </div>
+                      </div>
 
-                                <button onClick={() => onShare(post.id)} className="text-slate-500 hover:text-blue-400 transition-colors" title="Share"><Repeat size={18} /></button>
-                            </div>
+                      {/* Reaction Summary */}
+                      {post.reactions && Object.keys(post.reactions).length > 0 && (
+                          <div className="px-4 pb-3 flex gap-1 flex-wrap">
+                              {Object.entries(post.reactions).map(([emoji, users]) => (
+                                  users.length > 0 && (
+                                      <div key={emoji} className="bg-slate-800/50 border border-slate-800 rounded-full px-2 py-0.5 text-xs text-slate-300 flex items-center gap-1">
+                                          <span>{emoji}</span>
+                                          <span className="font-bold">{users.length}</span>
+                                      </div>
+                                  )
+                              ))}
+                          </div>
+                      )}
 
-                            {/* Reactions */}
-                            <div className="relative">
-                                <div className="flex items-center gap-2">
-                                    {Object.entries(post.reactions || {}).map(([emoji, users]) => users.length > 0 && (
-                                        <span key={emoji} onClick={() => !isMine && onPostReaction(post.id, emoji)} className={`text-xs px-2 py-1 rounded-full border transition-all ${users.includes(user.id) ? 'bg-onion-900/30 border-onion-500/50 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'} ${isMine ? 'cursor-default' : 'cursor-pointer hover:bg-slate-800'}`}>{emoji} {users.length}</span>
-                                    ))}
-                                    <button onClick={(e) => { e.stopPropagation(); setActiveReactionPicker({postId: post.id}); }} disabled={isMine} className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isMine ? 'text-slate-700 cursor-not-allowed' : 'text-slate-500 hover:bg-slate-800 hover:text-yellow-400'}`}><Smile size={18} /></button>
-                                </div>
-                                {isReactionPickerOpen && (
-                                    <div className="absolute bottom-full right-0 mb-2 bg-slate-900 border border-slate-700 rounded-full shadow-xl flex p-1 z-50 gap-1 animate-in zoom-in-95">
-                                        {SOCIAL_REACTIONS.map(emoji => (
-                                            <button key={emoji} onClick={() => { onPostReaction(post.id, emoji); setActiveReactionPicker(null); }} className="w-8 h-8 flex items-center justify-center hover:bg-slate-800 rounded-full text-lg transition-transform hover:scale-125">{emoji}</button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+                      {/* Comments Section */}
+                      {expandedPostId === post.id && (
+                          <div className="bg-slate-950 border-t border-slate-800 p-4 animate-in slide-in-from-top-2">
+                              <div className="flex gap-2 mb-4">
+                                  <input 
+                                      type="text" 
+                                      value={commentText}
+                                      onChange={(e) => setCommentText(e.target.value)}
+                                      placeholder={replyingTo ? "Reply to comment..." : "Write a comment..."}
+                                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-sm text-white focus:border-onion-500 outline-none"
+                                      onKeyDown={(e) => { if(e.key === 'Enter') handleSubmitComment(post.id); }}
+                                  />
+                                  <button onClick={() => handleSubmitComment(post.id)} disabled={!commentText.trim()} className="bg-onion-600 hover:bg-onion-500 text-white p-2 rounded-lg disabled:opacity-50">
+                                      <Send size={16} />
+                                  </button>
+                              </div>
+                              {replyingTo && (
+                                  <div className="flex justify-between items-center text-xs text-onion-400 mb-2 px-2">
+                                      <span>Replying to comment...</span>
+                                      <button onClick={() => setReplyingTo(null)} className="hover:underline">Cancel</button>
+                                  </div>
+                              )}
+                              
+                              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                                  {post.commentsList && post.commentsList.length > 0 ? (
+                                      post.commentsList.map(comment => (
+                                          <RecursiveComment key={comment.id} comment={comment} postId={post.id} />
+                                      ))
+                                  ) : (
+                                      <p className="text-center text-xs text-slate-600 py-4">No comments yet. Be the first!</p>
+                                  )}
+                              </div>
+                          </div>
+                      )}
+                  </div>
+              );
+          })}
+          
+          {hasMorePosts && (
+              <div className="text-center pt-4">
+                  <button onClick={() => setVisiblePostsCount(prev => prev + 10)} className="bg-slate-800 text-slate-400 hover:text-white px-6 py-2 rounded-full text-sm font-medium transition-colors">
+                      Load More Activity
+                  </button>
+              </div>
+          )}
+      </div>
 
-                        {/* Comments Section */}
-                        {isExpanded && (
-                            <div className="bg-slate-950 border-t border-slate-800 p-4 animate-in slide-in-from-top-2">
-                                {/* Comment Input */}
-                                <div className="flex gap-3 mb-6">
-                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-onion-400 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">{user.displayName.charAt(0)}</div>
-                                    <div className="flex-1">
-                                        {replyingTo && replyingTo.postId === post.id && (
-                                            <div className="flex justify-between items-center bg-slate-900 border border-slate-800 rounded-t-lg px-3 py-1.5 text-xs">
-                                                <span className="text-onion-400 font-bold">Replying to comment...</span>
-                                                <button onClick={() => setReplyingTo(null)} className="text-slate-500 hover:text-white"><X size={14} /></button>
-                                            </div>
-                                        )}
-                                        <div className={`flex items-center gap-2 bg-slate-900 border border-slate-800 ${replyingTo?.postId === post.id ? 'rounded-b-lg border-t-0' : 'rounded-lg'} px-3 py-2 focus-within:border-onion-500 transition-colors`}>
-                                            <input 
-                                                type="text" 
-                                                placeholder="Write a secure comment..." 
-                                                value={commentText} 
-                                                onChange={(e) => setCommentText(e.target.value)}
-                                                onKeyDown={(e) => e.key === 'Enter' && handleSubmitComment(post.id)}
-                                                className="bg-transparent border-none outline-none text-sm text-white w-full placeholder-slate-600"
-                                            />
-                                            <button onClick={() => handleSubmitComment(post.id)} disabled={!commentText.trim()} className="text-onion-500 hover:text-onion-400 disabled:opacity-50 disabled:cursor-not-allowed"><Send size={16} /></button>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Comments List */}
-                                <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
-                                    {post.commentsList && post.commentsList.length > 0 ? (
-                                        post.commentsList.map(comment => (
-                                            <RecursiveComment key={comment.id} comment={comment} postId={post.id} />
-                                        ))
-                                    ) : (
-                                        <div className="text-center text-slate-600 py-4 text-sm italic">No comments yet. Be the first to verify this block.</div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                );
-            })}
-            
-            {hasMorePosts && (
-                <div className="flex justify-center pt-6">
-                    <button onClick={() => setVisiblePostsCount(prev => prev + 10)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-6 py-2 rounded-full text-sm font-bold transition-colors shadow-lg">Load More Broadcasts</button>
-                </div>
-            )}
-        </div>
-
-        {/* Floating Scroll Top (Hidden for now, maybe add later) */}
-        
-        {/* Modals */}
-        <CameraModal isOpen={showCamera} onClose={() => setShowCamera(false)} onCapture={handleCameraCapture} />
-        {userInfoTarget && (
-            <UserInfoModal 
-                target={userInfoTarget}
-                currentUser={user}
-                isContact={contacts.some(c => c.id === userInfoTarget.id)}
-                isFollowing={user.followingIds?.includes(userInfoTarget.id) || false}
-                onClose={() => setUserInfoTarget(null)}
-                onConnect={onConnectUser}
-                onFollow={onFollowUser}
-                onUnfollow={onUnfollowUser}
-                onMessage={(id) => { onNavigateToChat(id); setUserInfoTarget(null); }}
-                onViewPosts={(id) => { onViewUserPosts(id); setUserInfoTarget(null); }}
-                posts={posts}
-            />
-        )}
+      <CameraModal isOpen={showCamera} onClose={() => setShowCamera(false)} onCapture={handleCameraCapture} />
+      
+      {userInfoTarget && (
+          <UserInfoModal 
+              target={userInfoTarget}
+              currentUser={user}
+              isContact={contacts.some(c => c.id === userInfoTarget.id)}
+              isFollowing={user.followingIds?.includes(userInfoTarget.id) || false}
+              onClose={() => setUserInfoTarget(null)}
+              onConnect={onConnectUser}
+              onFollow={onFollowUser}
+              onUnfollow={onUnfollowUser}
+              onMessage={(cid) => { onNavigateToChat(cid); setUserInfoTarget(null); }}
+              onViewPosts={(uid) => { onViewUserPosts(uid); setUserInfoTarget(null); }}
+              posts={posts}
+          />
+      )}
     </div>
   );
 };
