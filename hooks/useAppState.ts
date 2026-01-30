@@ -35,6 +35,9 @@ export const useAppState = (user: UserProfile) => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [connectionRequests, setConnectionRequests] = useState<ConnectionRequest[]>([]);
+    
+    // Ephemeral State
+    const [typingContactId, setTypingContactId] = useState<string | null>(null);
 
     const [isLoaded, setIsLoaded] = useState(false);
 
@@ -166,6 +169,7 @@ export const useAppState = (user: UserProfile) => {
         peers, setPeers,
         nodeConfig, setNodeConfig,
         connectionRequests, setConnectionRequests,
+        typingContactId, setTypingContactId, // Exposed here
         isLoaded,
         pruneMessages,
         userRef,
