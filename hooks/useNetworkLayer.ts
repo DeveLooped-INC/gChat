@@ -46,42 +46,80 @@ export const useNetworkLayer = ({
     const packetQueue = useRef<{ packet: NetworkPacket, senderNodeId: string }[]>([]);
 
     // --- HELPER: Auto-Download Media ---
-    const checkAndAutoDownload = useCallback(async (url: string | undefined, context: 'friends' | 'private', authorId?: string) => {
-        if (!url || !state.mediaSettings.enabled || url.startsWith('data:')) return;
+    const checkAndAutoDownload = useCallback(async (url: string | undefined, media: MediaMetadata | undefined, context: 'friends' | 'private', authorId: string, peerId: string) => {
+        if (!state.mediaSettings.enabled) return;
+        if (!url && !media) return;
+        if (url && url.startsWith('data:')) return;
+
+        const { autoDownloadFriends, autoDownloadPrivate, maxFileSizeMB } = state.mediaSettings;
+        console.log(`[AutoDownload] Triggered. Context: ${context}. Author: ${authorId}. Peer: ${peerId}`);
 
         // Check Logic Switches
         if (context === 'friends') {
-            if (!state.mediaSettings.autoDownloadFriends) return;
+            if (!autoDownloadFriends) {
+                console.log(`[AutoDownload] Skipped: Friends toggle disabled.`);
+                return;
+            }
             // Verify Relationship (Connection or Followed)
-            if (authorId) {
-                const isFollowed = state.userRef.current.followingIds?.includes(authorId);
-                const isConnection = state.contactsRef.current.some(c => c.id === authorId);
-                if (!isFollowed && !isConnection) {
-                    console.log(`[AutoDownload] Skipped ${url}: Sender ${authorId.substring(0, 8)}... is not a friend/connection.`);
-                    return;
-                }
+            const isFollowed = state.userRef.current.followingIds?.includes(authorId);
+            const isConnection = state.contactsRef.current.some(c => c.id === authorId);
+            console.log(`[AutoDownload] Author Check: ${authorId} -> Followed: ${isFollowed}, Connection: ${isConnection}`);
+            if (!isFollowed && !isConnection) {
+                console.log(`[AutoDownload] Skipped: Sender ${authorId.substring(0, 8)}... is not a friend/connection.`);
+                return;
             }
         }
-        if (context === 'private' && !state.mediaSettings.autoDownloadPrivate) return;
+        if (context === 'private' && !autoDownloadPrivate) {
+            console.log(`[AutoDownload] Skipped: Private toggle disabled.`);
+            return;
+        }
+
+        const maxBytes = maxFileSizeMB * 1024 * 1024;
 
         try {
-            // Check if we already have it
-            const mediaId = url.split('/').pop();
-            if (mediaId && await hasMedia(mediaId)) return;
+            // Priority: Media Metadata (Mesh Download)
+            if (media) {
+                // Check size
+                if (media.size > maxBytes) {
+                    console.log(`[AutoDownload] Skipped: Media size ${media.size} > Limit ${maxBytes}`);
+                    return;
+                }
+                // Check existence
+                if (await hasMedia(media.id)) return;
 
-            // HEAD Request for Size
-            const headRes = await fetch(url, { method: 'HEAD' });
-            if (!headRes.ok) return;
-            const size = parseInt(headRes.headers.get('content-length') || '0');
-            const maxBytes = state.mediaSettings.maxFileSizeMB * 1024 * 1024;
+                console.log(`[AutoDownload] Starting Mesh Download for ${media.id} (${(media.size / 1024 / 1024).toFixed(2)}MB) from ${peerId}...`);
+                // Fire and forget (it handles saving)
+                networkService.downloadMedia(peerId, media, (p) => {
+                    // specific progress logging could go here if needed
+                }).then(() => {
+                    console.log(`[AutoDownload] Completed for ${media.id}`);
+                }).catch(e => {
+                    console.error(`[AutoDownload] Mesh Download Failed:`, e);
+                });
+                return;
+            }
 
-            if (size > 0 && size <= maxBytes) {
-                console.log(`[AutoDownload] Fetching ${url} (${(size / 1024 / 1024).toFixed(2)}MB)...`);
-                const res = await fetch(url);
-                const blob = await res.blob();
-                if (mediaId) await saveMedia(mediaId, blob);
-            } else {
-                console.log(`[AutoDownload] Skipped ${url}: Size ${size} > Limit ${maxBytes}`);
+            // Fallback: URL Fetch (Legacy/External)
+            if (url) {
+                const mediaId = url.split('/').pop();
+                if (mediaId && await hasMedia(mediaId)) return;
+
+                console.log(`[AutoDownload] fetching HEAD for ${url}...`);
+                const headRes = await fetch(url, { method: 'HEAD' });
+                if (!headRes.ok) {
+                    console.warn(`[AutoDownload] HEAD failed for ${url}`);
+                    return;
+                }
+                const size = parseInt(headRes.headers.get('content-length') || '0');
+
+                if (size > 0 && size <= maxBytes) {
+                    console.log(`[AutoDownload] Fetching URL ${url} (${(size / 1024 / 1024).toFixed(2)}MB)...`);
+                    const res = await fetch(url);
+                    const blob = await res.blob();
+                    if (mediaId) await saveMedia(mediaId, blob);
+                } else {
+                    console.log(`[AutoDownload] Skipped URL: Size ${size} > Limit ${maxBytes}`);
+                }
             }
         } catch (e) {
             console.error("[AutoDownload] Failed", e);
@@ -446,7 +484,7 @@ export const useNetworkLayer = ({
                         addNotificationRef.current('Friend Post', `${handle} shared a secure broadcast.`, 'info', 'social', AppRoute.FEED, postData.id);
 
                         // Auto-Download Media
-                        if (postData.imageUrl) checkAndAutoDownload(postData.imageUrl, 'friends', postData.authorId);
+                        if (postData.imageUrl || postData.media) checkAndAutoDownload(postData.imageUrl, postData.media, 'friends', postData.authorId, senderNodeId);
 
                         return [postData, ...prev];
                     });
@@ -556,7 +594,7 @@ export const useNetworkLayer = ({
                                 addNotificationRef.current('New Message', title, 'info', 'chat', AppRoute.CHAT, threadId);
 
                                 // Auto-Download Attachment
-                                if (attachmentUrl) checkAndAutoDownload(attachmentUrl, 'private');
+                                if (attachmentUrl || media) checkAndAutoDownload(attachmentUrl, media, 'private', senderContact.id, senderNodeId);
                             }
                         }
                     }
