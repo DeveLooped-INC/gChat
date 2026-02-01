@@ -11,6 +11,7 @@ import { saveMedia } from '../services/mediaStorage';
 import UserInfoModal, { UserInfoTarget } from './UserInfoModal';
 
 interface FeedProps {
+    contentSettings?: { showDownvotedPosts: boolean; downvoteThreshold: number };
     posts: Post[];
     contacts: Contact[];
     onPost: (post: Post) => void;
@@ -37,7 +38,7 @@ interface FeedProps {
     onConsumeInitialState?: () => void;
 }
 
-const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike, onComment, onCommentVote, onCommentReaction, onPostReaction, onShare, onNavigateToChat, onDeletePost, onEditPost, onSavePost, onGlobalSync, onFollowUser, onUnfollowUser, onConnectUser, onViewUserPosts, user, addToast, isOnline, initialState, onConsumeInitialState }) => {
+const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike, onComment, onCommentVote, onCommentReaction, onPostReaction, onShare, onNavigateToChat, onDeletePost, onEditPost, onSavePost, onGlobalSync, onFollowUser, onUnfollowUser, onConnectUser, onViewUserPosts, user, addToast, isOnline, initialState, onConsumeInitialState, contentSettings }) => {
     const [content, setContent] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [feedFilter, setFeedFilter] = useState<'public' | 'friends' | 'following' | 'personal'>('public');
@@ -124,6 +125,30 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
             if (locationFilter) {
                 if (!post.location || !post.location.toLowerCase().includes(locationFilter.toLowerCase())) return false;
             }
+            return true;
+            return true;
+        }).filter(post => {
+            // --- DOWNVOTE HIDING LOGIC ---
+            const upVotes = Object.values(post.votes || {}).filter(v => v === 'up').length;
+            const downVotes = Object.values(post.votes || {}).filter(v => v === 'down').length;
+            const netScore = upVotes - downVotes;
+            const totalVotes = upVotes + downVotes;
+
+            // 1. Hard Hide (>95% Downvote Ratio & 5+ votes)
+            let isHardHidden = false;
+            if (totalVotes >= 5) {
+                const ratio = downVotes / totalVotes;
+                if (ratio > 0.95) isHardHidden = true;
+            }
+
+            // Keep Hard Hidden posts visible (so we can show the "Blocked" UI)
+            if (isHardHidden) return true;
+
+            // 2. Soft Hide (Net Score < -1)
+            if (netScore < -1 && !contentSettings?.showDownvotedPosts) {
+                return false;
+            }
+
             return true;
         }).sort((a, b) => {
             if (sortBy === 'likes') {
@@ -263,7 +288,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
     const handleViewSharedPost = (post: Post) => { const fullPost = posts.find(p => p.id === post.sharedPostId); if (fullPost) { setViewingPost(fullPost); } else if (post.sharedPostSnapshot && post.sharedPostId) { const virtualPost: Post = { id: post.sharedPostId, authorId: 'unknown-snapshot', authorName: post.sharedPostSnapshot.authorName, content: post.sharedPostSnapshot.content, imageUrl: post.sharedPostSnapshot.imageUrl, media: post.sharedPostSnapshot.media, timestamp: post.sharedPostSnapshot.timestamp, votes: {}, shares: 0, comments: 0, commentsList: [], truthHash: '', privacy: 'public', authorPublicKey: '', isOrphaned: true }; setViewingPost(virtualPost); addToast("Viewing Snapshot", "This post is being displayed from share data. Some features may be limited if the original is unreachable.", "info", "admin"); } };
     const openUserInfo = (post: Post) => { const contact = contacts.find(c => c.id === post.authorId); setUserInfoTarget({ id: post.authorId, displayName: contact ? contact.displayName : post.authorName, avatarUrl: contact?.avatarUrl || post.authorAvatar, username: contact?.username, homeNode: contact?.homeNodes[0] }); };
 
-    const RecursiveComment = ({ comment, postId, depth = 0 }: { comment: Comment, postId: string, depth?: number }) => {
+    const RecursiveComment = ({ comment, postId, depth = 0, readOnly = false }: { comment: Comment, postId: string, depth?: number, readOnly?: boolean }) => {
         if (depth > 5) return null;
         const safeReactions = comment.reactions || {};
         const reactionEntries = Object.entries(safeReactions);
@@ -296,17 +321,19 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
 
                             <div className="flex items-center gap-3 mt-2">
                                 <div className="flex items-center gap-1 bg-slate-800 rounded-full px-2 py-0.5">
-                                    <button onClick={() => onCommentVote(postId, comment.id, 'up')} disabled={isMyComment} className={`hover:text-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-500'}`}><ThumbsUp size={12} /></button>
+                                    <button onClick={() => onCommentVote(postId, comment.id, 'up')} disabled={isMyComment || readOnly} className={`hover:text-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-500'}`}><ThumbsUp size={12} /></button>
                                     <span className={`text-[10px] ${upVotes > 0 ? 'text-emerald-400' : 'text-slate-600'}`}>{upVotes || 0}</span>
                                     <div className="w-px h-3 bg-slate-700 mx-1"></div>
-                                    <button onClick={() => onCommentVote(postId, comment.id, 'down')} disabled={isMyComment} className={`hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'down' ? 'text-red-400' : 'text-slate-500'}`}><ThumbsDown size={12} /></button>
+                                    <button onClick={() => onCommentVote(postId, comment.id, 'down')} disabled={isMyComment || readOnly} className={`hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed ${myVote === 'down' ? 'text-red-400' : 'text-slate-500'}`}><ThumbsDown size={12} /></button>
                                 </div>
-                                <button onClick={() => setReplyingTo({ postId, commentId: comment.id })} className="text-xs text-slate-500 hover:text-white flex items-center gap-1">
-                                    <MessageCircle size={12} /> Reply
-                                </button>
+                                {!readOnly && (
+                                    <button onClick={() => setReplyingTo({ postId, commentId: comment.id })} className="text-xs text-slate-500 hover:text-white flex items-center gap-1">
+                                        <MessageCircle size={12} /> Reply
+                                    </button>
+                                )}
                                 <div className="flex gap-1">
                                     {SOCIAL_REACTIONS.map(emoji => (
-                                        <button key={emoji} onClick={() => onCommentReaction(postId, comment.id, emoji)} disabled={isMyComment} className="text-[10px] hover:scale-125 transition-transform opacity-50 hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed">{emoji}</button>
+                                        <button key={emoji} onClick={() => onCommentReaction(postId, comment.id, emoji)} disabled={isMyComment || readOnly} className="text-[10px] hover:scale-125 transition-transform opacity-50 hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed">{emoji}</button>
                                     ))}
                                 </div>
                             </div>
@@ -321,7 +348,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                         {comment.replies && comment.replies.length > 0 && (
                             <div className="mt-1">
                                 {comment.replies.map(reply => (
-                                    <RecursiveComment key={reply.id} comment={reply} postId={postId} depth={depth + 1} />
+                                    <RecursiveComment key={reply.id} comment={reply} postId={postId} depth={depth + 1} readOnly={readOnly} />
                                 ))}
                             </div>
                         )}
@@ -531,6 +558,50 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                     const myVote = (post.votes || {})[user.id];
                     const isHidden = hiddenOverrideIds.has(post.id);
                     const isEditing = editingPostId === post.id;
+
+                    // Hard Hide Check
+                    let isBlocked = false;
+                    const totalVotes = upVotes + downVotes;
+                    if (totalVotes >= 5) {
+                        const ratio = downVotes / totalVotes;
+                        if (ratio > 0.95) isBlocked = true;
+                    }
+
+                    if (isBlocked) {
+                        return (
+                            <div key={post.id} className="bg-slate-950 border border-red-900/50 rounded-2xl overflow-hidden p-6 animate-in fade-in transition-all">
+                                <div className="flex flex-col items-center justify-center text-center space-y-3">
+                                    <ShieldAlert size={32} className="text-red-600" />
+                                    <h3 className="text-slate-200 font-bold">Content Blocked</h3>
+                                    <p className="text-slate-500 text-sm max-w-sm">
+                                        This broadcast has been flagged by the community (95% Negative Reputation).
+                                        It is visible for transparency but interaction is disabled.
+                                    </p>
+
+                                    <div className="flex gap-4 mt-2">
+                                        <button
+                                            onClick={() => toggleComments(post.id)}
+                                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center gap-2 ${expandedPostId === post.id ? 'bg-slate-800 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}`}
+                                        >
+                                            <MessageCircle size={14} />
+                                            {expandedPostId === post.id ? 'Hide Comments' : `View Comments (${post.comments})`}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {expandedPostId === post.id && (
+                                    <div className="mt-6 border-t border-slate-900 pt-4">
+                                        <div className="text-xs text-center text-slate-600 mb-4 uppercase tracking-wider font-bold">Read-Only Archive</div>
+                                        <div className="space-y-4 pl-2 md:pl-0">
+                                            {post.commentsList && post.commentsList.map(comment => (
+                                                <RecursiveComment key={comment.id} comment={comment} postId={post.id} readOnly={true} />
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    }
 
                     if (isHidden) {
                         return (
