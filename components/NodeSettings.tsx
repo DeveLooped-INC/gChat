@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Power, Wifi, User, Terminal, Download, Server, Trash2, Plus, Save, Loader2, RefreshCw, Key, Eye, EyeOff, ToggleRight, ToggleLeft, QrCode, Upload, AlertTriangle, Activity, ShieldCheck, Zap, XCircle, CheckSquare, LogOut, HardDrive, FileArchive, Copy, Check, MapPin, Globe, Clock, Lock, Users, BarChart3, ThumbsUp, ThumbsDown, Info, Play, Pause, Camera, WifiOff, Database, Radio, Heart, RadioReceiver, Shield } from 'lucide-react';
+import { Power, Wifi, User, Terminal, Download, Server, Trash2, Plus, Save, Loader2, RefreshCw, Key, Eye, EyeOff, ToggleRight, ToggleLeft, QrCode, Upload, AlertTriangle, Activity, ShieldCheck, ShieldAlert, Zap, XCircle, CheckSquare, LogOut, HardDrive, FileArchive, Copy, Check, MapPin, Globe, Clock, Lock, Users, BarChart3, ThumbsUp, ThumbsDown, Info, Play, Pause, Camera, WifiOff, Database, Radio, Heart, RadioReceiver, Shield } from 'lucide-react';
 import { UserProfile, NodePeer, ToastMessage, LogEntry, AvailablePeer, PrivacySettings, StorageStats, Post, Message, Contact, NotificationCategory, MediaSettings } from '../types';
 import { networkService, TorStats } from '../services/networkService';
 import IdentityModal from './IdentityModal';
@@ -508,20 +508,33 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
                         )}
                     </div>
 
-                    {/* Content Settings */}
-                    <div className="bg-slate-900 rounded-xl border border-slate-800 p-6 mt-6">
-                        <div className="flex items-center space-x-3 mb-6 border-b border-slate-800 pb-2">
-                            <Shield className="text-red-500" size={24} />
-                            <h2 className="text-lg font-bold text-white">Content Filtering</h2>
+                </div>
+
+                {/* Content Settings (Refactored) */}
+                <div className="bg-slate-900 rounded-xl border border-rose-900/30 p-6 mt-6 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                        <AlertTriangle size={120} className="text-rose-500" />
+                    </div>
+                    <div className="flex items-center space-x-3 mb-6 border-b border-slate-800 pb-2 relative z-10">
+                        <ShieldAlert className="text-rose-500" size={24} />
+                        <h2 className="text-lg font-bold text-white">Content Filtering</h2>
+                    </div>
+                    <div className="relative z-10">
+                        <div className="bg-rose-950/20 border border-rose-900/50 p-4 rounded-xl mb-4">
+                            <h5 className="text-rose-400 font-bold text-xs flex items-center gap-2 mb-1"><AlertTriangle size={12} /> WARNING</h5>
+                            <p className="text-[10px] text-rose-300/80 leading-relaxed">
+                                Enabling interaction with sensitive content allows you to view and engage with broadcasts that have been flagged by the community (2/3+ negative feedback). Proceed with caution.
+                            </p>
                         </div>
+
                         <div className="flex items-center justify-between bg-slate-950/50 p-4 rounded-xl border border-slate-800">
                             <div>
-                                <p className="text-sm font-medium text-white">Show Downvoted Posts</p>
-                                <p className="text-xs text-slate-500 mt-1">If enabled, posts with a net negative score will be visible.<br />Highly disliked posts ({'>'}95% downvotes) are always hidden.</p>
+                                <p className="text-sm font-medium text-white">Allow Interaction with Sensitive Content</p>
+                                <p className="text-xs text-slate-500 mt-1">If enabled, you can click to reveal "Soft Blocked" content.</p>
                             </div>
                             <button
                                 onClick={() => onUpdateContentSettings && onUpdateContentSettings({ ...contentSettings!, showDownvotedPosts: !contentSettings?.showDownvotedPosts, downvoteThreshold: contentSettings?.downvoteThreshold || -1 })}
-                                className={`w-10 h-5 rounded-full p-0.5 transition-colors ${contentSettings?.showDownvotedPosts ? 'bg-onion-500' : 'bg-slate-700'}`}
+                                className={`w-10 h-5 rounded-full p-0.5 transition-colors ${contentSettings?.showDownvotedPosts ? 'bg-rose-600' : 'bg-slate-700'}`}
                             >
                                 <div className={`w-4 h-4 rounded-full bg-white transform transition-transform ${contentSettings?.showDownvotedPosts ? 'translate-x-5' : 'translate-x-0'}`} />
                             </button>
