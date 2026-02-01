@@ -205,6 +205,21 @@ export const useAppState = (user: UserProfile) => {
         localStorage.setItem('gchat_media_settings', JSON.stringify(mediaSettings));
     }, [mediaSettings]);
 
+    // Content Settings (Downvote Hiding)
+    const [contentSettings, setContentSettings] = useState<{ showDownvotedPosts: boolean; downvoteThreshold: number }>(() => {
+        try {
+            const saved = localStorage.getItem('gchat_content_settings');
+            if (saved) return JSON.parse(saved);
+            return { showDownvotedPosts: false, downvoteThreshold: -1 };
+        } catch {
+            return { showDownvotedPosts: false, downvoteThreshold: -1 };
+        }
+    });
+
+    useEffect(() => {
+        localStorage.setItem('gchat_content_settings', JSON.stringify(contentSettings));
+    }, [contentSettings]);
+
     return {
         contacts, setContacts,
         posts, setPosts,
@@ -214,6 +229,7 @@ export const useAppState = (user: UserProfile) => {
         peers, setPeers,
         nodeConfig, setNodeConfig,
         mediaSettings, setMediaSettings,
+        contentSettings, setContentSettings,
         connectionRequests, setConnectionRequests,
         typingContactId, setTypingContactId, // Exposed here
         isLoaded,
