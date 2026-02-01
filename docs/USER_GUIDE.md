@@ -73,3 +73,18 @@ Navigate to the **Settings** tab.
     1.  Broadcast a deletion signal to all peers.
     2.  Mark your posts as orphaned on their devices.
     3.  Wipe your local data and reset the app.
+
+### Media Download Settings
+Located in **Settings** > **Node Configuration** (or simply "Node Settings").
+*   **Master Switch**: Enable/Disable all auto-downloads to save bandwidth.
+*   **File Size Limit**: Set a maximum file size (e.g., 10MB) for automatic downloads. Files larger than this must be manually downloaded.
+*   **Friends Broadcasts**: Auto-download media from users you have friended or are connected to. Explicitly verifies the relationship.
+*   **Private Chats**: Auto-download attachments in Direct Messages (DMs) and Groups.
+
+### Content Filtering
+Located in **Settings** > **Node Configuration** (inside the "Content Filtering" card).
+*   **Show Downvoted Posts**: Toggle to show/hide posts that have a net negative score (more downvotes than upvotes).
+    *   **Default**: OFF (Audience curated).
+*   **Hard Hiding**: Posts with >95% downvotes (and at least 5 votes) are permanentely classified as "Blocked".
+    *   These appear as a "Content Blocked" card.
+    *   You can click "View Comments" to read the discussion, but interaction (replying/voting) is disabled.
