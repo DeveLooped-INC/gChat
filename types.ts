@@ -27,6 +27,11 @@ export interface MediaSettings {
   autoDownloadPrivate: boolean; // Private chats/DMs
 }
 
+export interface ContentSettings {
+  showDownvotedPosts: boolean; // Default: false
+  downvoteThreshold: number; // Default: -1 (Net Score)
+}
+
 export interface UserProfile {
   id: string; // Public Key derived from Seed (Signing)
   username: string;
