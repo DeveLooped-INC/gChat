@@ -12,6 +12,8 @@ gChat has evolved into a robust decentralized platform. It now features a sophis
 *   **Fix**: "New Broadcast" notifications now trigger reliably for public posts from unknown nodes (refactored state logic).
 *   **Fix**: `INVENTORY_ANNOUNCE` packets are now daisy-chained (forwarded) to ensure posts propagate beyond immediate neighbors.
 *   **Fix**: Peer Heartbeat (`ANNOUNCE_PEER`) now works even if a Node Alias is not explicitly set in settings (fallbacks to Display Name).
+*   **Feature**: **Media Auto-Download**: added "Node Settings" to control auto-download behavior for Friends/Connections and Private Chats. Supports Mesh protocol transfers.
+*   **Feature**: **Downvote Hiding**: Added "Soft Hiding" for negative posts (toggleable) and "Hard Hiding" (Blocked UI) for vastly downvoted content (>95%).
 *   **Improvement**: Enhanced debug logging for Inventory Sync operations.
 
 ## ✅ Completed Features
@@ -44,9 +46,8 @@ gChat has evolved into a robust decentralized platform. It now features a sophis
 
 ## 🚧 Known Issues & Tech Debt
 
-### 1. Missing Recovery Implementation (Critical)
-*   **Issue**: In `services/networkService.ts`, the functions `attemptMeshRecovery`, `handleRecoveryRequest`, and `handleRecoveryFound` are empty placeholders.
-*   **Impact**: **Self-Healing does not work.** If a media file is missing, the app *pretends* to look for it but never actually sends the request to peers.
+### 1. Missing Recovery Implementation (Resolved)
+*   **Status**: Fixed. Mesh recovery logic `attemptMeshRecovery` is implemented and broadcasting `MEDIA_RECOVERY_REQUEST` correctly. Basic auto-download logic now leverages `downloadMedia` which includes recovery paths.
 
 ### 2. LocalStorage Capacity Risk (Critical)
 *   **Issue**: All data (posts, messages, large base64 strings) is stored in `localStorage`.
