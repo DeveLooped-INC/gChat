@@ -786,6 +786,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                     }}
                     mediaSettings={state.mediaSettings}
                     onUpdateMediaSettings={state.setMediaSettings}
+                    contentSettings={state.contentSettings}
+                    onUpdateContentSettings={state.setContentSettings}
                 />)}
 
             {activeRoute === AppRoute.NOTIFICATIONS && (
