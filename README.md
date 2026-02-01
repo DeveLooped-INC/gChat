@@ -43,7 +43,9 @@ Detailed documentation has been moved to the `docs/` folder:
 *   **Self-Healing Mesh**: If a node hosting media goes offline, the network automatically searches connected peers for a cached copy using `Proof of Access` tokens.
 *   **Onion-Routed Privacy**: All traffic is routed through 3 hops. No IP leaks.
 *   **Encrypted Messaging**: End-to-end encrypted chat using NaCl (Ed25519/Curve25519).
+*   **Smart Media Auto-Download**: Configurable settings to automatically download media from friends and private chats via the secure mesh or standard HTTP.
 *   **Graceful Shutdown**: Dedicated protocol to notify peers of departure, stop the Hidden Service, and cleanly terminate the Tor process to prevent data corruption.
+*   **Decentralized Moderation**: Community-driven content filtering (Up/Downvotes) with configurable visibility settings and automatic "Hard Hiding" for heavily downvoted content.
 
 ## 🛠️ Quick Start
 
