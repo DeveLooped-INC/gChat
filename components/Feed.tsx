@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Post, Contact, UserProfile, ToastMessage, AppRoute, MediaMetadata, NotificationCategory, Comment } from '../types';
-import { Heart, MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban, Paperclip, CheckCircle, ShieldAlert, UserPlus, FileJson, Copy, UserMinus, UserX } from 'lucide-react';
+import { Heart, MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban, Paperclip, CheckCircle, ShieldAlert, UserPlus, FileJson, Copy, UserMinus, UserX, ChevronUp, EyeOff } from 'lucide-react';
 import { fileToBase64, getTransferConfig, SOCIAL_REACTIONS, formatUserIdentity, formatBytes } from '../utils';
 import { MAX_ATTACHMENT_SIZE_BYTES, MAX_ATTACHMENT_SIZE_MB, MAX_POST_MEDIA_DURATION } from '../constants';
 import { signData, verifySignature } from '../services/cryptoService';
@@ -66,7 +66,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
     const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
     const [activeReactionPicker, setActiveReactionPicker] = useState<{ postId: string, commentId?: string } | null>(null);
     const [editingPostId, setEditingPostId] = useState<string | null>(null);
-    const [editContentText, setEditContentText] = useState('');
+    const [editContent, setEditContent] = useState('');
 
     useEffect(() => {
         if (initialState) {
@@ -126,29 +126,10 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                 if (!post.location || !post.location.toLowerCase().includes(locationFilter.toLowerCase())) return false;
             }
             return true;
-            return true;
         }).filter(post => {
-            // --- DOWNVOTE HIDING LOGIC ---
-            const upVotes = Object.values(post.votes || {}).filter(v => v === 'up').length;
-            const downVotes = Object.values(post.votes || {}).filter(v => v === 'down').length;
-            const netScore = upVotes - downVotes;
-            const totalVotes = upVotes + downVotes;
-
-            // 1. Hard Hide (>95% Downvote Ratio & 5+ votes)
-            let isHardHidden = false;
-            if (totalVotes >= 5) {
-                const ratio = downVotes / totalVotes;
-                if (ratio > 0.95) isHardHidden = true;
-            }
-
-            // Keep Hard Hidden posts visible (so we can show the "Blocked" UI)
-            if (isHardHidden) return true;
-
-            // 2. Soft Hide (Net Score < -1)
-            if (netScore < -1 && !contentSettings?.showDownvotedPosts) {
-                return false;
-            }
-
+            // --- DOWNVOTE HIDING LOGIC REFACTOR (Step 1: Removed Filtering) ---
+            // We no longer filter posts out of the list based on votes. 
+            // All posts are returned to be handled by the renderer.
             return true;
         }).sort((a, b) => {
             if (sortBy === 'likes') {
@@ -158,7 +139,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
             }
             return b.timestamp - a.timestamp;
         });
-    }, [posts, selectedAuthorId, feedFilter, searchQuery, locationFilter, sortBy]);
+    }, [posts, selectedAuthorId, feedFilter, searchQuery, locationFilter, sortBy, contentSettings]);
 
     const displayedPosts = viewingPost ? [viewingPost] : processedPosts.slice(0, visiblePostsCount);
     const hasMorePosts = !viewingPost && processedPosts.length > visiblePostsCount;
@@ -280,11 +261,8 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
     const toggleComments = (postId: string) => { if (expandedPostId === postId) { setExpandedPostId(null); setReplyingTo(null); } else { setExpandedPostId(postId); setCommentText(''); } };
     const handleSubmitComment = (postId: string) => { if (!commentText.trim()) return; if (!isOnline) { addToast('Network Unavailable', 'Comment queued in local outbox.', 'warning', 'admin'); setCommentText(''); return; } const parentId = replyingTo?.postId === postId ? replyingTo.commentId : undefined; onComment(postId, commentText, parentId); setCommentText(''); setReplyingTo(null); };
     const toggleHide = (postId: string) => { const newSet = new Set(hiddenOverrideIds); if (newSet.has(postId)) newSet.delete(postId); else newSet.add(postId); setHiddenOverrideIds(newSet); };
-    const startEditing = (post: Post) => { setEditingPostId(post.id); setEditContentText(post.content); setActiveMenuId(null); };
-    const saveEditing = (postId: string) => { if (editContentText.trim()) onEditPost(postId, editContentText); setEditingPostId(null); };
     const handleMenuClick = (e: React.MouseEvent, postId: string) => { e.stopPropagation(); setActiveMenuId(activeMenuId === postId ? null : postId); };
     const handleDelete = (postId: string) => { if (window.confirm("Are you sure you want to delete this broadcast?")) onDeletePost(postId); setActiveMenuId(null); };
-    const cancelEditing = () => { setEditingPostId(null); setEditContentText(''); };
     const handleViewSharedPost = (post: Post) => { const fullPost = posts.find(p => p.id === post.sharedPostId); if (fullPost) { setViewingPost(fullPost); } else if (post.sharedPostSnapshot && post.sharedPostId) { const virtualPost: Post = { id: post.sharedPostId, authorId: 'unknown-snapshot', authorName: post.sharedPostSnapshot.authorName, content: post.sharedPostSnapshot.content, imageUrl: post.sharedPostSnapshot.imageUrl, media: post.sharedPostSnapshot.media, timestamp: post.sharedPostSnapshot.timestamp, votes: {}, shares: 0, comments: 0, commentsList: [], truthHash: '', privacy: 'public', authorPublicKey: '', isOrphaned: true }; setViewingPost(virtualPost); addToast("Viewing Snapshot", "This post is being displayed from share data. Some features may be limited if the original is unreachable.", "info", "admin"); } };
     const openUserInfo = (post: Post) => { const contact = contacts.find(c => c.id === post.authorId); setUserInfoTarget({ id: post.authorId, displayName: contact ? contact.displayName : post.authorName, avatarUrl: contact?.avatarUrl || post.authorAvatar, username: contact?.username, homeNode: contact?.homeNodes[0] }); };
 
@@ -356,6 +334,15 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                 </div>
             </div>
         );
+    };
+
+    const handleDeletePost = (id: string) => {
+        if (onDeletePost) onDeletePost(id);
+    };
+
+    const handleSaveEdit = (post: Post) => {
+        if (onEditPost) onEditPost(post.id, editContent);
+        setEditingPostId(null);
     };
 
     return (
@@ -553,57 +540,39 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                 {displayedPosts.map(post => {
                     const isMine = post.authorId === user.id;
                     const { handle, suffix } = formatUserIdentity(post.authorName);
-                    const upVotes = Object.values(post.votes || {}).filter(v => v === 'up').length;
-                    const downVotes = Object.values(post.votes || {}).filter(v => v === 'down').length;
                     const myVote = (post.votes || {})[user.id];
-                    const isHidden = hiddenOverrideIds.has(post.id);
                     const isEditing = editingPostId === post.id;
 
-                    // Hard Hide Check
-                    let isBlocked = false;
-                    const totalVotes = upVotes + downVotes;
-                    if (totalVotes >= 5) {
-                        const ratio = downVotes / totalVotes;
-                        if (ratio > 0.95) isBlocked = true;
+                    // --- CONTENT HEALTH LOGIC ---
+                    const upVotes = Object.values(post.votes || {}).filter(v => v === 'up').length;
+                    const downVotes = Object.values(post.votes || {}).filter(v => v === 'down').length;
+                    // Count angry faces as negative signals for content health
+                    const angryReactions = Object.entries(post.reactions || {}).find(([k]) => k === '😡')?.[1]?.length || 0;
+
+                    const totalInteractions = upVotes + downVotes + angryReactions + Object.values(post.reactions || {}).reduce((acc, curr) => acc + curr.length, 0); // Simplification: Total votes + reaction count
+                    // Strictly speaking: Total Votes + Total Reactions.
+                    const reactionCount = Object.values(post.reactions || {}).reduce((acc, curr) => acc + curr.length, 0);
+                    const totalSignals = upVotes + downVotes + reactionCount;
+
+                    const negativeSignals = downVotes + angryReactions;
+                    const negativeRatio = totalSignals > 0 ? negativeSignals / totalSignals : 0;
+
+                    let isHardBlocked = false; // > 95% Negative
+                    let isSoftBlocked = false; // > 66% Negative
+
+                    // Minimum Threshold: 5 interactions
+                    if (totalSignals >= 5) {
+                        if (negativeRatio > 0.95) isHardBlocked = true;
+                        else if (negativeRatio > 0.66) isSoftBlocked = true;
                     }
 
-                    if (isBlocked) {
-                        return (
-                            <div key={post.id} className="bg-slate-950 border border-red-900/50 rounded-2xl overflow-hidden p-6 animate-in fade-in transition-all">
-                                <div className="flex flex-col items-center justify-center text-center space-y-3">
-                                    <ShieldAlert size={32} className="text-red-600" />
-                                    <h3 className="text-slate-200 font-bold">Content Blocked</h3>
-                                    <p className="text-slate-500 text-sm max-w-sm">
-                                        This broadcast has been flagged by the community (95% Negative Reputation).
-                                        It is visible for transparency but interaction is disabled.
-                                    </p>
+                    // For 'Soft Block', check if user has allowed sensitive content
+                    const isSensitiveContentAllowed = contentSettings?.showDownvotedPosts; // Renamed Conceptually
+                    const [isRevealed, setIsRevealed] = useState(false); // Local state for clicking away soft block
 
-                                    <div className="flex gap-4 mt-2">
-                                        <button
-                                            onClick={() => toggleComments(post.id)}
-                                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center gap-2 ${expandedPostId === post.id ? 'bg-slate-800 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}`}
-                                        >
-                                            <MessageCircle size={14} />
-                                            {expandedPostId === post.id ? 'Hide Comments' : `View Comments (${post.comments})`}
-                                        </button>
-                                    </div>
-                                </div>
+                    const isHiddenValue = hiddenOverrideIds.has(post.id); // Manual hide
 
-                                {expandedPostId === post.id && (
-                                    <div className="mt-6 border-t border-slate-900 pt-4">
-                                        <div className="text-xs text-center text-slate-600 mb-4 uppercase tracking-wider font-bold">Read-Only Archive</div>
-                                        <div className="space-y-4 pl-2 md:pl-0">
-                                            {post.commentsList && post.commentsList.map(comment => (
-                                                <RecursiveComment key={comment.id} comment={comment} postId={post.id} readOnly={true} />
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    }
-
-                    if (isHidden) {
+                    if (isHiddenValue) {
                         return (
                             <div key={post.id} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex justify-between items-center">
                                 <span className="text-xs text-slate-500">Post hidden</span>
@@ -612,14 +581,18 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                         );
                     }
 
+                    // --- RENDER BLOCK ---
+                    // Common Header & Footer are required even for Hard Blocked posts
+                    // We render the wrapper, then conditionally render the body.
+
                     return (
-                        <div key={post.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 shadow-sm hover:shadow-md hover:border-slate-700 transition-all">
-                            {/* Post Header */}
+                        <div key={post.id} className={`bg-slate-900 border ${isHardBlocked ? 'border-red-900/30' : 'border-slate-800'} rounded-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 shadow-sm hover:shadow-md hover:border-slate-700 transition-all`}>
+                            {/* Post Header (Always Visible) */}
                             <div className="p-4 flex justify-between items-start">
                                 <div className="flex gap-3">
                                     <div
-                                        onClick={() => openUserInfo(post)}
-                                        className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-sm font-bold text-slate-300 cursor-pointer hover:opacity-80"
+                                        onClick={() => !isHardBlocked && openUserInfo(post)}
+                                        className={`w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-sm font-bold text-slate-300 ${!isHardBlocked ? 'cursor-pointer hover:opacity-80' : ''}`}
                                     >
                                         {post.authorAvatar ? (
                                             <img src={post.authorAvatar} className="w-full h-full rounded-full object-cover" />
@@ -629,114 +602,159 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                     </div>
                                     <div>
                                         <div className="flex items-center gap-2">
-                                            <h4 onClick={() => openUserInfo(post)} className="font-bold text-slate-200 cursor-pointer hover:underline text-sm">{handle}</h4>
+                                            <h4 onClick={() => !isHardBlocked && openUserInfo(post)} className={`font-bold text-slate-200 text-sm ${!isHardBlocked ? 'cursor-pointer hover:underline' : ''}`}>{handle}</h4>
                                             <span className="text-[10px] text-slate-500 font-mono">{suffix}</span>
                                             {post.privacy === 'friends' && <Lock size={12} className="text-indigo-400" />}
                                         </div>
                                         <div className="flex items-center gap-2 text-xs text-slate-500">
                                             <span>{new Date(post.timestamp).toLocaleDateString()}</span>
-                                            <span>•</span>
-                                            <button onClick={() => handleVerifyHash(post)} className="hover:text-emerald-400 flex items-center gap-1" title="Verify Integrity">
-                                                <ShieldCheck size={10} />
-                                                {post.isEdited && <span className="italic">(edited)</span>}
-                                            </button>
+                                            {(isHardBlocked || isSoftBlocked) && (
+                                                <span className="text-red-500 flex items-center gap-1 font-bold ml-2">
+                                                    <ShieldAlert size={10} />
+                                                    {isHardBlocked ? 'BLOCKED' : 'FLAGGED'}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
                                 <div className="relative">
-                                    <button onClick={(e) => handleMenuClick(e, post.id)} className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors">
-                                        <MoreHorizontal size={20} />
-                                    </button>
+                                    {!isHardBlocked && (
+                                        <button onClick={(e) => handleMenuClick(e, post.id)} className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors">
+                                            <MoreHorizontal size={20} />
+                                        </button>
+                                    )}
                                     {activeMenuId === post.id && (
-                                        <div className="absolute right-0 top-full mt-1 w-40 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden z-20 animate-in zoom-in-95">
-                                            {isMine && (
-                                                <>
-                                                    <button onClick={() => startEditing(post)} className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 flex items-center gap-2"><Edit2 size={14} /> Edit</button>
-                                                    <button onClick={() => handleDelete(post.id)} className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-slate-700 flex items-center gap-2"><Trash2 size={14} /> Delete</button>
-                                                </>
-                                            )}
-                                            <button onClick={() => toggleHide(post.id)} className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 flex items-center gap-2"><Eye size={14} /> Hide</button>
-                                            <button onClick={() => { onSavePost && onSavePost(post.id); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 flex items-center gap-2"><Save size={14} /> Save</button>
+                                        <div className="absolute right-0 top-8 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-10 overflow-hidden animate-in fade-in zoom-in-95 duration-100 origin-top-right">
+                                            {isMine && <button onClick={() => { setEditingPostId(post.id); setEditContent(post.content); setActiveMenuId(null); }} className="w-full text-left px-4 py-3 text-sm hover:bg-slate-700 flex items-center gap-2"><Edit2 size={14} /> Edit Broadcast</button>}
+                                            {isMine && <button onClick={() => handleDeletePost(post.id)} className="w-full text-left px-4 py-3 text-sm hover:bg-red-900/30 text-red-400 flex items-center gap-2"><Trash2 size={14} /> Delete Broadcast</button>}
+                                            <button onClick={() => toggleHide(post.id)} className="w-full text-left px-4 py-3 text-sm hover:bg-slate-700 flex items-center gap-2"><EyeOff size={14} /> Hide for me</button>
                                         </div>
                                     )}
                                 </div>
                             </div>
 
-                            {/* Post Content */}
-                            <div className="px-4 pb-2">
-                                {isEditing ? (
-                                    <div className="space-y-2">
-                                        <textarea
-                                            value={editContentText}
-                                            onChange={(e) => setEditContentText(e.target.value)}
-                                            className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-slate-200 focus:border-onion-500 outline-none min-h-[100px]"
-                                        />
-                                        <div className="flex gap-2 justify-end">
-                                            <button onClick={cancelEditing} className="px-3 py-1 text-sm text-slate-400 hover:text-white">Cancel</button>
-                                            <button onClick={() => saveEditing(post.id)} className="px-3 py-1 bg-onion-600 rounded text-sm text-white font-bold hover:bg-onion-500">Save</button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <p className="text-slate-200 whitespace-pre-wrap leading-relaxed mb-3 text-sm">{post.content}</p>
+                            {/* Post Content (Conditional) */}
+                            {isHardBlocked ? (
+                                <div className="px-4 py-8 flex flex-col items-center justify-center text-center bg-slate-950/50 border-y border-slate-800/50">
+                                    <ShieldAlert size={32} className="text-red-700 mb-2" />
+                                    <h3 className="text-slate-400 font-bold mb-1">Content Blocked</h3>
+                                    <p className="text-xs text-slate-600 max-w-xs">This broadcast has been community hidden ({'>'}95% negative feedback).</p>
+                                </div>
+                            ) : isSoftBlocked && !isRevealed ? (
+                                <div className="px-4 py-8 flex flex-col items-center justify-center text-center bg-slate-950/20 border-y border-slate-800/50 relative overflow-hidden group">
+                                    <div className="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center z-10">
+                                        <AlertTriangle size={32} className="text-amber-500 mb-2" />
+                                        <h3 className="text-slate-200 font-bold mb-1">Community Flagged</h3>
+                                        <p className="text-xs text-slate-500 max-w-xs mb-4">This content has received significantly negative feedback (2/3+).</p>
 
-                                        {/* Media */}
-                                        {post.imageUrl && (
-                                            <div className="mb-3 rounded-xl overflow-hidden border border-slate-800">
-                                                <img src={post.imageUrl} className="w-full max-h-96 object-cover" />
-                                            </div>
-                                        )}
-                                        {post.media && (
-                                            <div className="mb-3">
-                                                <MediaPlayer media={post.media} peerId={contacts.find(c => c.id === post.authorId)?.homeNodes[0]} />
-                                            </div>
-                                        )}
-
-                                        {/* Shared Post Embed */}
-                                        {post.sharedPostId && (
-                                            <div
-                                                className="mb-3 border border-slate-700 rounded-xl p-3 bg-slate-800/20 cursor-pointer hover:bg-slate-800/40 transition-colors"
-                                                onClick={() => handleViewSharedPost(post)}
+                                        {isSensitiveContentAllowed ? (
+                                            <button
+                                                onClick={() => setIsRevealed(true)}
+                                                className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors"
                                             >
-                                                {post.sharedPostSnapshot ? (
-                                                    <>
-                                                        <div className="flex items-center gap-2 mb-2">
-                                                            <Repeat size={14} className="text-slate-500" />
-                                                            <span className="text-xs font-bold text-slate-300">{post.sharedPostSnapshot.authorName}</span>
-                                                            <span className="text-[10px] text-slate-500">• {new Date(post.sharedPostSnapshot.timestamp).toLocaleDateString()}</span>
-                                                        </div>
-                                                        <p className="text-xs text-slate-400 line-clamp-3 italic">"{post.sharedPostSnapshot.content}"</p>
-                                                    </>
-                                                ) : (
-                                                    <div className="text-center text-xs text-slate-500 py-2">Original post content unavailable</div>
-                                                )}
-                                            </div>
+                                                View Content
+                                            </button>
+                                        ) : (
+                                            <p className="text-[10px] text-slate-600 italic">Sensitive content settings prevent viewing.</p>
                                         )}
-                                    </>
-                                )}
-                            </div>
-
-                            {/* Actions Bar */}
-                            <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between">
-                                <div className="flex items-center gap-4">
-                                    <div className="flex items-center bg-slate-800/50 rounded-full px-1 border border-slate-800">
-                                        <button onClick={() => onLike(post.id)} disabled={isMine} className={`p-2 hover:text-emerald-400 transition-colors disabled:opacity-50 ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-400'}`}>
-                                            <ThumbsUp size={18} />
-                                        </button>
-                                        <span className={`text-sm font-bold ${upVotes > downVotes ? 'text-emerald-400' : 'text-slate-500'}`}>{upVotes - downVotes}</span>
-                                        <button onClick={() => onDislike(post.id)} disabled={isMine} className={`p-2 hover:text-red-400 transition-colors disabled:opacity-50 ${myVote === 'down' ? 'text-red-400' : 'text-slate-400'}`}>
-                                            <ThumbsDown size={18} />
-                                        </button>
                                     </div>
+                                    <div className="opacity-10 blur-sm pointer-events-none" aria-hidden="true">
+                                        {/* Ghost content for visual structure */}
+                                        <p className="text-slate-300 text-sm leading-relaxed line-clamp-3">{post.content}</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                /* Normal Content or Revealed Soft Block */
+                                <div className="px-4 pb-3">
+                                    {isEditing ? (
+                                        <div className="space-y-3">
+                                            <textarea
+                                                value={editContent}
+                                                onChange={(e) => setEditContent(e.target.value)}
+                                                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-slate-200 focus:outline-none focus:border-onion-500 min-h-[100px]"
+                                            />
+                                            <div className="flex justify-end gap-2">
+                                                <button onClick={() => setEditingPostId(null)} className="px-3 py-1.5 rounded-lg text-xs hover:bg-slate-800 text-slate-400">Cancel</button>
+                                                <button onClick={() => handleSaveEdit(post)} className="bg-onion-600 hover:bg-onion-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold">Save Changes</button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap linkify">{post.content}</p>
+                                            {/* Media Rendering */}
+                                            {post.imageUrl && (
+                                                <div className="mt-3 rounded-xl overflow-hidden border border-slate-800">
+                                                    <img src={post.imageUrl} className="w-full max-h-96 object-cover" onClick={() => handleViewSharedPost(post)} />
+                                                </div>
+                                            )}
+                                            {post.media && (
+                                                <div className="mb-3">
+                                                    <MediaPlayer media={post.media} peerId={contacts.find(c => c.id === post.authorId)?.homeNodes[0]} />
+                                                </div>
+                                            )}
 
-                                    <button onClick={() => toggleComments(post.id)} className={`flex items-center gap-1.5 text-slate-400 hover:text-blue-400 transition-colors ${expandedPostId === post.id ? 'text-blue-400' : ''}`}>
-                                        <MessageCircle size={20} />
-                                        <span className="text-sm font-medium">{post.comments}</span>
+                                            {/* Shared Post Embed */}
+                                            {post.sharedPostId && (
+                                                <div
+                                                    className="mb-3 border border-slate-700 rounded-xl p-3 bg-slate-800/20 cursor-pointer hover:bg-slate-800/40 transition-colors"
+                                                    onClick={() => handleViewSharedPost(post)}
+                                                >
+                                                    {post.sharedPostSnapshot ? (
+                                                        <>
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                <Repeat size={14} className="text-slate-500" />
+                                                                <span className="text-xs font-bold text-slate-300">{post.sharedPostSnapshot.authorName}</span>
+                                                                <span className="text-[10px] text-slate-500">• {new Date(post.sharedPostSnapshot.timestamp).toLocaleDateString()}</span>
+                                                            </div>
+                                                            <p className="text-xs text-slate-400 line-clamp-3 italic">"{post.sharedPostSnapshot.content}"</p>
+                                                        </>
+                                                    ) : (
+                                                        <div className="text-center text-xs text-slate-500 py-2">Original post content unavailable</div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Post Footer (Always Visible, but buttons restricted) */}
+                            <div className="px-4 py-3 bg-slate-900/50 border-t border-slate-800 flex items-center justify-between">
+                                <div className="flex items-center gap-1 bg-slate-800/50 rounded-full px-1 py-0.5">
+                                    <button
+                                        onClick={() => !isHardBlocked && onLike(post.id)}
+                                        disabled={isHardBlocked || (isSoftBlocked && !isRevealed)}
+                                        className={`p-1.5 rounded-full hover:bg-slate-700 transition-colors ${myVote === 'up' ? 'text-emerald-400' : 'text-slate-500'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                                    >
+                                        <ThumbsUp size={16} className={myVote === 'up' ? 'fill-current' : ''} />
                                     </button>
+                                    <span className={`text-xs font-mono w-4 text-center ${upVotes > 0 ? 'text-emerald-400' : 'text-slate-600'}`}>{upVotes || 0}</span>
+                                    <div className="w-px h-3 bg-slate-700 mx-1"></div>
+                                    <span className={`text-xs font-mono w-4 text-center ${downVotes > 0 ? 'text-red-400' : 'text-slate-600'}`}>{downVotes || 0}</span>
+                                    <button
+                                        onClick={() => !isHardBlocked && onDislike(post.id)}
+                                        disabled={isHardBlocked || (isSoftBlocked && !isRevealed)}
+                                        className={`p-1.5 rounded-full hover:bg-slate-700 transition-colors ${myVote === 'down' ? 'text-red-400' : 'text-slate-500'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                                    >
+                                        <ThumbsDown size={16} className={myVote === 'down' ? 'fill-current' : ''} />
+                                    </button>
+                                </div>
 
-                                    <button onClick={() => onShare(post.id)} className="text-slate-400 hover:text-onion-400 transition-colors flex items-center gap-1.5">
-                                        <Repeat size={20} />
-                                        {post.shares > 0 && <span className="text-sm font-medium">{post.shares}</span>}
+                                <div className="flex items-center gap-4">
+                                    <button
+                                        onClick={() => toggleComments(post.id)}
+                                        className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${expandedPostId === post.id ? 'text-onion-400' : 'text-slate-500 hover:text-slate-300'}`}
+                                    >
+                                        <MessageCircle size={16} />
+                                        <span>{post.comments || 0}</span>
+                                    </button>
+                                    <button
+                                        onClick={() => !isHardBlocked && onShare(post.id)}
+                                        disabled={isHardBlocked}
+                                        className="flex items-center gap-1.5 text-slate-500 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                    >
+                                        <Repeat size={16} />
+                                        <span>{post.shares || 0}</span>
                                     </button>
                                 </div>
 
@@ -748,7 +766,6 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                             <button
                                                 key={emoji}
                                                 onClick={() => !isMine && onPostReaction(post.id, emoji)}
-                                                disabled={isMine}
                                                 className={`text-xs px-2 py-1 rounded-full border transition-all flex items-center gap-1 ${users.includes(user.id) ? 'bg-onion-900/30 border-onion-500/50 text-white' : 'bg-slate-800/50 border-slate-700 text-slate-300 hover:bg-slate-800'}`}
                                             >
                                                 <span>{emoji}</span>
