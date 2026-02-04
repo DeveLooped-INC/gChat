@@ -1,0 +1,52 @@
+{
+  "name": "gchat-node",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "web": "vite",
+    "build": "tsc && vite build",
+    "postinstall": "node scripts/download-tor.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "fs-extra": "^11.2.0",
+    "js-sha3": "^0.9.3",
+    "jsqr": "^1.4.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.344.0",
+    "qrcode": "^1.5.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5",
+    "socks-proxy-agent": "^8.0.3",
+    "sqlite3": "^5.1.7",
+    "tar": "^7.5.7",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1"
+  },
+  "overrides": {
+    "tar": "^7.5.7",
+    "sqlite3": {
+      "tar": "^7.5.7"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.31",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.18",
+    "concurrently": "^8.2.2",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.2.2",
+    "vite": "^7.3.1",
+    "wait-on": "^7.2.0"
+  }
+}

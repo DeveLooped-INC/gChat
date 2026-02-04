@@ -1,0 +1,839 @@
+
+// Universal Network Service using Socket.IO
+import { io, Socket } from 'socket.io-client';
+import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
+import { getMedia, saveMedia, hasMedia, verifyMediaAccess, setMediaSocket } from './mediaStorage';
+import { getTransferConfig, arrayBufferToBase64, base64ToArrayBuffer } from '../utils';
+import { kvService } from './kv'; // Import KV Service
+
+const BACKEND_URL = 'http://127.0.0.1:3001';
+
+export interface PingResult {
+    success: boolean;
+    error?: string;
+    latency?: number;
+}
+
+export type TorStats = ITorStats;
+
+interface DownloadListener {
+    onProgress: (p: number) => void;
+    onComplete: (b: Blob) => void;
+    onError: (e: string) => void;
+}
+
+interface ChunkRequest {
+    index: number;
+    sentAt: number;
+    retries: number;
+}
+
+interface ActiveDownload {
+    id: string;
+    peerOnion: string;
+    chunks: (ArrayBuffer | null)[];
+    receivedCount: number;
+    totalChunks: number;
+    metadata: MediaMetadata;
+    status: 'active' | 'paused' | 'completed' | 'error' | 'recovering';
+
+    // Adaptive Logic
+    queue: number[];
+    inflight: Map<number, ChunkRequest>;
+    concurrency: number; // Floating point, floored for usage
+    chunkSize: number; // Fixed for the session
+
+    // Stats
+    rttSamples: number[];
+    avgRtt: number;
+
+    listeners: DownloadListener[];
+
+    // Recovery State
+    recoveryStartedAt?: number;
+    lastRecoveryAttempt?: number;
+}
+
+type StatusListener = (isOnline: boolean, nodeId?: string) => void;
+type PeerStatusListener = (peer: string, status: 'online' | 'offline', latency?: number) => void;
+
+// --- WAKE LOCK HELPER ---
+let wakeLock: any = null;
+const requestWakeLock = async () => {
+    try {
+        if ('wakeLock' in navigator && !wakeLock) {
+            // @ts-ignore
+            wakeLock = await navigator.wakeLock.request('screen');
+        }
+    } catch (err) {
+        console.warn('Wake Lock failed:', err);
+    }
+};
+const releaseWakeLock = () => {
+    if (wakeLock) {
+        wakeLock.release().then(() => {
+            wakeLock = null;
+        }).catch(() => { });
+    }
+};
+
+export class NetworkService {
+    public socket: Socket;
+
+    public onMessage: (data: any, senderId: string) => void = () => { };
+    public onPeerStatus: PeerStatusListener = () => { };
+    public onLog: (msg: string) => void = () => { };
+    public onStats: (stats: TorStats) => void = () => { };
+    public onShutdownRequest: () => void = () => { };
+
+    private _statusListeners: Set<StatusListener> = new Set();
+    private _logs: LogEntry[] = [];
+    public isDebugEnabled: boolean = false;
+
+    private _myOnionAddress: string | null = null;
+    private _knownPeers: Set<string> = new Set();
+    private _trustedPeers: Set<string> = new Set(); // Explicitly connected/added peers
+    private _activeDownloads: Map<string, ActiveDownload> = new Map();
+    private _isShuttingDown: boolean = false;
+
+    constructor() {
+        // Async load debug mode later
+
+        this.socket = io(BACKEND_URL, {
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            timeout: 20000,
+            autoConnect: true,
+            transports: ['websocket', 'polling']
+        });
+
+        // INJECT SOCKET INTO MEDIA SERVICE
+        setMediaSocket(this.socket);
+
+        this.setupSocketListeners();
+
+        // --- SLIDING WINDOW MONITOR ---
+        setInterval(() => {
+            if (this._isShuttingDown) return;
+            this.maintainDownloads();
+        }, 1000);
+    }
+
+    // --- LOGGING & STATUS HELPERS ---
+
+    public log(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', area: 'BACKEND' | 'FRONTEND' | 'TOR' | 'CRYPTO' | 'NETWORK', message: string, details?: any) {
+        const entry: LogEntry = {
+            timestamp: Date.now(),
+            level,
+            area,
+            message,
+            details
+        };
+        this.addLogEntry(entry);
+    }
+
+    private addLogEntry(entry: LogEntry, skipForward: boolean = false) {
+        this._logs.push(entry);
+        if (this._logs.length > 1000) this._logs.shift(); // Keep last 1000
+
+        // Emit to UI legacy listener
+        if (this.onLog) {
+            this.onLog(`[${entry.level}] [${entry.area}] ${entry.message}`);
+        }
+
+        // Forward to Backend Terminal (Only if it didn't come FROM the backend)
+        if (!skipForward && this.socket && this.socket.connected) {
+            this.socket.emit('client-log', entry);
+        }
+    }
+
+    private notifyStatus(isOnline: boolean, nodeId?: string) {
+        this._statusListeners.forEach(l => l(isOnline, nodeId));
+    }
+
+    public getLogs(): LogEntry[] {
+        return this._logs;
+    }
+
+    public subscribeToStatus(listener: StatusListener): () => void {
+        this._statusListeners.add(listener);
+        // Immediately notify current status
+        const isReady = this.socket.connected && !!this._myOnionAddress;
+        listener(isReady, this._myOnionAddress || undefined);
+
+        return () => {
+            this._statusListeners.delete(listener);
+        };
+    }
+
+    public setDebugMode(enabled: boolean) {
+        this.isDebugEnabled = enabled;
+        kvService.set('gchat_debug_enabled', enabled); // Async but fire-and-forget
+    }
+
+    public downloadLogs() {
+        const blob = new Blob([JSON.stringify(this._logs, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `gchat-debug-logs-${Date.now()}.json`;
+        a.click();
+    }
+
+    public updateKnownPeers(peers: string[]) {
+        peers.forEach(p => this._knownPeers.add(p));
+    }
+
+    public syncTrustedPeers(peers: string[]) {
+        // Merge contacts with existing trusted peers (to keep manual connections)
+        peers.forEach(p => this._trustedPeers.add(p));
+        this.log('INFO', 'NETWORK', `Synced ${peers.length} Contacts. Total Trusted: ${this._trustedPeers.size}`);
+    }
+
+    private setupSocketListeners() {
+        this.socket.on('connect', () => {
+            this.log('INFO', 'FRONTEND', 'Connected to Local Backend Socket');
+            if (!this._myOnionAddress) {
+                this.socket.emit('get-onion-address', (addr: string) => {
+                    if (addr) {
+                        this._myOnionAddress = addr;
+                        this.notifyStatus(true, addr);
+                    }
+                });
+            }
+        });
+
+        this.socket.on('onion-address', (address: string) => {
+            this._myOnionAddress = address;
+            this.notifyStatus(true, address);
+            this.log('INFO', 'FRONTEND', `Onion Address Assigned: ${address}`);
+        });
+
+        this.socket.on('tor-packet', (packet: any) => {
+            const sender = packet.senderId || packet.sender;
+            if (packet && sender) {
+                // --- STRICT FIREWALL ---
+                // We ONLY accept packets from Trusted Peers (Contacts/Manual Connections).
+                // The ONLY exception is a 'CONNECTION_REQUEST' (Friend Request/Handshake).
+                const isTrusted = this._trustedPeers.has(sender);
+                const isConnectionRequest = packet.type === 'CONNECTION_REQUEST';
+
+                if (!isTrusted && !isConnectionRequest) {
+                    this.log('WARN', 'NETWORK', `Blocked packet ${packet.type} from untrusted source ${sender}. Firewall active.`);
+                    return; // DROP PACKET
+                }
+                // -----------------------
+
+                if (sender.endsWith('.onion')) this._knownPeers.add(sender);
+
+                if (packet.type === 'MEDIA_REQUEST') this.handleMediaRequest(sender, packet.payload);
+                else if (packet.type === 'MEDIA_CHUNK') this.handleMediaChunk(sender, packet.payload);
+                else if (packet.type === 'MEDIA_RELAY_REQUEST') this.handleRelayRequest(sender, packet.payload);
+                else if (packet.type === 'MEDIA_RECOVERY_FOUND') this.handleRecoveryFound(sender, packet.payload);
+                else {
+                    if (packet.type !== 'MEDIA_CHUNK') this.log('DEBUG', 'FRONTEND', `Received Packet [${packet.type}] from ${sender}`);
+                    if (this.onMessage) this.onMessage(packet, sender);
+                }
+            }
+        });
+
+        this.socket.on('tor-status', (status: string) => {
+            if (status === 'connected' && this._myOnionAddress) this.notifyStatus(true, this._myOnionAddress);
+            else if (status === 'disconnected') this.notifyStatus(false);
+        });
+
+        this.socket.on('tor-stats', (stats: TorStats) => this.onStats(stats));
+        this.socket.on('tor-log', (msg: string) => this.onLog(msg));
+        this.socket.on('debug-log', (entry: LogEntry) => this.addLogEntry(entry, true));
+
+        this.socket.on('connect_error', (err) => {
+            this.notifyStatus(false);
+            this.log('ERROR', 'FRONTEND', `Socket Connection Error: ${err.message}`);
+        });
+
+        this.socket.on('system-shutdown-scheduled', async () => {
+            this.log('WARN', 'FRONTEND', 'System Shutdown Requested. Broadcasting exit signal to peers...');
+            this._isShuttingDown = true;
+
+            const packet = {
+                id: crypto.randomUUID(),
+                type: 'USER_EXIT',
+                senderId: this._myOnionAddress || 'unknown',
+                payload: { userId: 'system-shutdown' }
+            };
+
+            const trustedPeers = Array.from(this._trustedPeers);
+            const pendingAcks = new Set(trustedPeers);
+
+            // Listener for ACKs
+            const ackListener = (ackPacket: any) => {
+                if (ackPacket.type === 'USER_EXIT_ACK') {
+                    const sender = ackPacket.senderId || ackPacket.sender;
+                    if (sender && pendingAcks.has(sender)) {
+                        this.log('INFO', 'NETWORK', `Received shutdown ACK from ${sender}`);
+                        pendingAcks.delete(sender);
+                    }
+                }
+            };
+            this.socket.on('tor-packet', ackListener);
+
+            // Broadcast Exit Packet
+            await this.broadcast(packet, trustedPeers);
+
+            this.log('INFO', 'FRONTEND', `Waiting for ACKs from ${pendingAcks.size} peers (max 30s)...`);
+
+            // Wait for ACKs or Timeout
+            const startTime = Date.now();
+            while (pendingAcks.size > 0 && (Date.now() - startTime) < 30000) {
+                await new Promise(r => setTimeout(r, 500));
+            }
+
+            this.socket.off('tor-packet', ackListener);
+
+            if (pendingAcks.size > 0) {
+                this.log('WARN', 'FRONTEND', `Shutdown Timeout. Missing ACKs from: ${Array.from(pendingAcks).join(', ')}`);
+            } else {
+                this.log('INFO', 'FRONTEND', 'All peers acknowledged shutdown.');
+            }
+
+            this.socket.emit('system-shutdown-confirm');
+        });
+
+        this.socket.on('system-shutdown-request', () => {
+            this.log('WARN', 'NETWORK', 'Backend requested graceful shutdown...');
+            if (this.onShutdownRequest) this.onShutdownRequest();
+        });
+    }
+
+    // --- DOWNLOAD MANAGER LOOP ---
+    private maintainDownloads() {
+        const now = Date.now();
+        let hasActive = false;
+
+        this._activeDownloads.forEach((dl) => {
+            if (dl.status === 'error' || dl.status === 'completed' || dl.status === 'paused') return;
+
+            if (dl.status === 'recovering') {
+                const now = Date.now();
+                if (!dl.recoveryStartedAt) dl.recoveryStartedAt = now;
+
+                // Timeout: 60s
+                if ((now - dl.recoveryStartedAt) > 60000) {
+                    this.log('ERROR', 'NETWORK', `Mesh Recovery Timed Out for ${dl.id}`);
+                    dl.status = 'error';
+                    dl.listeners.forEach(l => l.onError("Source offline. Mesh Recovery Failed."));
+                    return;
+                }
+
+                // Retry Interval: 45s - Tor is slow, and we don't want to spam retries/AVALANCHE
+                // 10s was too aggressive causing "ERR_CANCELED" loops when requests timed out at 30s.
+                if (!dl.lastRecoveryAttempt || (now - dl.lastRecoveryAttempt) > 45000) {
+                    dl.lastRecoveryAttempt = now;
+                    this.log('INFO', 'NETWORK', `Broadcasting Mesh Relay Retry for ${dl.id}...`);
+                    this.attemptMeshRecovery(dl.id, dl.metadata.originNode);
+                }
+                return;
+            }
+
+            hasActive = true;
+
+            // Adaptive Timeout: Base 60s + (RTT * 4)
+            // Increased base timeout significantly to allow for Tor Circuit creation
+            const dynamicTimeout = Math.max(60000, dl.avgRtt * 4);
+
+            dl.inflight.forEach((req, key) => {
+                if (now - req.sentAt > dynamicTimeout) {
+                    if (req.retries >= 10) {
+                        this.log('WARN', 'NETWORK', `Chunk ${req.index} failed 10 times. Triggering Mesh Recovery.`);
+                        this.attemptMeshRecovery(dl.id);
+                        dl.status = 'recovering';
+                        dl.listeners.forEach(l => l.onError("Source offline. Searching mesh..."));
+                        return;
+                    }
+
+                    this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt) / 1000)}s). Retrying...`);
+
+                    // CONGESTION CONTROL: Multiplicative Decrease
+                    dl.concurrency = 1;
+
+                    // Move failed chunk back to front of queue
+                    dl.inflight.delete(key);
+                    dl.queue.unshift(req.index);
+                    req.retries++;
+                }
+            });
+
+            if (dl.status === 'active') this.pumpDownloadQueue(dl);
+        });
+
+        // Keep screen awake while downloading
+        if (hasActive) requestWakeLock();
+        else releaseWakeLock();
+    }
+
+    private pumpDownloadQueue(dl: ActiveDownload) {
+        // Use floored concurrency
+        const effectiveConcurrency = Math.floor(dl.concurrency);
+
+        while (dl.inflight.size < effectiveConcurrency && dl.queue.length > 0) {
+            const index = dl.queue.shift()!;
+            dl.inflight.set(index, {
+                index,
+                sentAt: Date.now(),
+                retries: 0
+            });
+
+            // Send with explicit stream ID to reuse the Agent in backend
+            this.sendMessage(dl.peerOnion, {
+                type: 'MEDIA_REQUEST',
+                senderId: this._myOnionAddress || 'unknown',
+                payload: { mediaId: dl.id, chunkIndex: index, chunkSize: dl.chunkSize }
+            }, `media_stream_${dl.id}`);
+        }
+    }
+
+    // --- MEDIA METHODS ---
+
+    private async handleMediaRequest(senderId: string, payload: { mediaId: string; chunkIndex: number; chunkSize: number }) {
+        if (this._isShuttingDown) return;
+
+        const { mediaId, chunkIndex, chunkSize } = payload;
+        // Default to 256KB if not provided, but respect the requester's chunk size
+        const size = chunkSize || (256 * 1024);
+
+        const blob = await getMedia(mediaId);
+        if (!blob) return;
+
+        const totalChunks = Math.ceil(blob.size / size);
+        if (chunkIndex >= totalChunks) return;
+
+        const start = chunkIndex * size;
+        const end = Math.min(start + size, blob.size);
+        const chunkBlob = blob.slice(start, end);
+
+        const buffer = await chunkBlob.arrayBuffer();
+        // CRITICAL: Convert to Base64 to ensure it survives JSON.stringify in the backend
+        const base64Data = arrayBufferToBase64(buffer);
+
+        this.sendMessage(senderId, {
+            type: 'MEDIA_CHUNK',
+            senderId: this._myOnionAddress || 'system',
+            payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
+        }, `media_stream_${mediaId}`);
+    }
+
+    private handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: any }) {
+        if (this._isShuttingDown) return;
+
+        const { mediaId, chunkIndex, totalChunks, data } = payload;
+        const download = this._activeDownloads.get(mediaId);
+        if (!download) return;
+
+        const requestInfo = download.inflight.get(chunkIndex);
+        download.inflight.delete(chunkIndex);
+
+        if (requestInfo) {
+            const rtt = Date.now() - requestInfo.sentAt;
+            download.rttSamples.push(rtt);
+            if (download.rttSamples.length > 5) download.rttSamples.shift();
+            download.avgRtt = download.rttSamples.reduce((a, b) => a + b, 0) / download.rttSamples.length;
+
+            // CONGESTION CONTROL: Additive Increase
+            // If RTT is healthy (< 2s) and we aren't already maxed out (6), increase concurrency.
+            if (rtt < 2000 && download.concurrency < 6) {
+                download.concurrency += 0.1;
+            }
+        }
+
+        // Convert incoming data
+        let chunkData: ArrayBuffer;
+        if (typeof data === 'string') {
+            // It's likely the Base64 string we sent
+            chunkData = base64ToArrayBuffer(data);
+        } else if (data instanceof ArrayBuffer) {
+            chunkData = data;
+        } else {
+            // Fallback if Socket.IO did something magic, or it's a raw array
+            chunkData = new Uint8Array(data).buffer;
+        }
+
+        // CRITICAL: Validate Chunk Data Size
+        if (chunkData.byteLength === 0) {
+            this.log('WARN', 'NETWORK', `Received empty chunk ${chunkIndex} for ${mediaId}. Ignoring.`);
+            // Put back in queue to retry
+            download.queue.unshift(chunkIndex);
+            return;
+        }
+
+        if (download.chunks[chunkIndex] === null) {
+            download.chunks[chunkIndex] = chunkData;
+            download.receivedCount++;
+        }
+
+        const progress = Math.round((download.receivedCount / download.totalChunks) * 100);
+        download.listeners.forEach(l => l.onProgress(progress));
+
+        if (download.receivedCount >= download.totalChunks) {
+            this.finishDownload(mediaId);
+        } else {
+            this.pumpDownloadQueue(download);
+        }
+    }
+
+    // --- RECOVERY LOGIC ---
+    private async attemptMeshRecovery(mediaId: string, originNode?: string) {
+        const dl = this._activeDownloads.get(mediaId);
+        if (!dl) return;
+
+        const packet = {
+            id: crypto.randomUUID(),
+            type: 'MEDIA_RELAY_REQUEST', // changed from RECOVERY to RELAY/RECOVERY hybrid
+            senderId: this._myOnionAddress || 'unknown',
+            payload: {
+                mediaId,
+                originNode, // Hint: "If you don't have it, try fetching from here"
+                accessKey: dl.metadata.accessKey
+            }
+        };
+
+        // Broadcast ONLY to Trusted Peers
+        const recipients = Array.from(this._trustedPeers).filter(p => p !== dl.peerOnion);
+        this.log('INFO', 'NETWORK', `Broadcasting RELAY Request for ${mediaId} to ${recipients.length} TRUSTED peers`);
+        // Use 0 retries to prevent retry avalanche. The download loop handles reattempts.
+        this.broadcast(packet, recipients, 0);
+    }
+
+    private async handleRelayRequest(senderId: string, payload: { mediaId: string; originNode?: string; accessKey?: string }) {
+        const { mediaId, originNode, accessKey } = payload;
+
+        // 1. Do we have it locally?
+        let hasIt = await hasMedia(mediaId);
+
+        // 2. If not, and we have an Origin Hint, try to fetch it into our cache (Proxy Behavior)
+        if (!hasIt) {
+            this.log('INFO', 'NETWORK', `Relay Request for ${mediaId}. Checking if App Layer can proxy...`);
+            this.socket.emit('media-relay-request-internal', { senderId, mediaId });
+        }
+
+        if (!hasIt && originNode) {
+            this.log('INFO', 'NETWORK', `Relay Request for ${mediaId}. Fetching from Origin ${originNode} on behalf of ${senderId}`);
+            try {
+                // We create a "Shadow" metadata entry to trigger download.
+                // We don't have full metadata here (size etc), so we might fail if we don't have it.
+                // LIMITATION: We assume we can get it.
+                // Ideally, we would need to fetch metadata first. 
+                // For this implementation, we will assume we can't proxy without metadata.
+                // BUT, if we use the existing 'downloadMedia' logic, we need metadata.
+                // If we don't have metadata, we can't download easily.
+
+                // FALLBACK: Since we don't strictly have the metadata to start a download, 
+                // we only serve if we ALREADY have it, OR if we implement a raw stream proxy.
+                // Raw stream proxy is safer but complex (streams don't land in cache).
+
+                // For V1 Strict Privacy: We only serve if we HAVE it.
+                // Users must rely on their friends having seen the post.
+                // Wait! If the Friend sees the post, they have the metadata in their Feed state? 
+                // No, NetworkService doesn't have access to Feed State.
+
+                this.log('WARN', 'NETWORK', `Relay: Cannot fetch from Origin without Metadata. Only serving cached content.`);
+            } catch (e) {
+                // Ignore
+            }
+        }
+
+        // Re-check
+        hasIt = await hasMedia(mediaId);
+        if (!hasIt) return;
+
+        // Are we allowed to share it?
+        const canAccess = await verifyMediaAccess(mediaId, accessKey);
+        if (!canAccess) {
+            return;
+        }
+
+        this.log('INFO', 'NETWORK', `Found requested media ${mediaId}. Offering to ${senderId} (Relay/Cache)`);
+        this.sendMessage(senderId, {
+            id: crypto.randomUUID(),
+            type: 'MEDIA_RECOVERY_FOUND',
+            senderId: this._myOnionAddress || 'unknown',
+            payload: { mediaId }
+        });
+    }
+
+    private handleRecoveryFound(senderId: string, payload: { mediaId: string }) {
+        const { mediaId } = payload;
+        const dl = this._activeDownloads.get(mediaId);
+
+        if (dl && (dl.status === 'recovering' || dl.status === 'paused')) {
+            this.log('INFO', 'NETWORK', `Recovery Successful! Switching download source to ${senderId}`);
+
+            dl.peerOnion = senderId;
+            dl.status = 'active';
+
+            // Reset concurrency stats for new peer
+            dl.concurrency = 1;
+            dl.avgRtt = 5000;
+            dl.rttSamples = [];
+
+            // Resume download
+            this.pumpDownloadQueue(dl);
+        }
+    }
+
+    private async finishDownload(mediaId: string) {
+        const download = this._activeDownloads.get(mediaId);
+        if (!download || download.chunks.includes(null)) return;
+
+        try {
+            const blob = new Blob(download.chunks as BlobPart[], { type: download.metadata.mimeType });
+            if (blob.size === 0) throw new Error("Empty Blob Data");
+            await saveMedia(mediaId, blob, download.metadata.accessKey);
+            download.status = 'completed';
+            download.listeners.forEach(l => l.onComplete(blob));
+        } catch (e: any) {
+            this.log('ERROR', 'NETWORK', `Blob assembly failed: ${e.message}`);
+            download.listeners.forEach(l => l.onError(`Assembly Failed: ${e.message}`));
+        } finally {
+            this._activeDownloads.delete(mediaId);
+            releaseWakeLock();
+        }
+    }
+
+    public getDownloadProgress(mediaId: string): number | null {
+        const dl = this._activeDownloads.get(mediaId);
+        if (!dl) return null;
+        if (dl.status === 'recovering') return -1;
+        return Math.round((dl.receivedCount / dl.totalChunks) * 100);
+    }
+
+    public async downloadMedia(peerOnionAddress: string | undefined | null, metadata: MediaMetadata, onProgress: (p: number) => void, allowUntrusted: boolean = false): Promise<Blob> {
+        if (this._isShuttingDown) throw new Error("Shutdown in progress");
+
+        if (await hasMedia(metadata.id)) {
+            onProgress(100);
+            return (await getMedia(metadata.id))!;
+        }
+
+        if (this._activeDownloads.has(metadata.id)) {
+            const existing = this._activeDownloads.get(metadata.id)!;
+            existing.listeners.push({ onProgress, onComplete: () => { }, onError: () => { } });
+            return new Promise((resolve, reject) => {
+                existing.listeners[existing.listeners.length - 1].onComplete = resolve;
+                existing.listeners[existing.listeners.length - 1].onError = reject;
+            });
+        }
+
+        // Determine initial configuration
+        const config = getTransferConfig(metadata.size);
+        const totalChunks = Math.ceil(metadata.size / config.chunkSize);
+
+        // STRICT MODE Check
+        let initialStatus: 'active' | 'recovering' = 'recovering';
+        let usePeer = peerOnionAddress;
+
+        if (peerOnionAddress && this._trustedPeers.has(peerOnionAddress)) {
+            initialStatus = 'active';
+        } else if (peerOnionAddress) {
+            if (allowUntrusted) {
+                // PROXY MODE: Check allowUntrusted
+                // We are acting as a proxy (or explicitly forcing a download).
+                // We allow connection to stranger.
+                this.log('WARN', 'NETWORK', `Proxy: Allowing connection to untrusted source ${peerOnionAddress} for download.`);
+                initialStatus = 'active';
+            } else {
+                // It's a stranger. We REFUSE direct connection.
+                // We set status to recovering to force a Relay Request to Trusted Peers.
+                this.log('INFO', 'NETWORK', `Strict Mode: Refusing direct download from untrusted ${peerOnionAddress}. Attempting Mesh Relay.`);
+                initialStatus = 'recovering';
+            }
+        }
+
+        return new Promise((resolve, reject) => {
+            const queue = Array.from({ length: totalChunks }, (_, i) => i);
+            const safePeerAddr = (initialStatus === 'active') ? (usePeer || 'unknown') : 'searching...';
+
+            this._activeDownloads.set(metadata.id, {
+                id: metadata.id,
+                peerOnion: safePeerAddr,
+                chunks: new Array(totalChunks).fill(null),
+                receivedCount: 0,
+                totalChunks,
+                metadata,
+                status: initialStatus,
+                queue,
+                inflight: new Map(),
+                concurrency: 1,
+                chunkSize: config.chunkSize,
+                rttSamples: [],
+                avgRtt: 5000,
+                listeners: [{ onProgress, onComplete: resolve, onError: reject }]
+            });
+
+            const dl = this._activeDownloads.get(metadata.id)!;
+
+            if (initialStatus === 'active') {
+                this.pumpDownloadQueue(dl);
+            } else {
+                // If we don't know the peer OR don't trust them, search trusted mesh
+                // Pass 'usePeer' as originNode hint
+                // Pass 'usePeer' as originNode hint if available
+                dl.recoveryStartedAt = Date.now();
+                dl.lastRecoveryAttempt = Date.now();
+                this.attemptMeshRecovery(metadata.id, usePeer || dl.metadata.originNode);
+                onProgress(-1);
+            }
+            requestWakeLock();
+        });
+    }
+
+    // --- STANDARD METHODS (INIT, CONNECT, SEND) ---
+
+    public init(nodeId: string) {
+        if (this.socket.disconnected) this.socket.connect();
+        this.socket.emit('get-onion-address', (addr: string) => {
+            if (addr) {
+                this._myOnionAddress = addr;
+                this.notifyStatus(true, addr);
+            }
+        });
+    }
+
+    public restartTor() {
+        this.socket.emit('restart-tor');
+        this.notifyStatus(false);
+    }
+
+    public async connect(onionAddress: string): Promise<PingResult> {
+        if (this._isShuttingDown) return { success: false, error: 'System Shutdown' };
+        const start = Date.now();
+        this._knownPeers.add(onionAddress);
+        this._trustedPeers.add(onionAddress); // Mark as trusted since we initiated connection
+        return new Promise((resolve) => {
+            if (!this.socket.connected) { resolve({ success: false, error: 'Backend Disconnected' }); return; }
+            this.socket.emit('ping-peer', { targetOnion: onionAddress }, (result: PingResult) => {
+                const latency = Date.now() - start;
+                if (result && result.success) {
+                    this.onPeerStatus(onionAddress, 'online', latency);
+                    resolve({ success: true, latency });
+                } else {
+                    this.onPeerStatus(onionAddress, 'offline');
+                    resolve(result);
+                }
+            });
+        });
+    }
+
+    public async sendMessage(targetOnionAddress: string, packet: any, streamId?: string, retries?: number): Promise<boolean> {
+        if (targetOnionAddress.endsWith('.onion')) this._knownPeers.add(targetOnionAddress);
+        if (this._isShuttingDown && packet.type !== 'NODE_SHUTDOWN' && packet.type !== 'USER_EXIT') return false;
+
+        // --- ENFORCE LINK IDENTITY ---
+        // Always stamp the packet with OUR address as the Sender.
+        // This ensures the recipient knows it came from a Trusted Peer (Us),
+        // effectively wrapping the content for the Strict Firewall.
+        if (this._myOnionAddress) {
+            packet.senderId = this._myOnionAddress;
+        }
+        // -----------------------------
+
+
+
+        return new Promise((resolve) => {
+            if (!this.socket.connected) { resolve(false); return; }
+            this.socket.emit('send-packet', { targetOnion: targetOnionAddress, payload: packet, streamId, retries }, (response: any) => {
+                resolve(response ? response.success : false);
+            });
+        });
+    }
+
+    public async broadcast(packet: any, recipients: string[], retries?: number) {
+        if (this._isShuttingDown && packet.type !== 'USER_EXIT') return;
+        const promises = recipients.map(async (onionAddress) => {
+            if (onionAddress === this._myOnionAddress) return;
+            await this.sendMessage(onionAddress, packet, undefined, retries);
+        });
+        await Promise.all(promises);
+    }
+
+    // --- EXIT & SHUTDOWN ---
+
+    public async announceExit(peers: string[], contacts: { homeNodes: string[], id: string }[], homeNode: string, userId: string) {
+        this._isShuttingDown = true;
+        this.socket.emit('system-shutdown-prep');
+
+        const packet = {
+            id: crypto.randomUUID(),
+            type: 'USER_EXIT',
+            senderId: homeNode,
+            payload: { userId }
+        };
+
+        // Best effort broadcast
+        const peerPromises = peers.map(p => this.sendMessage(p, packet));
+
+        // Best effort contact notification
+        const contactPromises = contacts.map(c => {
+            if (c.homeNodes && c.homeNodes.length > 0) {
+                return this.sendMessage(c.homeNodes[0], packet);
+            }
+            return Promise.resolve(false);
+        });
+
+        await Promise.all([...peerPromises, ...contactPromises]);
+    }
+
+    public confirmShutdown() {
+        this._isShuttingDown = true;
+        this.socket.emit('system-shutdown-confirm');
+    }
+
+    // --- UTILS ---
+    public getTorKeys(): Promise<any> {
+        return new Promise((resolve, reject) => {
+            this.socket.emit('get-tor-keys', (response: any) => {
+                if (response && response.success) resolve(response.keys);
+                else reject(response?.error || "Failed");
+            });
+        });
+    }
+
+    public restoreTorKeys(keys: any): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.socket.emit('restore-tor-keys', keys, (ack: any) => {
+                if (ack && ack.success) resolve();
+                else reject(ack?.error || "Failed");
+            });
+        });
+    }
+
+    public getBridges(): Promise<string> {
+        return new Promise((resolve) => {
+            this.socket.emit('get-bridges', (content: string) => resolve(content));
+        });
+    }
+
+    public saveBridges(content: string): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.socket.emit('save-bridges', content, (ack: any) => {
+                if (ack && ack.success) resolve();
+                else reject(ack?.error || "Failed to save bridges");
+            });
+        });
+    }
+
+    public factoryReset(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.socket.emit('factory-reset', (ack: any) => {
+                if (ack && ack.success) resolve();
+                else reject(ack?.error || "Reset Failed");
+            });
+        });
+    }
+
+    public disconnect() {
+        this.notifyStatus(false);
+        this.socket.disconnect();
+    }
+}
+
+export const networkService = new NetworkService();

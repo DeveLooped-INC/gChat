@@ -1,0 +1,8 @@
+{
+  "name": "gChat",
+  "description": "A decentralized, privacy-first social platform powered by onion routing and local-first architecture.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
