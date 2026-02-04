@@ -296,6 +296,11 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             state.setMessages(prev => [...prev, newMessage]);
             let membersToMessage = group.members.filter(mid => mid !== user.id);
             if (privacy === 'connections') membersToMessage = membersToMessage.filter(mid => state.contactsRef.current.some(c => c.id === mid));
+
+            // Optimistic delivery assumption for UI, but we track failures internally if needed.
+            // For now, groups complicate retry logic significantly (partial delivery).
+            // We focus on best-effort for groups in this V1.
+
             let successCount = 0;
             for (const memberId of membersToMessage) {
                 const contact = state.contactsRef.current.find(c => c.id === memberId);
@@ -303,7 +308,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                     const { nonce, ciphertext } = encryptMessage(payloadStr, contact.encryptionPublicKey, user.keys.encryption.secretKey);
                     const groupEncPayload: EncryptedPayload = { id: msgId, nonce, ciphertext, groupId: group.id };
                     const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'MESSAGE', senderId: user.homeNodeOnion, targetUserId: contact.id, payload: groupEncPayload };
-                    networkService.sendMessage(contact.homeNodes[0], packet);
+                    networkService.sendMessage(contact.homeNodes[0], packet); // Fire and forget for group
                     successCount++;
                     await new Promise(r => setTimeout(r, 50));
                 }
@@ -318,12 +323,61 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const { nonce, ciphertext } = encryptMessage(payloadStr, contact.encryptionPublicKey, user.keys.encryption.secretKey);
         const newMsg: Message = { id: msgId, threadId: contact.id, senderId: user.id, content: text, timestamp: Date.now(), delivered: false, read: true, isMine: true, media, attachmentUrl: attachment, isEphemeral, replyToId };
         state.setMessages(prev => [...prev, newMsg]);
+
         const targetNode = contact.homeNodes[0];
         const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'MESSAGE', senderId: user.homeNodeOnion, targetUserId: contact.id, payload: { id: msgId, nonce, ciphertext } };
+
+        // Initial Send Attempt
         const success = await networkService.sendMessage(targetNode, packet);
-        if (success) state.setMessages(prev => prev.map(m => m.id === msgId ? { ...m, delivered: true } : m));
-        else addNotification('Send Failed', 'Could not reach user home node', 'error', 'chat');
+
+        if (success) {
+            state.setMessages(prev => prev.map(m => m.id === msgId ? { ...m, delivered: true } : m));
+        } else {
+            // Keep delivered=false. The Retry Interval will pick it up.
+            // We can also notify user it is "Pending" if we had a UI state for it.
+            // Currently UI shows checkmark for delivered, nothing for pending? 
+            // `Chat.tsx` shows <Clock /> if !delivered. Perfect.
+            console.log(`Message ${msgId} failed initial send. Queued for retry.`);
+        }
     }, [addNotification, state.userRef, state.groupsRef, state.contactsRef, state.setMessages]);
+
+    // RETRY LOGIC FOR UNDELIVERED MESSAGES
+    useEffect(() => {
+        const retryInterval = setInterval(async () => {
+            const undeliveredMsgs = state.messagesRef.current.filter(m => m.isMine && !m.delivered && !m.read && (Date.now() - m.timestamp < 24 * 60 * 60 * 1000)); // Retry for 24h
+            if (undeliveredMsgs.length === 0) return;
+
+            const user = state.userRef.current;
+
+            for (const msg of undeliveredMsgs) {
+                // Skip Group messages for now (too complex to track partials)
+                const group = state.groupsRef.current.find(g => g.id === msg.threadId);
+                if (group) continue;
+
+                const contact = state.contactsRef.current.find(c => c.id === msg.threadId);
+                if (!contact || !contact.encryptionPublicKey || !contact.homeNodes[0]) continue;
+
+                // Check if peer is online now
+                const isPeerOnline = state.peersRef.current.some(p => p.onionAddress === contact.homeNodes[0] && p.status === 'online');
+                if (!isPeerOnline) continue;
+
+                console.log(`Retrying message ${msg.id} to ${contact.displayName}`);
+
+                // Re-encrypt (or store encrypted? Storing cleartext in state is easier for display, so re-encrypt is fine)
+                const payloadObj = { content: msg.content, media: msg.media, attachment: msg.attachmentUrl, replyToId: msg.replyToId, privacy: msg.privacy };
+                const payloadStr = JSON.stringify(payloadObj);
+                const { nonce, ciphertext } = encryptMessage(payloadStr, contact.encryptionPublicKey, user.keys.encryption.secretKey);
+                const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'MESSAGE', senderId: user.homeNodeOnion, targetUserId: contact.id, payload: { id: msg.id, nonce, ciphertext } };
+
+                const success = await networkService.sendMessage(contact.homeNodes[0], packet);
+                if (success) {
+                    state.setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, delivered: true } : m));
+                }
+            }
+        }, 10000); // Check every 10 seconds
+
+        return () => clearInterval(retryInterval);
+    }, [state.messagesRef, state.contactsRef, state.peersRef, state.userRef, state.groupsRef, state.setMessages]);
 
     const handleSendTyping = useCallback((contactId: string) => {
         const user = state.userRef.current;
