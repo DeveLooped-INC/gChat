@@ -8,7 +8,7 @@ export const setMediaSocket = (s: Socket) => {
   socket = s;
 };
 
-export const saveMedia = async (id: string, blob: Blob, accessKey?: string) => {
+export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCache: boolean = false) => {
   try {
     // 1. Cache locally for performance
     const cache = await caches.open('gchat-media-v1');
@@ -19,7 +19,6 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string) => {
     // 2. Upload to Backend (Persistence)
     if (socket && socket.connected) {
       const buffer = await blob.arrayBuffer();
-      const base64Data = arrayBufferToBase64(buffer);
 
       // Get owner ID for metadata
       let ownerId = 'anonymous';
@@ -39,8 +38,9 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string) => {
 
       socket.emit('media:upload', {
         id,
-        data: base64Data,
-        metadata
+        data: buffer, // Send Raw Buffer
+        metadata,
+        isCache
       }, (res: any) => {
         if (!res?.success) console.error("Media upload failed:", res?.error);
       });
@@ -62,9 +62,12 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
       return new Promise((resolve) => {
         socket!.emit('media:download', id, async (res: any) => {
           if (res && res.success && res.buffer) {
-            const blob = new Blob([res.buffer], { type: res.mimeType });
+            // Buffer is likely an ArrayBuffer or Buffer object from Socket.IO
+            const mimeType = res.metadata?.mimeType || 'application/octet-stream';
+            const blob = new Blob([res.buffer], { type: mimeType });
+
             // Populate Cache
-            cache.put(new Request(`/media/${id}`), new Response(blob, { headers: { 'Content-Type': res.mimeType } }));
+            cache.put(new Request(`/media/${id}`), new Response(blob, { headers: { 'Content-Type': mimeType } }));
             resolve(blob);
           } else {
             resolve(null);
