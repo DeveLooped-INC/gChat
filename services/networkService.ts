@@ -1,4 +1,3 @@
-
 // Universal Network Service using Socket.IO
 import { io, Socket } from 'socket.io-client';
 import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
@@ -587,7 +586,8 @@ export class NetworkService {
         try {
             const blob = new Blob(download.chunks as BlobPart[], { type: download.metadata.mimeType });
             if (blob.size === 0) throw new Error("Empty Blob Data");
-            await saveMedia(mediaId, blob, download.metadata.accessKey);
+            // Mark peer downloads as 'cache' (Temp Storage)
+            await saveMedia(mediaId, blob, download.metadata.accessKey, true);
             download.status = 'completed';
             download.listeners.forEach(l => l.onComplete(blob));
         } catch (e: any) {
