@@ -1,3 +1,5 @@
+import { arrayBufferToBase64 } from '../utils';
+import { kvService } from './kv';
 import { Socket } from 'socket.io-client';
 
 let socket: Socket | null = null;
@@ -17,17 +19,32 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string) => {
     // 2. Upload to Backend (Persistence)
     if (socket && socket.connected) {
       const buffer = await blob.arrayBuffer();
-      // Simple toggle for now, ideal would be streaming
+      const base64Data = arrayBufferToBase64(buffer);
+
+      // Get owner ID for metadata
+      let ownerId = 'anonymous';
+      try {
+        const profile = await kvService.get<any>('gchat_user_profile');
+        if (profile) ownerId = profile.id;
+      } catch (e) { }
+
+      const metadata = {
+        id,
+        mimeType: blob.type,
+        size: blob.size,
+        filename: `${id}.${blob.type.split('/')[1] || 'bin'}`,
+        accessKey: accessKey || '',
+        ownerId
+      };
+
       socket.emit('media:upload', {
         id,
-        buffer,
-        type: blob.type,
-        accessKey
+        data: base64Data,
+        metadata
+      }, (res: any) => {
+        if (!res?.success) console.error("Media upload failed:", res?.error);
       });
     }
-
-    // 3. Save Metadata (Access Key) - MOVED TO BACKEND (via media:upload or db:save)
-    // We assume backend handles the metadata save in 'media:upload' handler
   } catch (e) {
     console.error("Failed to save media", e);
   }
