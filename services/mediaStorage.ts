@@ -85,9 +85,21 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
 
 export const hasMedia = async (id: string): Promise<boolean> => {
   try {
+    // 1. Check Cache
     const cache = await caches.open('gchat-media-v1');
     const response = await cache.match(`/media/${id}`);
-    return !!response;
+    if (response) return true;
+
+    // 2. Check Backend
+    if (socket && socket.connected) {
+      return new Promise((resolve) => {
+        socket!.emit('media:exists', { id }, (res: any) => {
+          resolve(res && res.success);
+        });
+      });
+    }
+
+    return false;
   } catch (e) {
     return false;
   }
@@ -97,7 +109,10 @@ export const verifyMediaAccess = async (id: string, providedKey?: string): Promi
   // Check backend for access
   if (socket && socket.connected) {
     return new Promise((resolve) => {
+      // Timeout safety (5s)
+      const t = setTimeout(() => resolve(false), 5000);
       socket!.emit('media:verify', id, providedKey, (allowed: boolean) => {
+        clearTimeout(t);
         resolve(allowed);
       });
     });
