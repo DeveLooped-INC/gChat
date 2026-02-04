@@ -1,3 +1,4 @@
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -674,6 +675,23 @@ io.on('connection', (socket) => {
             const cache = fs.existsSync(path.join(MEDIA_CACHE_DIR, id));
             cb({ success: local || cache });
         } catch (e) { cb({ success: false }); }
+    });
+
+    socket.on('media:verify', async (id, providedKey, cb) => {
+        try {
+            const metadata = await db.getMediaMetadata(id);
+            if (!metadata) {
+                cb(false); // Media not found, deny access
+                return;
+            }
+            // If accessKey matches, OR if no accessKey set (public?), allow.
+            // For now, assume simple equality.
+            const allowed = (metadata.accessKey === providedKey) || (!metadata.accessKey);
+            cb(allowed);
+        } catch (e) {
+            console.error("Verify Error", e);
+            cb(false);
+        }
     });
 
     socket.on('factory-reset', async (cb) => {
