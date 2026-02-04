@@ -1,5 +1,5 @@
-
-import React, { useState, useCallback, useEffect } from 'react';
+import * as React from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import Layout from './components/Layout';
 import Onboarding from './components/Onboarding';
 import Feed from './components/Feed';
@@ -1029,6 +1029,5 @@ const App: React.FC = () => {
 
     return <AuthenticatedApp user={user} onLogout={handleLogout} onUpdateUser={handleUpdateUser} />;
 };
-
 
 export default App;
