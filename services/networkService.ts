@@ -1,3 +1,4 @@
+
 // Universal Network Service using Socket.IO
 import { io, Socket } from 'socket.io-client';
 import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
@@ -491,7 +492,8 @@ export class NetworkService {
             payload: {
                 mediaId,
                 originNode, // Hint: "If you don't have it, try fetching from here"
-                accessKey: dl.metadata.accessKey
+                accessKey: dl.metadata.accessKey,
+                metadata: dl.metadata // Include metadata for the proxy to use
             }
         };
 
@@ -502,45 +504,53 @@ export class NetworkService {
         this.broadcast(packet, recipients, 0);
     }
 
-    private async handleRelayRequest(senderId: string, payload: { mediaId: string; originNode?: string; accessKey?: string }) {
-        const { mediaId, originNode, accessKey } = payload;
+    private async handleRelayRequest(senderId: string, payload: { mediaId: string; originNode?: string; accessKey?: string; metadata?: MediaMetadata }) {
+        const { mediaId, originNode, accessKey, metadata } = payload;
 
         // 1. Do we have it locally?
         let hasIt = await hasMedia(mediaId);
 
-        // 2. If not, and we have an Origin Hint, try to fetch it into our cache (Proxy Behavior)
-        if (!hasIt) {
-            this.log('INFO', 'NETWORK', `Relay Request for ${mediaId}. Checking if App Layer can proxy...`);
-            this.socket.emit('media-relay-request-internal', { senderId, mediaId });
-        }
+        // 2. Proxy Logic: If not, fetch from Origin
+        if (!hasIt && originNode && metadata) {
+            this.log('INFO', 'NETWORK', `Proxy: Fetching ${mediaId} from ${originNode} for ${senderId}`);
 
-        if (!hasIt && originNode) {
-            this.log('INFO', 'NETWORK', `Relay Request for ${mediaId}. Fetching from Origin ${originNode} on behalf of ${senderId}`);
+            // We launch a download. We can use our own downloadMedia.
+            // We set allowUntrusted = true (if needed) but Origin should be trusted?
+            // Actually, if we are B, and A is origin. We have A in our contacts? 
+            // If yes, strict works. If no, we might need allowUntrusted if we are just a random bridge?
+            // For V1, we assume B knows A.
+
             try {
-                // We create a "Shadow" metadata entry to trigger download.
-                // We don't have full metadata here (size etc), so we might fail if we don't have it.
-                // LIMITATION: We assume we can get it.
-                // Ideally, we would need to fetch metadata first. 
-                // For this implementation, we will assume we can't proxy without metadata.
-                // BUT, if we use the existing 'downloadMedia' logic, we need metadata.
-                // If we don't have metadata, we can't download easily.
+                // Trigger download in background
+                this.downloadMedia(originNode, metadata, (p) => {
+                    // Monitor progress? 
+                }, true).then(async () => {
+                    // ON SUCCESS: Notify requester we have it now!
+                    this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
 
-                // FALLBACK: Since we don't strictly have the metadata to start a download, 
-                // we only serve if we ALREADY have it, OR if we implement a raw stream proxy.
-                // Raw stream proxy is safer but complex (streams don't land in cache).
+                    // We verify access just in case (though we just downloaded it)
+                    if (await hasMedia(mediaId)) {
+                        this.sendMessage(senderId, {
+                            id: crypto.randomUUID(),
+                            type: 'MEDIA_RECOVERY_FOUND',
+                            senderId: this._myOnionAddress || 'unknown',
+                            payload: { mediaId }
+                        });
+                    }
+                }).catch(e => {
+                    this.log('WARN', 'NETWORK', `Proxy Download Failed: ${e}`);
+                });
 
-                // For V1 Strict Privacy: We only serve if we HAVE it.
-                // Users must rely on their friends having seen the post.
-                // Wait! If the Friend sees the post, they have the metadata in their Feed state? 
-                // No, NetworkService doesn't have access to Feed State.
-
-                this.log('WARN', 'NETWORK', `Relay: Cannot fetch from Origin without Metadata. Only serving cached content.`);
+                // We return immediately, we don't block. 
+                // The requester will timeout eventually if we are slow, 
+                // but will receive the RECOVERY_FOUND packet when we are done.
+                return;
             } catch (e) {
-                // Ignore
+                this.log('WARN', 'NETWORK', `Proxy Logic Error: ${e}`);
             }
         }
 
-        // Re-check
+        // Re-check (Standard Check)
         hasIt = await hasMedia(mediaId);
         if (!hasIt) return;
 
