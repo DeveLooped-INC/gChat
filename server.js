@@ -1,4 +1,3 @@
-
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -214,11 +213,40 @@ app.post('/gchat/packet', (req, res) => {
 // --- DATABASE ---
 import { Database } from './database.js';
 const db = new Database(APP_DATA_ROOT);
-const MEDIA_DIR = path.join(APP_DATA_ROOT, 'media');
+const MEDIA_BASE_DIR = path.join(APP_DATA_ROOT, 'media');
+const MEDIA_LOCAL_DIR = path.join(MEDIA_BASE_DIR, 'local');
+const MEDIA_CACHE_DIR = path.join(MEDIA_BASE_DIR, 'cache');
 
-if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
+if (!fs.existsSync(MEDIA_LOCAL_DIR)) fs.mkdirSync(MEDIA_LOCAL_DIR, { recursive: true });
+if (!fs.existsSync(MEDIA_CACHE_DIR)) fs.mkdirSync(MEDIA_CACHE_DIR, { recursive: true });
 
-// --- HELPER: Kill Ghost Processes ---
+// --- MIGRATION & PRUNING ---
+// 1. Migration: Move root media files to local (Legacy Support)
+try {
+    fs.readdirSync(MEDIA_BASE_DIR).forEach(file => {
+        const oldPath = path.join(MEDIA_BASE_DIR, file);
+        if (fs.lstatSync(oldPath).isFile()) {
+            fs.renameSync(oldPath, path.join(MEDIA_LOCAL_DIR, file));
+        }
+    });
+} catch (e) {
+    console.error("[Server] Migration Warning:", e.message);
+}
+
+// 2. Prune Cache (> 7 Days)
+try {
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    fs.readdirSync(MEDIA_CACHE_DIR).forEach(file => {
+        const filePath = path.join(MEDIA_CACHE_DIR, file);
+        if (Date.now() - fs.statSync(filePath).mtimeMs > SEVEN_DAYS_MS) {
+            fs.unlinkSync(filePath);
+            console.log(`[Server] Pruned old cache file: ${file}`);
+        }
+    });
+} catch (e) {
+    console.error("[Server] Pruning Warning:", e.message);
+}
+
 function killGhostTor() {
     return new Promise((resolve) => {
         if (process.platform !== 'win32') {
@@ -600,39 +628,51 @@ io.on('connection', (socket) => {
     });
 
     // --- MEDIA OPERATIONS ---
-    socket.on('media:upload', async ({ id, data, metadata }, cb) => {
+    socket.on('media:upload', async ({ id, data, metadata, isCache }, cb) => {
         try {
-            // Data is base64
-            const buffer = Buffer.from(data, 'base64');
-            const filePath = path.join(MEDIA_DIR, id);
+            const targetDir = isCache ? MEDIA_CACHE_DIR : MEDIA_LOCAL_DIR;
+            const filePath = path.join(targetDir, id);
+
+            let buffer;
+            if (Buffer.isBuffer(data)) {
+                buffer = data;
+            } else {
+                buffer = Buffer.from(data, 'base64');
+            }
             fs.writeFileSync(filePath, buffer);
 
             await db.saveMediaMetadata(metadata);
-            cb({ success: true });
+            if (typeof cb === 'function') cb({ success: true });
         } catch (e) {
             console.error("Media Upload Error", e);
-            cb({ success: false, error: e.message });
+            if (typeof cb === 'function') cb({ success: false, error: e.message });
         }
     });
 
     socket.on('media:download', async ({ id }, cb) => {
         try {
-            const filePath = path.join(MEDIA_DIR, id);
+            // Check Local First
+            let filePath = path.join(MEDIA_LOCAL_DIR, id);
             if (!fs.existsSync(filePath)) {
-                cb({ success: false, error: 'Not Found' });
-                return;
+                // Check Cache
+                filePath = path.join(MEDIA_CACHE_DIR, id);
+                if (!fs.existsSync(filePath)) {
+                    cb({ success: false, error: 'Not Found' });
+                    return;
+                }
             }
             const buffer = fs.readFileSync(filePath);
             const metadata = await db.getMediaMetadata(id);
-            cb({ success: true, data: buffer.toString('base64'), metadata });
+            // Send raw buffer for efficiency
+            cb({ success: true, buffer, metadata });
         } catch (e) { cb({ success: false, error: e.message }); }
     });
 
     socket.on('media:exists', async ({ id }, cb) => {
         try {
-            const filePath = path.join(MEDIA_DIR, id);
-            const exists = fs.existsSync(filePath);
-            cb({ success: exists });
+            const local = fs.existsSync(path.join(MEDIA_LOCAL_DIR, id));
+            const cache = fs.existsSync(path.join(MEDIA_CACHE_DIR, id));
+            cb({ success: local || cache });
         } catch (e) { cb({ success: false }); }
     });
 
