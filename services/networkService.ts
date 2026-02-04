@@ -218,8 +218,10 @@ export class NetworkService {
                 const isConnectionRequest = packet.type === 'CONNECTION_REQUEST';
                 // PROXY FIX: Allow MEDIA_REQUEST from untrusted if they have the ID (we will verify Access Key in handler)
                 const isMediaRequest = packet.type === 'MEDIA_REQUEST';
+                // PROXY FIX: Allow MEDIA_CHUNK from untrusted (we verify it belongs to active DL in handler)
+                const isMediaChunk = packet.type === 'MEDIA_CHUNK';
 
-                if (!isTrusted && !isConnectionRequest && !isMediaRequest) {
+                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk) {
                     this.log('WARN', 'NETWORK', `Blocked packet ${packet.type} from untrusted source ${sender}. Firewall active.`);
                     return; // DROP PACKET
                 }
