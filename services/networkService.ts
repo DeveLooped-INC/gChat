@@ -1,4 +1,3 @@
-
 // Universal Network Service using Socket.IO
 import { io, Socket } from 'socket.io-client';
 import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
@@ -217,8 +216,10 @@ export class NetworkService {
                 // The ONLY exception is a 'CONNECTION_REQUEST' (Friend Request/Handshake).
                 const isTrusted = this._trustedPeers.has(sender);
                 const isConnectionRequest = packet.type === 'CONNECTION_REQUEST';
+                // PROXY FIX: Allow MEDIA_REQUEST from untrusted if they have the ID (we will verify Access Key in handler)
+                const isMediaRequest = packet.type === 'MEDIA_REQUEST';
 
-                if (!isTrusted && !isConnectionRequest) {
+                if (!isTrusted && !isConnectionRequest && !isMediaRequest) {
                     this.log('WARN', 'NETWORK', `Blocked packet ${packet.type} from untrusted source ${sender}. Firewall active.`);
                     return; // DROP PACKET
                 }
@@ -317,8 +318,8 @@ export class NetworkService {
                 const now = Date.now();
                 if (!dl.recoveryStartedAt) dl.recoveryStartedAt = now;
 
-                // Timeout: 60s
-                if ((now - dl.recoveryStartedAt) > 60000) {
+                // Timeout: 10 minutes (600000ms) to allow for Proxy Downloads
+                if ((now - dl.recoveryStartedAt) > 600000) {
                     this.log('ERROR', 'NETWORK', `Mesh Recovery Timed Out for ${dl.id}`);
                     dl.status = 'error';
                     dl.listeners.forEach(l => l.onError("Source offline. Mesh Recovery Failed."));
@@ -387,17 +388,30 @@ export class NetworkService {
             this.sendMessage(dl.peerOnion, {
                 type: 'MEDIA_REQUEST',
                 senderId: this._myOnionAddress || 'unknown',
-                payload: { mediaId: dl.id, chunkIndex: index, chunkSize: dl.chunkSize }
+                payload: {
+                    mediaId: dl.id,
+                    chunkIndex: index,
+                    chunkSize: dl.chunkSize,
+                    accessKey: dl.metadata.accessKey // PROXY FIX: Identity
+                }
             }, `media_stream_${dl.id}`);
         }
     }
 
     // --- MEDIA METHODS ---
 
-    private async handleMediaRequest(senderId: string, payload: { mediaId: string; chunkIndex: number; chunkSize: number }) {
+    private async handleMediaRequest(senderId: string, payload: { mediaId: string; chunkIndex: number; chunkSize: number; accessKey?: string }) {
         if (this._isShuttingDown) return;
 
-        const { mediaId, chunkIndex, chunkSize } = payload;
+        const { mediaId, chunkIndex, chunkSize, accessKey } = payload;
+
+        // PROXY-SECURITY-FIX: Verify Access Key since we bypass firewall for this packet type
+        const canAccess = await verifyMediaAccess(mediaId, accessKey);
+        if (!canAccess) {
+            this.log('WARN', 'NETWORK', `Rejected MEDIA_REQUEST from ${senderId} - Invalid Access Key. Access Denied.`);
+            return;
+        }
+
         // Default to 256KB if not provided, but respect the requester's chunk size
         const size = chunkSize || (256 * 1024);
 
@@ -521,6 +535,14 @@ export class NetworkService {
             // For V1, we assume B knows A.
 
             try {
+                // WARMUP: Verify connection to Origin first.
+                // This ensures A is online and creates a Tor circuit before triggering the download logic.
+                const ping = await this.connect(originNode);
+                if (!ping.success) {
+                    this.log('WARN', 'NETWORK', `Proxy: Origin ${originNode} unreachable. Cannot proxy.`);
+                    return;
+                }
+
                 // Trigger download in background
                 this.downloadMedia(originNode, metadata, (p) => {
                     // Monitor progress? 
