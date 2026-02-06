@@ -1,4 +1,3 @@
-
 import { UserKeys } from './services/cryptoService';
 
 export interface LogEntry {
@@ -124,7 +123,8 @@ export interface MediaMetadata {
   isSavable?: boolean;
   accessKey?: string;
   filename?: string;
-  originNode?: string; // Hint for where to find the media
+  originNode?: string; // Hint for where to find the media (Onion Address)
+  ownerId?: string; // The User ID (Public Key) of the media owner
 }
 
 export interface NetworkPacket {
