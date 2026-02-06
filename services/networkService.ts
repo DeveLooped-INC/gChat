@@ -94,7 +94,7 @@ export class NetworkService {
     private _trustedPeers: Set<string> = new Set(); // Explicitly connected/added peers
     private _activeDownloads: Map<string, ActiveDownload> = new Map();
     // Daisy Chain Relay State
-    private _pendingRelays: Map<string, Set<string>> = new Map(); // MediaID -> Set<RequesterOnion> (Note: RequesterOnion is the IMMEDIATE PEER, i.e. Previous Hop, not necessarily original requester)
+    private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata }> = new Map(); // MediaID -> { Listeners, Metadata }
     private _relayHistory: Map<string, number> = new Map(); // RequestSignature -> Timestamp
     private _contactDirectory: Map<string, string> = new Map(); // OwnerID -> HomeNodeOnion
     private _isShuttingDown: boolean = false;
@@ -433,6 +433,23 @@ export class NetworkService {
         // Default to 256KB if not provided, but respect the requester's chunk size
         const size = chunkSize || (256 * 1024);
 
+        // --- RELAY MEMORY SERVE LOGIC ---
+        // Check if we have this chunk in active download memory (High Speed Relay)
+        const dl = this._activeDownloads.get(mediaId);
+        if (dl && dl.status === 'active' && dl.chunks[chunkIndex]) {
+            const memChunk = dl.chunks[chunkIndex] as ArrayBuffer;
+            const base64Data = arrayBufferToBase64(memChunk);
+            this.log('DEBUG', 'NETWORK', `Relay: Serving Chunk ${chunkIndex} for ${mediaId} from RAM to ${senderId}`);
+
+            this.sendMessage(senderId, {
+                type: 'MEDIA_CHUNK',
+                senderId: this._myOnionAddress || 'system',
+                payload: { mediaId, chunkIndex, totalChunks: dl.totalChunks, data: base64Data }
+            }, `media_stream_${mediaId}`);
+            return;
+        }
+        // --------------------------------
+
         const blob = await getMedia(mediaId);
         if (!blob) return;
 
@@ -512,23 +529,11 @@ export class NetworkService {
         }
 
         // --- RELAY FORWARDING ---
-        // If we are acting as a relay for this media, forward the chunk to waiting peers.
-        if (this._pendingRelays.has(mediaId)) {
-            const waitingPeers = this._pendingRelays.get(mediaId)!;
-            if (waitingPeers.size > 0) {
-                // Forward chunk to all waiters
-                waitingPeers.forEach(peer => {
-                    this.sendMessage(peer, {
-                        type: 'MEDIA_CHUNK',
-                        senderId: this._myOnionAddress || 'system',
-                        payload: { mediaId, chunkIndex, totalChunks, data } // data is already correct format from payload
-                    }, `media_stream_${mediaId}`);
-                });
-            } else {
-                // Cleanup if empty
-                this._pendingRelays.delete(mediaId);
-            }
-        }
+        // If we list this peer as a listener for this media, forward the chunk?
+        // NO. In the caching model, we pull the chunk for ourselves (dl.chunks),
+        // and handleMediaRequest (above) serves it from dl.chunks when the peer asks for it.
+        // So we do NOT need to push chunks here anymore. The "PULL" model is restored.
+        // We only clear the state if the download completes.
     }
 
     // --- RECOVERY LOGIC ---
@@ -638,44 +643,30 @@ export class NetworkService {
         }
 
         // 3. DAISY CHAIN RELAY LOGIC (New)
-        // If we don't have it, and we aren't proxying it from origin, we should FORWARD the request.
-
-        // Loop Avoidance: Check history
-        // Signature = MediaID + OriginRequester(Sender? No, we need original requester but packet doesn't have it yet. 
-        // We use the SenderID as the "Previous Hop" + MediaID as unique enough for simple loop damping)
-        // Better: Use Packet ID if available? Payload doesn't have ID.
-        // We'll use MediaID + SenderID combination to prevent "Back-Echo" 
-        // AND we use a global time window for the MediaID to prevent spamming the same request.
 
         const historyKey = `${mediaId}_${senderId}`;
         const now = Date.now();
         const lastSeen = this._relayHistory.get(historyKey) || 0;
 
-        // If we saw this exact request from this peer recently, ignore.
         if (now - lastSeen < 10000) return;
         this._relayHistory.set(historyKey, now);
 
-        // Also check if we are already relaying this MediaID for ANYONE to avoid broadcasting duplicates
-        // If we already have a pending relay for this MediaID, we just add the new requester to the list
-        // and DON'T re-broadcast (Optimization: Coalescing requests).
         let isNewRelay = false;
-        if (!this._pendingRelays.has(mediaId)) {
-            this._pendingRelays.set(mediaId, new Set());
+        if (!this._relayState.has(mediaId)) {
+            if (!metadata) return; // Cannot start a relay without metadata
+            this._relayState.set(mediaId, { listeners: new Set(), metadata });
             isNewRelay = true;
         }
 
-        const requesters = this._pendingRelays.get(mediaId)!;
-        if (requesters.has(senderId)) return; // Already tracking this peer
+        const state = this._relayState.get(mediaId)!;
+        if (state.listeners.has(senderId)) return;
 
-        requesters.add(senderId);
+        state.listeners.add(senderId);
         this.log('INFO', 'NETWORK', `Relay: Added ${senderId} to waiting list for ${mediaId}`);
 
-        // If we are already searching (isNewRelay = false), we don't need to broadcast again 
-        // UNLESS it's been a while? For now, simple coalescing.
         if (!isNewRelay) return;
 
         // Forward to ALL trusted peers (Found Flood)
-        // Except the sender
         const peersToForward = Array.from(this._trustedPeers).filter(p => p !== senderId);
 
         if (peersToForward.length > 0) {
@@ -686,28 +677,55 @@ export class NetworkService {
                 senderId: this._myOnionAddress || 'unknown',
                 payload: { mediaId, originNode, ownerId, accessKey, metadata }
             };
-            // Fire and forget forwarding
             this.broadcast(forwardPacket, peersToForward, 0);
         }
     }
 
     private handleRecoveryFound(senderId: string, payload: { mediaId: string }) {
         const { mediaId } = payload;
-        const dl = this._activeDownloads.get(mediaId);
+
+        // 1. My Download?
+        const dl = this._activeDownloads.get(mediaId); // Note: might be null if we haven't started yet
 
         if (dl && (dl.status === 'recovering' || dl.status === 'paused')) {
             this.log('INFO', 'NETWORK', `Recovery Successful! Switching download source to ${senderId}`);
-
             dl.peerOnion = senderId;
             dl.status = 'active';
-
-            // Reset concurrency stats for new peer
             dl.concurrency = 1;
             dl.avgRtt = 5000;
             dl.rttSamples = [];
-
-            // Resume download
             this.pumpDownloadQueue(dl);
+        }
+
+        // 2. Relay / Proxy?
+        if (this._relayState.has(mediaId)) {
+            const state = this._relayState.get(mediaId)!;
+
+            // We found a source (senderId)!
+            // We must now act as the Proxy.
+            // A. Start downloading from senderId (if we aren't already)
+            // B. Notify all listeners that WE have it.
+
+            this.log('INFO', 'NETWORK', `Relay: Found source ${senderId} for ${mediaId}. Starting Proxy buffer...`);
+
+            this.downloadMedia(senderId, state.metadata, (p) => {
+                // Monitor
+            }, true).catch(err => {
+                this.log('WARN', 'NETWORK', `Relay Buffer Failed: ${err}`);
+            });
+
+            // Notify Listeners
+            if (state.listeners.size > 0) {
+                this.log('INFO', 'NETWORK', `Relay: Notifying ${state.listeners.size} peers that media is ready.`);
+                state.listeners.forEach(peer => {
+                    this.sendMessage(peer, {
+                        id: crypto.randomUUID(),
+                        type: 'MEDIA_RECOVERY_FOUND',
+                        senderId: this._myOnionAddress || 'unknown',
+                        payload: { mediaId }
+                    });
+                });
+            }
         }
     }
 
@@ -727,6 +745,7 @@ export class NetworkService {
             download.listeners.forEach(l => l.onError(`Assembly Failed: ${e.message}`));
         } finally {
             this._activeDownloads.delete(mediaId);
+            this._relayState.delete(mediaId); // Clear relay state on completion
             releaseWakeLock();
         }
     }
