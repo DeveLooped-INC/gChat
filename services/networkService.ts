@@ -1,3 +1,4 @@
+
 // Universal Network Service using Socket.IO
 import { io, Socket } from 'socket.io-client';
 import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
@@ -348,7 +349,7 @@ export class NetworkService {
                 if (now - req.sentAt > dynamicTimeout) {
                     if (req.retries >= 10) {
                         this.log('WARN', 'NETWORK', `Chunk ${req.index} failed 10 times. Triggering Mesh Recovery.`);
-                        this.attemptMeshRecovery(dl.id);
+                        this.attemptMeshRecovery(dl.id, dl.peerOnion); // Pass current peer as Origin Hint
                         dl.status = 'recovering';
                         dl.listeners.forEach(l => l.onError("Source offline. Searching mesh..."));
                         return;
