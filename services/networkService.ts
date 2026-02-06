@@ -93,6 +93,10 @@ export class NetworkService {
     private _knownPeers: Set<string> = new Set();
     private _trustedPeers: Set<string> = new Set(); // Explicitly connected/added peers
     private _activeDownloads: Map<string, ActiveDownload> = new Map();
+    // Daisy Chain Relay State
+    private _pendingRelays: Map<string, Set<string>> = new Map(); // MediaID -> Set<RequesterOnion> (Note: RequesterOnion is the IMMEDIATE PEER, i.e. Previous Hop, not necessarily original requester)
+    private _relayHistory: Map<string, number> = new Map(); // RequestSignature -> Timestamp
+    private _contactDirectory: Map<string, string> = new Map(); // OwnerID -> HomeNodeOnion
     private _isShuttingDown: boolean = false;
 
     constructor() {
@@ -186,7 +190,19 @@ export class NetworkService {
     public syncTrustedPeers(peers: string[]) {
         // Merge contacts with existing trusted peers (to keep manual connections)
         peers.forEach(p => this._trustedPeers.add(p));
-        this.log('INFO', 'NETWORK', `Synced ${peers.length} Contacts. Total Trusted: ${this._trustedPeers.size}`);
+        this.log('INFO', 'NETWORK', `Synced ${peers.length} Trusted Peers. Total: ${this._trustedPeers.size}`);
+    }
+
+    public syncContacts(contacts: import('../types').Contact[]) {
+        contacts.forEach(c => {
+            if (c.homeNodes && c.homeNodes.length > 0) {
+                // Add home node to Trusted Peers (Firewall Allow)
+                this._trustedPeers.add(c.homeNodes[0]);
+                // Map OwnerID to HomeNode for Proxy Lookup
+                this._contactDirectory.set(c.id, c.homeNodes[0]);
+            }
+        });
+        this.log('INFO', 'NETWORK', `Synced ${contacts.length} Contacts to Directory.`);
     }
 
     private setupSocketListeners() {
@@ -494,10 +510,30 @@ export class NetworkService {
         } else {
             this.pumpDownloadQueue(download);
         }
+
+        // --- RELAY FORWARDING ---
+        // If we are acting as a relay for this media, forward the chunk to waiting peers.
+        if (this._pendingRelays.has(mediaId)) {
+            const waitingPeers = this._pendingRelays.get(mediaId)!;
+            if (waitingPeers.size > 0) {
+                // Forward chunk to all waiters
+                waitingPeers.forEach(peer => {
+                    this.sendMessage(peer, {
+                        type: 'MEDIA_CHUNK',
+                        senderId: this._myOnionAddress || 'system',
+                        payload: { mediaId, chunkIndex, totalChunks, data } // data is already correct format from payload
+                    }, `media_stream_${mediaId}`);
+                });
+            } else {
+                // Cleanup if empty
+                this._pendingRelays.delete(mediaId);
+            }
+        }
     }
 
     // --- RECOVERY LOGIC ---
-    private async attemptMeshRecovery(mediaId: string, originNode?: string) {
+    // Modified to include ownerId for smart routing
+    private async attemptMeshRecovery(mediaId: string, originNode?: string, ownerId?: string) {
         const dl = this._activeDownloads.get(mediaId);
         if (!dl) return;
 
@@ -508,6 +544,7 @@ export class NetworkService {
             payload: {
                 mediaId,
                 originNode, // Hint: "If you don't have it, try fetching from here"
+                ownerId, // NEW: Identify owner by ID (Public Key)
                 accessKey: dl.metadata.accessKey,
                 metadata: dl.metadata // Include metadata for the proxy to use
             }
@@ -520,15 +557,25 @@ export class NetworkService {
         this.broadcast(packet, recipients, 0);
     }
 
-    private async handleRelayRequest(senderId: string, payload: { mediaId: string; originNode?: string; accessKey?: string; metadata?: MediaMetadata }) {
-        const { mediaId, originNode, accessKey, metadata } = payload;
+    private async handleRelayRequest(senderId: string, payload: { mediaId: string; originNode?: string; ownerId?: string; accessKey?: string; metadata?: MediaMetadata }) {
+        const { mediaId, originNode, ownerId, accessKey, metadata } = payload;
 
         // 1. Do we have it locally?
         let hasIt = await hasMedia(mediaId);
 
-        // 2. Proxy Logic: If not, fetch from Origin
-        if (!hasIt && originNode && metadata) {
-            this.log('INFO', 'NETWORK', `Proxy: Fetching ${mediaId} from ${originNode} for ${senderId}`);
+        // 2. Proxy Logic: Smart Routing
+        // We check if we have an explicit Origin Node OR if we know the Owner's Home Node from our Contacts.
+        let targetNode = originNode;
+
+        if (!targetNode && ownerId) {
+            targetNode = this._contactDirectory.get(ownerId);
+            if (targetNode) {
+                this.log('INFO', 'NETWORK', `Relay: Resolved Owner ${ownerId.substring(0, 8)}... to Node ${targetNode}`);
+            }
+        }
+
+        if (!hasIt && targetNode && metadata) {
+            this.log('INFO', 'NETWORK', `Proxy: Fetching ${mediaId} from ${targetNode} for ${senderId}`);
 
             // We launch a download. We can use our own downloadMedia.
             // We set allowUntrusted = true (if needed) but Origin should be trusted?
@@ -539,36 +586,34 @@ export class NetworkService {
             try {
                 // WARMUP: Verify connection to Origin first.
                 // This ensures A is online and creates a Tor circuit before triggering the download logic.
-                const ping = await this.connect(originNode);
+                const ping = await this.connect(targetNode);
                 if (!ping.success) {
-                    this.log('WARN', 'NETWORK', `Proxy: Origin ${originNode} unreachable. Cannot proxy.`);
+                    this.log('WARN', 'NETWORK', `Proxy: Target ${targetNode} unreachable. Attempting Mesh Relay instead.`);
+                    // Fall through to Relay Logic
+                } else {
+                    // Trigger download in background
+                    this.downloadMedia(targetNode, metadata, (p) => {
+                        // Monitor progress? 
+                    }, true).then(async () => {
+                        // ON SUCCESS: Notify requester we have it now!
+                        this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
+
+                        // We verify access just in case (though we just downloaded it)
+                        if (await hasMedia(mediaId)) {
+                            this.sendMessage(senderId, {
+                                id: crypto.randomUUID(),
+                                type: 'MEDIA_RECOVERY_FOUND',
+                                senderId: this._myOnionAddress || 'unknown',
+                                payload: { mediaId }
+                            });
+                        }
+                    }).catch(e => {
+                        this.log('WARN', 'NETWORK', `Proxy Download Failed: ${e}`);
+                    });
+
+                    // We return immediately if we successfully started the proxy download.
                     return;
                 }
-
-                // Trigger download in background
-                this.downloadMedia(originNode, metadata, (p) => {
-                    // Monitor progress? 
-                }, true).then(async () => {
-                    // ON SUCCESS: Notify requester we have it now!
-                    this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
-
-                    // We verify access just in case (though we just downloaded it)
-                    if (await hasMedia(mediaId)) {
-                        this.sendMessage(senderId, {
-                            id: crypto.randomUUID(),
-                            type: 'MEDIA_RECOVERY_FOUND',
-                            senderId: this._myOnionAddress || 'unknown',
-                            payload: { mediaId }
-                        });
-                    }
-                }).catch(e => {
-                    this.log('WARN', 'NETWORK', `Proxy Download Failed: ${e}`);
-                });
-
-                // We return immediately, we don't block. 
-                // The requester will timeout eventually if we are slow, 
-                // but will receive the RECOVERY_FOUND packet when we are done.
-                return;
             } catch (e) {
                 this.log('WARN', 'NETWORK', `Proxy Logic Error: ${e}`);
             }
@@ -576,21 +621,74 @@ export class NetworkService {
 
         // Re-check (Standard Check)
         hasIt = await hasMedia(mediaId);
-        if (!hasIt) return;
 
-        // Are we allowed to share it?
-        const canAccess = await verifyMediaAccess(mediaId, accessKey);
-        if (!canAccess) {
+        if (hasIt) {
+            // Are we allowed to share it?
+            const canAccess = await verifyMediaAccess(mediaId, accessKey);
+            if (!canAccess) return;
+
+            this.log('INFO', 'NETWORK', `Found requested media ${mediaId}. Offering to ${senderId} (Relay/Cache)`);
+            this.sendMessage(senderId, {
+                id: crypto.randomUUID(),
+                type: 'MEDIA_RECOVERY_FOUND',
+                senderId: this._myOnionAddress || 'unknown',
+                payload: { mediaId }
+            });
             return;
         }
 
-        this.log('INFO', 'NETWORK', `Found requested media ${mediaId}. Offering to ${senderId} (Relay/Cache)`);
-        this.sendMessage(senderId, {
-            id: crypto.randomUUID(),
-            type: 'MEDIA_RECOVERY_FOUND',
-            senderId: this._myOnionAddress || 'unknown',
-            payload: { mediaId }
-        });
+        // 3. DAISY CHAIN RELAY LOGIC (New)
+        // If we don't have it, and we aren't proxying it from origin, we should FORWARD the request.
+
+        // Loop Avoidance: Check history
+        // Signature = MediaID + OriginRequester(Sender? No, we need original requester but packet doesn't have it yet. 
+        // We use the SenderID as the "Previous Hop" + MediaID as unique enough for simple loop damping)
+        // Better: Use Packet ID if available? Payload doesn't have ID.
+        // We'll use MediaID + SenderID combination to prevent "Back-Echo" 
+        // AND we use a global time window for the MediaID to prevent spamming the same request.
+
+        const historyKey = `${mediaId}_${senderId}`;
+        const now = Date.now();
+        const lastSeen = this._relayHistory.get(historyKey) || 0;
+
+        // If we saw this exact request from this peer recently, ignore.
+        if (now - lastSeen < 10000) return;
+        this._relayHistory.set(historyKey, now);
+
+        // Also check if we are already relaying this MediaID for ANYONE to avoid broadcasting duplicates
+        // If we already have a pending relay for this MediaID, we just add the new requester to the list
+        // and DON'T re-broadcast (Optimization: Coalescing requests).
+        let isNewRelay = false;
+        if (!this._pendingRelays.has(mediaId)) {
+            this._pendingRelays.set(mediaId, new Set());
+            isNewRelay = true;
+        }
+
+        const requesters = this._pendingRelays.get(mediaId)!;
+        if (requesters.has(senderId)) return; // Already tracking this peer
+
+        requesters.add(senderId);
+        this.log('INFO', 'NETWORK', `Relay: Added ${senderId} to waiting list for ${mediaId}`);
+
+        // If we are already searching (isNewRelay = false), we don't need to broadcast again 
+        // UNLESS it's been a while? For now, simple coalescing.
+        if (!isNewRelay) return;
+
+        // Forward to ALL trusted peers (Found Flood)
+        // Except the sender
+        const peersToForward = Array.from(this._trustedPeers).filter(p => p !== senderId);
+
+        if (peersToForward.length > 0) {
+            this.log('INFO', 'NETWORK', `Relay: Forwarding request for ${mediaId} to ${peersToForward.length} peers`);
+            const forwardPacket = {
+                id: crypto.randomUUID(),
+                type: 'MEDIA_RELAY_REQUEST',
+                senderId: this._myOnionAddress || 'unknown',
+                payload: { mediaId, originNode, ownerId, accessKey, metadata }
+            };
+            // Fire and forget forwarding
+            this.broadcast(forwardPacket, peersToForward, 0);
+        }
     }
 
     private handleRecoveryFound(senderId: string, payload: { mediaId: string }) {
