@@ -1,3 +1,4 @@
+
 // Universal Network Service using Socket.IO
 import { io, Socket } from 'socket.io-client';
 import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
@@ -523,7 +524,7 @@ export class NetworkService {
 
         // Broadcast ONLY to Trusted Peers
         const recipients = Array.from(this._trustedPeers).filter(p => p !== dl.peerOnion);
-        this.log('INFO', 'NETWORK', `Broadcasting RELAY Request ${requestId} for ${mediaId} to ${recipients.length} peers`);
+        this.log('INFO', 'NETWORK', `[TRACE] Broadcasting RELAY ${requestId} for ${mediaId}. Origin: ${originNode || 'UNDEFINED'}. Target Peers: ${recipients.length}`);
         this.broadcast(packet, recipients, 0);
     }
 
@@ -546,6 +547,7 @@ export class NetworkService {
         // 2. Proxy Logic: If not, try to fetch from Origin (if we know them)
         if (!hasIt && originNode && metadata) {
             // Check if we can reach the origin
+            this.log('DEBUG', 'NETWORK', `[TRACE] Proxy Attempt for ${mediaId}. Origin: ${originNode}`);
             const ping = await this.connect(originNode);
             if (ping.success) {
                 this.log('INFO', 'NETWORK', `Proxy: Found Origin ${originNode}. Downloading for ${senderId}...`);
@@ -589,6 +591,7 @@ export class NetworkService {
         // If we can't fulfill it, we forward it to our friends.
         // We act as the sender (Privacy), but we preserve the requestId (Loop Detection).
 
+        this.log('INFO', 'NETWORK', `[TRACE] Daisy Chain Fallback for ${mediaId}. OriginReached: ${hasIt ? 'YES' : 'NO'}. Forwarding...`);
         this.log('INFO', 'NETWORK', `Daisy Chain: Forwarding ID ${requestId || 'legacy'} to peers...`);
         const forwardPacket = {
             id: crypto.randomUUID(),
