@@ -1,4 +1,3 @@
-
 // Universal Network Service using Socket.IO
 import { io, Socket } from 'socket.io-client';
 import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
@@ -95,6 +94,7 @@ export class NetworkService {
     private _trustedPeers: Set<string> = new Set(); // Explicitly connected/added peers
     private _activeDownloads: Map<string, ActiveDownload> = new Map();
     private _isShuttingDown: boolean = false;
+    private _seenRelayRequests: Set<string> = new Set(); // Loop Detection
 
     constructor() {
         // Async load debug mode later
@@ -116,6 +116,8 @@ export class NetworkService {
         setInterval(() => {
             if (this._isShuttingDown) return;
             this.maintainDownloads();
+            // Prune seen requests (keep memory low)
+            if (this._seenRelayRequests.size > 1000) this._seenRelayRequests.clear();
         }, 1000);
     }
 
@@ -498,62 +500,59 @@ export class NetworkService {
     }
 
     // --- RECOVERY LOGIC ---
+    // --- RECOVERY LOGIC ---
     private async attemptMeshRecovery(mediaId: string, originNode?: string) {
         const dl = this._activeDownloads.get(mediaId);
         if (!dl) return;
 
+        const requestId = crypto.randomUUID(); // Unique ID for this specific relay wave
+        this._seenRelayRequests.add(requestId); // Don't relay our own request
+
         const packet = {
-            id: crypto.randomUUID(),
-            type: 'MEDIA_RELAY_REQUEST', // changed from RECOVERY to RELAY/RECOVERY hybrid
+            id: crypto.randomUUID(), // Packet ID (changes per hop)
+            type: 'MEDIA_RELAY_REQUEST',
             senderId: this._myOnionAddress || 'unknown',
             payload: {
+                requestId, // LOOP DETECTION IDENTITY
                 mediaId,
-                originNode, // Hint: "If you don't have it, try fetching from here"
+                originNode,
                 accessKey: dl.metadata.accessKey,
-                metadata: dl.metadata // Include metadata for the proxy to use
+                metadata: dl.metadata
             }
         };
 
         // Broadcast ONLY to Trusted Peers
         const recipients = Array.from(this._trustedPeers).filter(p => p !== dl.peerOnion);
-        this.log('INFO', 'NETWORK', `Broadcasting RELAY Request for ${mediaId} to ${recipients.length} TRUSTED peers`);
-        // Use 0 retries to prevent retry avalanche. The download loop handles reattempts.
+        this.log('INFO', 'NETWORK', `Broadcasting RELAY Request ${requestId} for ${mediaId} to ${recipients.length} peers`);
         this.broadcast(packet, recipients, 0);
     }
 
-    private async handleRelayRequest(senderId: string, payload: { mediaId: string; originNode?: string; accessKey?: string; metadata?: MediaMetadata }) {
-        const { mediaId, originNode, accessKey, metadata } = payload;
+    private async handleRelayRequest(senderId: string, payload: { requestId?: string; mediaId: string; originNode?: string; accessKey?: string; metadata?: MediaMetadata; hops?: number }) {
+        const { requestId, mediaId, originNode, accessKey, metadata, hops } = payload;
+
+        // 0. LOOP PREVENTION
+        // If we have seen this Request ID before, we ignore it to prevent cycles.
+        if (requestId && this._seenRelayRequests.has(requestId)) {
+            // this.log('DEBUG', 'NETWORK', `Loop Detected for Relay Request ${requestId}. Dropping.`);
+            return;
+        }
+        if (requestId) this._seenRelayRequests.add(requestId);
+
+        this.log('INFO', 'NETWORK', `Handling Relay Request for ${mediaId} from ${senderId}`);
 
         // 1. Do we have it locally?
         let hasIt = await hasMedia(mediaId);
 
-        // 2. Proxy Logic: If not, fetch from Origin
+        // 2. Proxy Logic: If not, try to fetch from Origin (if we know them)
         if (!hasIt && originNode && metadata) {
-            this.log('INFO', 'NETWORK', `Proxy: Fetching ${mediaId} from ${originNode} for ${senderId}`);
-
-            // We launch a download. We can use our own downloadMedia.
-            // We set allowUntrusted = true (if needed) but Origin should be trusted?
-            // Actually, if we are B, and A is origin. We have A in our contacts? 
-            // If yes, strict works. If no, we might need allowUntrusted if we are just a random bridge?
-            // For V1, we assume B knows A.
-
-            try {
-                // WARMUP: Verify connection to Origin first.
-                // This ensures A is online and creates a Tor circuit before triggering the download logic.
-                const ping = await this.connect(originNode);
-                if (!ping.success) {
-                    this.log('WARN', 'NETWORK', `Proxy: Origin ${originNode} unreachable. Cannot proxy.`);
-                    return;
-                }
+            // Check if we can reach the origin
+            const ping = await this.connect(originNode);
+            if (ping.success) {
+                this.log('INFO', 'NETWORK', `Proxy: Found Origin ${originNode}. Downloading for ${senderId}...`);
 
                 // Trigger download in background
-                this.downloadMedia(originNode, metadata, (p) => {
-                    // Monitor progress? 
-                }, true).then(async () => {
-                    // ON SUCCESS: Notify requester we have it now!
-                    this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
-
-                    // We verify access just in case (though we just downloaded it)
+                this.downloadMedia(originNode, metadata, () => { }, true).then(async () => {
+                    // Verify and Notify
                     if (await hasMedia(mediaId)) {
                         this.sendMessage(senderId, {
                             id: crypto.randomUUID(),
@@ -565,33 +564,48 @@ export class NetworkService {
                 }).catch(e => {
                     this.log('WARN', 'NETWORK', `Proxy Download Failed: ${e}`);
                 });
-
-                // We return immediately, we don't block. 
-                // The requester will timeout eventually if we are slow, 
-                // but will receive the RECOVERY_FOUND packet when we are done.
-                return;
-            } catch (e) {
-                this.log('WARN', 'NETWORK', `Proxy Logic Error: ${e}`);
+                return; // We took responsibility. Stop forwarding.
             }
         }
 
         // Re-check (Standard Check)
         hasIt = await hasMedia(mediaId);
-        if (!hasIt) return;
+        if (hasIt) {
+            // Are we allowed to share it?
+            const canAccess = await verifyMediaAccess(mediaId, accessKey);
+            if (!canAccess) return;
 
-        // Are we allowed to share it?
-        const canAccess = await verifyMediaAccess(mediaId, accessKey);
-        if (!canAccess) {
+            this.log('INFO', 'NETWORK', `Found requested media ${mediaId}. Offering to ${senderId}`);
+            this.sendMessage(senderId, {
+                id: crypto.randomUUID(),
+                type: 'MEDIA_RECOVERY_FOUND',
+                senderId: this._myOnionAddress || 'unknown',
+                payload: { mediaId }
+            });
             return;
         }
 
-        this.log('INFO', 'NETWORK', `Found requested media ${mediaId}. Offering to ${senderId} (Relay/Cache)`);
-        this.sendMessage(senderId, {
+        // 3. DAISY CHAIN: Unlimited Hops with Loop Detection
+        // If we can't fulfill it, we forward it to our friends.
+        // We act as the sender (Privacy), but we preserve the requestId (Loop Detection).
+
+        this.log('INFO', 'NETWORK', `Daisy Chain: Forwarding ID ${requestId || 'legacy'} to peers...`);
+        const forwardPacket = {
             id: crypto.randomUUID(),
-            type: 'MEDIA_RECOVERY_FOUND',
-            senderId: this._myOnionAddress || 'unknown',
-            payload: { mediaId }
-        });
+            type: 'MEDIA_RELAY_REQUEST',
+            senderId: this._myOnionAddress || 'unknown', // PRIVACY: We act as the sender
+            payload: {
+                requestId, // PERSIST LOOP ID
+                mediaId,
+                originNode,
+                accessKey,
+                metadata
+            }
+        };
+
+        // Broadcast to everyone EXCEPT the sender
+        const recipients = Array.from(this._trustedPeers).filter(p => p !== senderId);
+        this.broadcast(forwardPacket, recipients, 0);
     }
 
     private handleRecoveryFound(senderId: string, payload: { mediaId: string }) {
