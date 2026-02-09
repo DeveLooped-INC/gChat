@@ -1,7 +1,15 @@
-
 # gChat User Guide
 
-## 1. Getting Started
+## 1. Prerequisites
+
+### Node.js
+1.  Install Node.js v24.13.0 or higher.
+2.  Install npm v11.6.2 or higher.
+
+### Tor (Optional)
+1.  Install Tor Browser v13.0.9 or higher.
+
+## 2. Getting Started
 
 ### Desktop Mode (Linux, Mac, Windows)
 1.  Run `npm start` in your terminal.
@@ -17,27 +25,27 @@
 ### Mobile Mode (Apple)
 1.  Could be Coming Soon!
 
-## 2. Initialization
+## 3. Initialization
 When you first launch gChat, you will see a terminal-like initialization screen.
 1.  Click **"Initialize Node"**.
 2.  Wait for "Tor Bootstrapped 100%".
 3.  Enter a **Display Name** and a **Username**.
 4.  Click **"Launch gChat"**.
 
-## 3. The Feed & Gossip
+## 4. The Feed & Gossip
 The feed is where you see updates from the mesh network.
 *   **Posting**: Use the text box at the top. You can toggle between **Public** (Global) and **Friends Only** (Encrypted).
 *   **Gossip Protocol**: When you post "Publicly", your node automatically sends that post to your connected peers, who then forward it further into the mesh. You will receive notifications for new public broadcasts even from users you haven't explicitly friended.
 *   **Sync Network**: If you feel you are missing posts, click the **Refresh/Sync** icon in the Global Feed header. This sends a signal through the mesh (up to 6 hops) asking other nodes to send you their latest public broadcasts.
 *   **Verification**: Click on the **TRUTH_HASH** code to verify cryptographic integrity (Ed25519 signature check).
 
-## 4. Secure Chat & Media
+## 5. Secure Chat & Media
 Navigate to the **Chat** tab to send private messages.
 *   **Encryption**: All messages are E2E encrypted (ChaCha20-Poly1305) before leaving your device.
 *   **Media Recording**: You can record Audio and Video messages directly. These are chunked and sent over Tor.
 *   **Mesh Recovery**: If you try to view a video from a user who has gone offline, gChat will ask your *other* peers if they have a copy of the file. If found, it will seamlessly download it from them.
 
-## 5. Group Chats
+## 6. Group Chats
 gChat supports encrypted group conversations.
 *   **Creating a Group**: Click the `+` icon in the Chat sidebar. Name your group and select initial members.
 *   **Adding Members**: Open the Group Settings (Gear icon) -> "Add Member". 
@@ -46,7 +54,7 @@ gChat supports encrypted group conversations.
     *   **Mute**: Stop receiving toast notifications for a specific group.
     *   **Manage Members**: Admins can Kick or Ban members. Banned members cannot be re-added.
 
-## 6. Managing Contacts
+## 7. Managing Contacts
 
 ### Your Identity
 Navigate to the **Contacts** tab. The card at the top is your identity.
@@ -68,7 +76,7 @@ Navigate to the **Contacts** tab. The card at the top is your identity.
 *   **Gray Dot**: Friend is offline.
 *   **Avatars**: User profile pictures now sync automatically when you connect.
 
-## 7. Settings & Tools
+## 8. Settings & Tools
 Navigate to the **Settings** tab.
 *   **Network Status**: Toggle your connection Online/Offline.
 *   **Debug Logs**: View raw real-time logs. Useful for troubleshooting connection issues.
