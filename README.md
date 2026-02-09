@@ -20,7 +20,7 @@ The internet is broken. We fixed it.
 *   🕵️ **Zero Metadata**: We don't just encrypt the message; we hide *who* you are talking to. Thanks to Tor Onion Services, your social graph is invisible to ISPs and governments.
 *   📱 **Local Sovereignty**: Your data lives on **your** device. If Amazon Web Services goes down, gChat stays up.
 *   🕸️ **Uncensorable Mesh**: Connect directly to peers. There is no central server to seize, subpoena, or shut down.
-*   🤝 **Real Human Connection**: Designed for communities, activists, and friends—not for "users" to be monetized.
+*   🤝 **Real Human Connection**: Designed for communities, activists, and friends—not for "Busers" to be monetized.
 
 ---
 
@@ -48,6 +48,15 @@ Detailed documentation has been moved to the `docs/` folder:
 *   **Decentralized Moderation**: Community-driven content filtering (Up/Downvotes) with configurable visibility settings and automatic "Hard Hiding" for heavily downvoted content.
 
 ## 🛠️ Quick Start
+
+### Prerequisites
+
+1.  **Node.js**
+    * Install Node.js v24.13.0 or higher.
+    * Install npm v11.6.2 or higher.
+
+2.  **Tor (Optional)**
+    * Install Tor Browser v13.0.9 or higher.
 
 ### 🖥️ Desktop (Windows, Mac, Linux)
 
