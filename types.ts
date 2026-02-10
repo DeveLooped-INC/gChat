@@ -92,8 +92,9 @@ export interface ConnectionRequest {
   fromUsername: string;
   fromDisplayName: string;
   fromHomeNode: string;
-  fromEncryptionPublicKey: string; // Essential for Chat
+  fromEncryptionPublicKey?: string; // Essential for Chat
   timestamp: number;
+  signature?: string; // SIGNED IDENTITY for anti-spoofing
 }
 
 export interface GroupSettings {
