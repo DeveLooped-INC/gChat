@@ -1,24 +1,36 @@
-# Security Model & Simulation
+# Security Model
 
-> **IMPORTANT**: This application is a prototype. The security features described below are **SIMULATED** for User Experience (UX) demonstration purposes.
+gChat implements a **Zero-Trust, Local-First, End-to-End Encrypted** security model.
 
-## Cryptographic Primitives (Simulated)
+> [!NOTE]
+> All cryptography is implemented using standard, audited primitives (`tweetnacl`, `js-sha3`).
+> Identity is based on Ed25519 public keys.
+> Transport is secured via Tor v3 Onion Services.
+> Messages are End-to-End Encrypted using XSalsa20-Poly1305.
 
-The design assumes the use of the **NaCl / Sodium** cryptographic suite, which is standard for modern P2P applications.
+## 1. Identity & Authentication
+- **User ID**: Ed25519 Public Key (Signing Key).
+- **Authentication**: All critical packets (Connection Requests, Posts) are cryptographically signed by the author.
+- **Anti-Spoofing**: Connection requests include a signature verifying that the sender owns the Identity Key.
 
-### 1. Identity (Ed25519)
-*   **Usage**: User profiles and signing.
-*   **Simulation**: We generate a UUID and display a visual "fingerprint" in the UI. In a real app, this would be the Ed25519 Public Key.
-*   **Authentication**: Proof of ownership is demonstrated by signing posts.
+## 2. Transport Security
+- **Tor Onion Services**: All traffic is routed over Tor, providing:
+    - **Anonymity**: IP addresses are hidden.
+    - **Encryption**: Transport layer is encrypted by Tor.
+    - **NAT Traversal**: No port forwarding required.
+- **Strict Firewall**: The application refuses all connections except those to the Onion Service port or expected return traffic.
 
-### 2. Transport Encryption (ChaCha20-Poly1305)
-*   **Usage**: All chat messages and private feed posts.
-*   **Simulation**: The UI shows "Encrypted via Onion" or "E2E Encrypted".
+## 3. End-to-End Encryption (E2EE)
+- **Algorithm**: XSalsa20-Poly1305 (NaCl `box`).
+- **Key Exchange**:
+    - Users exchange **Encryption Public Keys** (X25519) during the authenticated Connection Handshake.
+    - The handshake is signed by the **Identity Key** (Ed25519) to prevent MITM.
+- **Forward Secrecy**: Currently using long-lived key pairs (TOFU - Trust On First Use). Ephemeral keys are planned for future versions.
+
+## 4. Local-First Data
+- Keys and data never leave your device unencrypted.
+- Backups are encrypted with AES-GCM (Web Crypto API) derived from your Recovery Phrase.
 *   **Visuals**: The `Lock` icons and green/purple color coding indicate the encryption state of the transport layer.
-
-### 3. Key Exchange (X25519)
-*   **Usage**: Deriving shared secrets for chat sessions.
-*   **Simulation**: The "Add Contact" flow simulates an out-of-band QR code scan. This represents the exchange of Public Keys to establish a shared secret.
 
 ## Privacy Features
 
