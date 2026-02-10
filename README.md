@@ -17,8 +17,11 @@
 The internet is broken. We fixed it.
 
 *   🚫 **Kill the Algorithm**: No engagement farming. No shadow-banning. No ads. You see what your friends post, chronologically. Period.
-*   🕵️ **Zero Metadata**: We don't just encrypt the message; we hide *who* you are talking to. Thanks to Tor Onion Services, your social graph is invisible to ISPs and governments.
-*   📱 **Local Sovereignty**: Your data lives on **your** device. If Amazon Web Services goes down, gChat stays up.
+*  ### 🛡️ Security & Privacy
+- **End-to-End Encryption**: Messages are encrypted using XSalsa20-Poly1305. Only you and the recipient can read them.
+- **Private Identity**: No phone numbers or emails. Your identity is a cryptographic key pair.
+- **Tor Network**: All traffic is routed through Tor for maximum anonymity.
+- **Local-First**: Your data lives on your device, not in the cloud. If Amazon Web Services goes down, gChat stays up.
 *   🕸️ **Uncensorable Mesh**: Connect directly to peers. There is no central server to seize, subpoena, or shut down.
 *   🤝 **Real Human Connection**: Designed for communities, activists, and friends—not for "Busers" to be monetized.
 
@@ -96,16 +99,6 @@ gChat is designed to run on your phone using Termux.
     npm start
     ```
     The app will detect it is running in Termux, patch the binary paths automatically, and launch your Android browser.
-
-### Termux (Android)
-
-1.  Current Termux environment recommended.
-2.  Run the setup script to install dependencies (`python`, `clang`, `make`):
-    ```bash
-    chmod +x scripts/setup-termux.sh
-    ./scripts/setup-termux.sh
-    ```
-3.  Start the app: `npm start`
 
 ## 🤝 Connecting Peers
 
