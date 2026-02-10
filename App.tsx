@@ -11,7 +11,7 @@ import ToastContainer from './components/Toast';
 import HelpModal from './components/HelpModal';
 import { AppRoute, UserProfile, Post, Message, Contact, ToastMessage, NetworkPacket, EncryptedPayload, Group, MediaMetadata, NodePeer, ConnectionRequest, NotificationItem, NotificationCategory } from './types';
 import { networkService } from './services/networkService';
-import { decryptMessage, encryptMessage } from './services/cryptoService';
+import { encryptMessage, decryptMessage, signData } from './services/cryptoService';
 import { calculatePostHash, formatUserIdentity } from './utils';
 import { Loader2 } from 'lucide-react';
 import UserInfoModal from './components/UserInfoModal';
@@ -238,6 +238,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         else networkService.connect(cleanNode);
 
         const reqPayload: ConnectionRequest = { id: crypto.randomUUID(), fromUserId: user.id, fromUsername: user.username, fromDisplayName: user.displayName, fromHomeNode: user.homeNodeOnion, fromEncryptionPublicKey: user.keys.encryption.publicKey, timestamp: Date.now() };
+        // SIGN THE REQUEST
+        reqPayload.signature = signData(reqPayload, user.keys.signing.secretKey);
+
         const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'CONNECTION_REQUEST', senderId: user.homeNodeOnion, targetUserId: pubKey, payload: reqPayload };
         networkService.connect(cleanNode).then(() => networkService.sendMessage(cleanNode, packet));
         addNotification('Request Sent', `Handshake sent to ${name}`, 'success', 'admin');
@@ -248,6 +251,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         state.setConnectionRequests(prev => prev.filter(r => r.id !== req.id));
         handleAddUserContact(req.fromUserId, req.fromHomeNode, req.fromDisplayName, req.fromEncryptionPublicKey);
         const reqPayload: ConnectionRequest = { id: crypto.randomUUID(), fromUserId: user.id, fromUsername: user.username, fromDisplayName: user.displayName, fromHomeNode: user.homeNodeOnion, fromEncryptionPublicKey: user.keys.encryption.publicKey, timestamp: Date.now() };
+        // SIGN THE RESPONSE
+        reqPayload.signature = signData(reqPayload, user.keys.signing.secretKey);
+
         const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'CONNECTION_REQUEST', senderId: user.homeNodeOnion, targetUserId: req.fromUserId, payload: reqPayload };
         networkService.sendMessage(req.fromHomeNode, packet);
     }, [handleAddUserContact, state.userRef, state.setConnectionRequests]);
