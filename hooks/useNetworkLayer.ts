@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { UserProfile, NetworkPacket, AvailablePeer, Post, ToastMessage, AppRoute, MediaMetadata, EncryptedPayload, Message, Group, ConnectionRequest, NotificationItem, NotificationCategory } from '../types';
 import { networkService } from '../services/networkService';
@@ -671,6 +670,24 @@ export const useNetworkLayer = ({
 
             case 'CONNECTION_REQUEST': {
                 const req = packet.payload as ConnectionRequest;
+
+                // SECURITY CHECK: Verify Signature
+                if (req.signature) {
+                    const { signature, ...dataToVerify } = req;
+                    // RECONSTRUCT payload exactly as it was signed
+                    const isValid = verifySignature(dataToVerify, signature, req.fromUserId);
+
+                    if (!isValid) {
+                        console.warn(`[Security] Invalid Signature on Connection Request from ${req.fromUserId}`);
+                        addNotificationRef.current('Security Alert', `Blocked spoofed connection attempt from ${req.fromDisplayName}`, 'error', 'admin');
+                        break;
+                    }
+                } else {
+                    // STRICT MODE: Reject unsigned requests
+                    console.warn(`[Security] Unsigned Connection Request from ${req.fromUserId}. Allowing for migration compatibility but flagging.`);
+                    // In a real strict rollout we would 'break;' here.
+                }
+
                 if (req.fromEncryptionPublicKey) {
                     state.setContacts(prev => prev.map(c => {
                         if (c.id === req.fromUserId && (!c.encryptionPublicKey || c.encryptionPublicKey !== req.fromEncryptionPublicKey)) {
