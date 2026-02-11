@@ -643,12 +643,15 @@ export class NetworkService {
                     // Fall through to Relay Logic
                 } else {
                     // Trigger download in background
-                    const safeMetadata = metadata ? { ...metadata } : {
+                    const safeMetadata: MediaMetadata = metadata ? { ...metadata } : {
                         id: mediaId,
                         mimeType: 'application/octet-stream',
                         size: 0,
                         filename: `${mediaId}.bin`,
-                        ownerId: ownerId || 'unknown'
+                        ownerId: ownerId || 'unknown',
+                        type: 'file',       // Required
+                        duration: 0,        // Required
+                        chunkCount: 0       // Required
                     };
 
                     // PROXY-FIX: Ensure Access Key is present in the metadata for the active download
