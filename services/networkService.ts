@@ -1,6 +1,6 @@
 // Universal Network Service using Socket.IO
 import { io, Socket } from 'socket.io-client';
-import { LogEntry, MediaMetadata, TorStats as ITorStats } from '../types';
+import { LogEntry, MediaMetadata, TorStats as ITorStats, MediaSettings } from '../types';
 import { getMedia, saveMedia, hasMedia, verifyMediaAccess, setMediaSocket } from './mediaStorage';
 import { getTransferConfig, arrayBufferToBase64, base64ToArrayBuffer } from '../utils';
 import { kvService } from './kv'; // Import KV Service
@@ -51,6 +51,7 @@ interface ActiveDownload {
     // Recovery State
     recoveryStartedAt?: number;
     lastRecoveryAttempt?: number;
+    isRelayOnly?: boolean; // Ephemeral Relay Flag
 }
 
 type StatusListener = (isOnline: boolean, nodeId?: string) => void;
@@ -97,6 +98,7 @@ export class NetworkService {
     private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata }> = new Map(); // MediaID -> { Listeners, Metadata }
     private _relayHistory: Map<string, number> = new Map(); // RequestSignature -> Timestamp
     private _contactDirectory: Map<string, string> = new Map(); // OwnerID -> HomeNodeOnion
+    private _mediaSettings: MediaSettings = { enabled: true, maxFileSizeMB: 10, autoDownloadFriends: true, autoDownloadPrivate: true, cacheRelayedMedia: false };
     private _isShuttingDown: boolean = false;
 
     constructor() {
@@ -185,6 +187,10 @@ export class NetworkService {
 
     public updateKnownPeers(peers: string[]) {
         peers.forEach(p => this._knownPeers.add(p));
+    }
+
+    public updateMediaSettings(settings: MediaSettings) {
+        this._mediaSettings = settings;
     }
 
     public syncTrustedPeers(peers: string[]) {
@@ -614,7 +620,7 @@ export class NetworkService {
                     // Trigger download in background
                     this.downloadMedia(targetNode, metadata, (p) => {
                         // Monitor progress? 
-                    }, true).then(async () => {
+                    }, true, true).then(async () => {
                         // ON SUCCESS: Notify requester we have it now!
                         this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
 
@@ -725,7 +731,7 @@ export class NetworkService {
 
             this.downloadMedia(senderId, state.metadata, (p) => {
                 // Monitor
-            }, true).catch(err => {
+            }, true, true).catch(err => {
                 this.log('WARN', 'NETWORK', `Relay Buffer Failed: ${err}`);
             });
 
@@ -751,8 +757,17 @@ export class NetworkService {
         try {
             const blob = new Blob(download.chunks as BlobPart[], { type: download.metadata.mimeType });
             if (blob.size === 0) throw new Error("Empty Blob Data");
-            // Mark peer downloads as 'cache' (Temp Storage)
-            await saveMedia(mediaId, blob, download.metadata.accessKey, true);
+
+            // CHECK RELAY CACHE POLICY
+            if (download.isRelayOnly && !this._mediaSettings.cacheRelayedMedia) {
+                this.log('INFO', 'NETWORK', `Relay Complete: Ephemeral Mode. Serving from RAM and discarding ${mediaId}.`);
+                // We do NOT saveMedia.
+                // The chunks are already in memory for serving via handleMediaRequest -> activeDownloads.get()
+            } else {
+                // Mark peer downloads as 'cache' (Temp Storage)
+                await saveMedia(mediaId, blob, download.metadata.accessKey, true);
+            }
+
             download.status = 'completed';
             download.listeners.forEach(l => l.onComplete(blob));
         } catch (e: any) {
@@ -772,7 +787,7 @@ export class NetworkService {
         return Math.round((dl.receivedCount / dl.totalChunks) * 100);
     }
 
-    public async downloadMedia(peerOnionAddress: string | undefined | null, metadata: MediaMetadata, onProgress: (p: number) => void, allowUntrusted: boolean = false): Promise<Blob> {
+    public async downloadMedia(peerOnionAddress: string | undefined | null, metadata: MediaMetadata, onProgress: (p: number) => void, allowUntrusted: boolean = false, isRelay: boolean = false): Promise<Blob> {
         if (this._isShuttingDown) throw new Error("Shutdown in progress");
 
         if (await hasMedia(metadata.id)) {
@@ -832,7 +847,8 @@ export class NetworkService {
                 chunkSize: config.chunkSize,
                 rttSamples: [],
                 avgRtt: 5000,
-                listeners: [{ onProgress, onComplete: resolve, onError: reject }]
+                listeners: [{ onProgress, onComplete: resolve, onError: reject }],
+                isRelayOnly: isRelay
             });
 
             const dl = this._activeDownloads.get(metadata.id)!;
