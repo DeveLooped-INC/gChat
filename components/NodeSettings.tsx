@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Power, Wifi, User, Terminal, Download, Server, Trash2, Plus, Save, Loader2, RefreshCw, Key, Eye, EyeOff, ToggleRight, ToggleLeft, QrCode, Upload, AlertTriangle, Activity, ShieldCheck, ShieldAlert, Zap, XCircle, CheckSquare, LogOut, HardDrive, FileArchive, Copy, Check, MapPin, Globe, Clock, Lock, Users, BarChart3, ThumbsUp, ThumbsDown, Info, Play, Pause, Camera, WifiOff, Database, Radio, Heart, RadioReceiver, Shield } from 'lucide-react';
 import { UserProfile, NodePeer, ToastMessage, LogEntry, AvailablePeer, PrivacySettings, StorageStats, Post, Message, Contact, NotificationCategory, MediaSettings } from '../types';
@@ -71,7 +70,8 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
         enabled: false,
         maxFileSizeMB: 10,
         autoDownloadFriends: false,
-        autoDownloadPrivate: false
+        autoDownloadPrivate: false,
+        cacheRelayedMedia: false
     });
 
     const [privacySettings, setPrivacySettings] = useState<PrivacySettings>(user.privacySettings || {
@@ -573,6 +573,23 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
                                             className={`w-10 h-5 rounded-full p-0.5 transition-colors ${currentMediaSettings.autoDownloadPrivate ? 'bg-emerald-500' : 'bg-slate-700'}`}
                                         >
                                             <div className={`w-4 h-4 rounded-full bg-white transform transition-transform ${currentMediaSettings.autoDownloadPrivate ? 'translate-x-5' : 'translate-x-0'}`} />
+                                        </button>
+                                    </div>
+
+                                    {/* Relay Cache Toggle */}
+                                    <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 flex items-center justify-between md:col-span-2">
+                                        <div className="flex items-center gap-3">
+                                            <Database size={18} className="text-blue-400" />
+                                            <div>
+                                                <h4 className="text-sm font-medium text-slate-200">Cache Relayed Media</h4>
+                                                <p className="text-[10px] text-slate-500">Save copies of media you help others download. Disable to save space (Ephemeral Relay).</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => setCurrentMediaSettings(prev => ({ ...prev, cacheRelayedMedia: !prev.cacheRelayedMedia }))}
+                                            className={`w-10 h-5 rounded-full p-0.5 transition-colors ${currentMediaSettings.cacheRelayedMedia ? 'bg-blue-500' : 'bg-slate-700'}`}
+                                        >
+                                            <div className={`w-4 h-4 rounded-full bg-white transform transition-transform ${currentMediaSettings.cacheRelayedMedia ? 'translate-x-5' : 'translate-x-0'}`} />
                                         </button>
                                     </div>
                                 </div>
