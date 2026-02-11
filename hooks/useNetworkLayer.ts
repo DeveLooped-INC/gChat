@@ -1139,6 +1139,11 @@ export const useNetworkLayer = ({
         }
     }, [isOnline, user.isDiscoverable, state.nodeConfig, state.peersRef, user.homeNodeOnion, state.contactsRef, networkService]);
 
+    // --- SYNC SETTINGS ---
+    useEffect(() => {
+        networkService.updateMediaSettings(state.mediaSettings);
+    }, [state.mediaSettings, networkService]);
+
     // --- PERIODIC INVENTORY SYNC ---
     useEffect(() => {
         const interval = setInterval(() => {
