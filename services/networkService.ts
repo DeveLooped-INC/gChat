@@ -249,8 +249,10 @@ export class NetworkService {
                 const isMediaChunk = packet.type === 'MEDIA_CHUNK';
                 // RELAY FIX: Allow Relay Requests/Recovery signals from mesh (Daisy Chain)
                 const isRelay = packet.type === 'MEDIA_RELAY_REQUEST' || packet.type === 'MEDIA_RECOVERY_FOUND';
+                // EXIT FIX: Allow Exit signals so we know when peers leave
+                const isExit = packet.type === 'USER_EXIT' || packet.type === 'USER_EXIT_ACK';
 
-                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk && !isRelay) {
+                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk && !isRelay && !isExit) {
                     this.log('WARN', 'NETWORK', `Blocked packet ${packet.type} from untrusted source ${sender}. Firewall active.`);
                     return; // DROP PACKET
                 }
