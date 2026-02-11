@@ -154,17 +154,12 @@ export const useNetworkLayer = ({
                         return prev.map(p => p.onionAddress === senderOnion ? { ...p, status: 'online', lastSeen: Date.now() } : p);
                     }
                     return prev;
-                } else {
-                    // New Peer Discovered (Active Connection)
-                    return [...prev, {
-                        id: senderOnion,
-                        onionAddress: senderOnion,
-                        status: 'online',
-                        latencyMs: 0,
-                        lastSeen: Date.now(),
-                        trustLevel: 'verified'
-                    }];
                 }
+
+                // CRITICAL FIX: Do NOT auto-add peers here.
+                // Discovery should be explicit (e.g. adding a contact or manual connection).
+                // Auto-adding here causes "Zombie Peers" that cannot be removed because they send packets.
+                return prev;
             });
 
             // 2. Call Original Handler
