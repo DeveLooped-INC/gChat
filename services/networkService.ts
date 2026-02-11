@@ -247,8 +247,10 @@ export class NetworkService {
                 const isMediaRequest = packet.type === 'MEDIA_REQUEST';
                 // PROXY FIX: Allow MEDIA_CHUNK from untrusted (we verify it belongs to active DL in handler)
                 const isMediaChunk = packet.type === 'MEDIA_CHUNK';
+                // RELAY FIX: Allow Relay Requests/Recovery signals from mesh (Daisy Chain)
+                const isRelay = packet.type === 'MEDIA_RELAY_REQUEST' || packet.type === 'MEDIA_RECOVERY_FOUND';
 
-                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk) {
+                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk && !isRelay) {
                     this.log('WARN', 'NETWORK', `Blocked packet ${packet.type} from untrusted source ${sender}. Firewall active.`);
                     return; // DROP PACKET
                 }
