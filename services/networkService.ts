@@ -34,7 +34,7 @@ interface ActiveDownload {
     receivedCount: number;
     totalChunks: number;
     metadata: MediaMetadata;
-    status: 'active' | 'paused' | 'completed' | 'error' | 'recovering';
+    status: 'active' | 'paused' | 'completed' | 'error' | 'recovering' | 'completed_serving';
 
     // Adaptive Logic
     queue: number[];
@@ -257,8 +257,10 @@ export class NetworkService {
                 const isRelay = packet.type === 'MEDIA_RELAY_REQUEST' || packet.type === 'MEDIA_RECOVERY_FOUND';
                 // EXIT FIX: Allow Exit signals so we know when peers leave
                 const isExit = packet.type === 'USER_EXIT' || packet.type === 'USER_EXIT_ACK';
+                // RELAY ACK: Allow ACK packets
+                const isAck = packet.type === 'MEDIA_TRANSFER_ACK';
 
-                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk && !isRelay && !isExit) {
+                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk && !isRelay && !isExit && !isAck) {
                     this.log('WARN', 'NETWORK', `Blocked packet ${packet.type} from untrusted source ${sender}. Firewall active.`);
                     return; // DROP PACKET
                 }
@@ -270,6 +272,7 @@ export class NetworkService {
                 else if (packet.type === 'MEDIA_CHUNK') this.handleMediaChunk(sender, packet.payload);
                 else if (packet.type === 'MEDIA_RELAY_REQUEST') this.handleRelayRequest(sender, packet.payload);
                 else if (packet.type === 'MEDIA_RECOVERY_FOUND') this.handleRecoveryFound(sender, packet.payload);
+                else if (packet.type === 'MEDIA_TRANSFER_ACK') this.handleMediaTransferAck(sender, packet.payload);
                 else {
                     if (packet.type !== 'MEDIA_CHUNK') this.log('DEBUG', 'FRONTEND', `Received Packet [${packet.type}] from ${sender}`);
                     if (this.onMessage) this.onMessage(packet, sender);
@@ -351,7 +354,7 @@ export class NetworkService {
         let hasActive = false;
 
         this._activeDownloads.forEach((dl) => {
-            if (dl.status === 'error' || dl.status === 'completed' || dl.status === 'paused') return;
+            if (dl.status === 'error' || dl.status === 'completed' || dl.status === 'paused' || dl.status === 'completed_serving') return;
 
             if (dl.status === 'recovering') {
                 const now = Date.now();
@@ -457,7 +460,7 @@ export class NetworkService {
         // --- RELAY MEMORY SERVE LOGIC ---
         // Check if we have this chunk in active download memory (High Speed Relay)
         const dl = this._activeDownloads.get(mediaId);
-        if (dl && dl.status === 'active' && dl.chunks[chunkIndex]) {
+        if (dl && (dl.status === 'active' || dl.status === 'completed_serving') && dl.chunks[chunkIndex]) {
             const memChunk = dl.chunks[chunkIndex] as ArrayBuffer;
             const base64Data = arrayBufferToBase64(memChunk);
             this.log('DEBUG', 'NETWORK', `Relay: Serving Chunk ${chunkIndex} for ${mediaId} from RAM to ${senderId}`);
@@ -750,6 +753,17 @@ export class NetworkService {
         }
     }
 
+    private handleMediaTransferAck(senderId: string, payload: { mediaId: string }) {
+        const { mediaId } = payload;
+        const download = this._activeDownloads.get(mediaId);
+
+        if (download && download.status === 'completed_serving') {
+            this.log('INFO', 'NETWORK', `Received ACK from ${senderId} for ${mediaId}. Cleaning up RAM.`);
+            this._activeDownloads.delete(mediaId);
+            this._relayState.delete(mediaId);
+        }
+    }
+
     private async finishDownload(mediaId: string) {
         const download = this._activeDownloads.get(mediaId);
         if (!download || download.chunks.includes(null)) return;
@@ -760,22 +774,48 @@ export class NetworkService {
 
             // CHECK RELAY CACHE POLICY
             if (download.isRelayOnly && !this._mediaSettings.cacheRelayedMedia) {
-                this.log('INFO', 'NETWORK', `Relay Complete: Ephemeral Mode. Serving from RAM and discarding ${mediaId}.`);
-                // We do NOT saveMedia.
-                // The chunks are already in memory for serving via handleMediaRequest -> activeDownloads.get()
+                this.log('INFO', 'NETWORK', `Relay Complete: Ephemeral Mode. Waiting for ACK or Timeout for ${mediaId}.`);
+
+                // Switch to 'completed_serving' state
+                download.status = 'completed_serving';
+
+                // Start Grace Period Timeout (2 minutes)
+                setTimeout(() => {
+                    const dl = this._activeDownloads.get(mediaId);
+                    if (dl && dl.status === 'completed_serving') {
+                        this.log('WARN', 'NETWORK', `Relay Timeout: No ACK received for ${mediaId}. Force cleaning RAM.`);
+                        this._activeDownloads.delete(mediaId);
+                        this._relayState.delete(mediaId);
+                    }
+                }, 2 * 60 * 1000);
+
+                // DO NOT DELETE activeDownloads YET
             } else {
                 // Mark peer downloads as 'cache' (Temp Storage)
                 await saveMedia(mediaId, blob, download.metadata.accessKey, true);
+
+                // Normal cleanup
+                this._activeDownloads.delete(mediaId);
+                this._relayState.delete(mediaId);
             }
 
-            download.status = 'completed';
+            download.status = 'completed'; // For the listener, it's done
             download.listeners.forEach(l => l.onComplete(blob));
+
+            // SEND ACK IF WE ARE THE FINAL RECIPIENT
+            if (!download.isRelayOnly && download.peerOnion) {
+                this.sendMessage(download.peerOnion, {
+                    type: 'MEDIA_TRANSFER_ACK',
+                    senderId: this._myOnionAddress || 'unknown',
+                    payload: { mediaId }
+                });
+            }
+
         } catch (e: any) {
             this.log('ERROR', 'NETWORK', `Blob assembly failed: ${e.message}`);
             download.listeners.forEach(l => l.onError(`Assembly Failed: ${e.message}`));
+            this._activeDownloads.delete(mediaId); // Error? Clean up.
         } finally {
-            this._activeDownloads.delete(mediaId);
-            this._relayState.delete(mediaId); // Clear relay state on completion
             releaseWakeLock();
         }
     }
