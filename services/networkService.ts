@@ -643,7 +643,18 @@ export class NetworkService {
                     // Fall through to Relay Logic
                 } else {
                     // Trigger download in background
-                    this.downloadMedia(targetNode, metadata, (p) => {
+                    const safeMetadata = metadata ? { ...metadata } : {
+                        id: mediaId,
+                        mimeType: 'application/octet-stream',
+                        size: 0,
+                        filename: `${mediaId}.bin`,
+                        ownerId: ownerId || 'unknown'
+                    };
+
+                    // PROXY-FIX: Ensure Access Key is present in the metadata for the active download
+                    if (accessKey) safeMetadata.accessKey = accessKey;
+
+                    this.downloadMedia(targetNode, safeMetadata, (p) => {
                         // Monitor progress? 
                     }, true, true).then(async () => {
                         // ON SUCCESS: Notify requester we have it now!
