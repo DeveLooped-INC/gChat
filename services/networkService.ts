@@ -714,7 +714,12 @@ export class NetworkService {
         let isNewRelay = false;
         if (!this._relayState.has(mediaId)) {
             if (!metadata) return; // Cannot start a relay without metadata
-            this._relayState.set(mediaId, { listeners: new Set(), metadata });
+
+            // PROXY-FIX: Ensure Access Key is preserved in Relay State
+            const storedMetadata = { ...metadata };
+            if (accessKey) storedMetadata.accessKey = accessKey;
+
+            this._relayState.set(mediaId, { listeners: new Set(), metadata: storedMetadata });
             isNewRelay = true;
         }
 
@@ -735,7 +740,13 @@ export class NetworkService {
                 id: crypto.randomUUID(),
                 type: 'MEDIA_RELAY_REQUEST',
                 senderId: this._myOnionAddress || 'unknown',
-                payload: { mediaId, originNode, ownerId, accessKey, metadata }
+                payload: {
+                    mediaId,
+                    originNode: undefined, // PRIVACY FIX: Do not leak origin. Enforce Daisy Chain.
+                    ownerId,
+                    accessKey,
+                    metadata
+                }
             };
             this.broadcast(forwardPacket, peersToForward, 0);
         }
