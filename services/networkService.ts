@@ -457,11 +457,17 @@ export class NetworkService {
         if (dl && (dl.status === 'active' || dl.status === 'completed_serving')) {
             if (dl.metadata.accessKey === accessKey) {
                 canAccess = true;
+            } else {
+                this.log('WARN', 'NETWORK', `Relay Access Key Mismatch for ${mediaId}. Expected: ${dl.metadata.accessKey}, Received: ${accessKey}`);
             }
+        } else {
+            if (!dl) this.log('DEBUG', 'NETWORK', `Relay: Media ${mediaId} not found in active downloads.`);
+            else this.log('DEBUG', 'NETWORK', `Relay: Media ${mediaId} found but status is ${dl.status}.`);
         }
 
         if (!canAccess) {
             // Fallback to DB check
+            this.log('DEBUG', 'NETWORK', `Relay: Checking DB for ${mediaId}...`);
             canAccess = await verifyMediaAccess(mediaId, accessKey);
         }
 
