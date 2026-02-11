@@ -195,6 +195,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
 
     const handleRemovePeer = useCallback((onion: string) => {
         state.setPeers(prev => prev.filter(p => p.onionAddress !== onion));
+        networkService.removeTrustedPeer(onion);
         addNotification('Peer Removed', 'Node forgotten.', 'info', 'admin');
     }, [addNotification, state.setPeers]);
 
