@@ -1011,6 +1011,14 @@ export const useNetworkLayer = ({
                     postAfterVote = updatedPost;
                     return updatedPost;
                 }));
+
+                const postForVote = state.postsRef.current.find(p => p.id === postId);
+                if (postForVote && postForVote.authorId === currentUser.id && userId !== currentUser.id) {
+                    const voter = state.contactsRef.current.find(c => c.id === userId);
+                    const { handle } = formatUserIdentity(voter?.displayName || 'Someone');
+                    addNotificationRef.current('New Vote', `${handle} ${type}voted your broadcast`, 'success', 'social', AppRoute.FEED, postId);
+                }
+
                 if (postAfterVote) broadcastPostState(postAfterVote);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
