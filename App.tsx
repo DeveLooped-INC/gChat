@@ -894,10 +894,10 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                     nodeConfig={state.nodeConfig}
                     isOnline={isOnline}
                     userStats={{ totalPosts: state.posts.filter(p => p.authorId === user.id).length, likes: 0, dislikes: 0, connections: state.contacts.length, followers: 0 }}
-                    onAddPeer={(onion) => networkService.connect(onion)}
-                    onRemovePeer={(onion) => console.log("Remove peer request", onion)}
-                    onBlockPeer={(onion) => console.log("Block", onion)}
-                    onSyncPeer={(onion) => console.log("Sync", onion)}
+                    onAddPeer={handleAddPeer}
+                    onRemovePeer={handleRemovePeer}
+                    onBlockPeer={handleBlockPeer}
+                    onSyncPeer={handleSyncPeer}
                     onToggleNetwork={() => { if (isOnline) networkService.disconnect(); else networkService.init(user.id); }}
                     onUpdateProfile={handleUpdateUserWrapper}
                     onUpdateNodeConfig={handleUpdateNodeConfig}
