@@ -575,26 +575,26 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
                                             <div className={`w-4 h-4 rounded-full bg-white transform transition-transform ${currentMediaSettings.autoDownloadPrivate ? 'translate-x-5' : 'translate-x-0'}`} />
                                         </button>
                                     </div>
-
-                                    {/* Relay Cache Toggle */}
-                                    <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 flex items-center justify-between md:col-span-2">
-                                        <div className="flex items-center gap-3">
-                                            <Database size={18} className="text-blue-400" />
-                                            <div>
-                                                <h4 className="text-sm font-medium text-slate-200">Cache Relayed Media</h4>
-                                                <p className="text-[10px] text-slate-500">Save copies of media you help others download. Disable to save space (Ephemeral Relay).</p>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={() => setCurrentMediaSettings(prev => ({ ...prev, cacheRelayedMedia: !prev.cacheRelayedMedia }))}
-                                            className={`w-10 h-5 rounded-full p-0.5 transition-colors ${currentMediaSettings.cacheRelayedMedia ? 'bg-blue-500' : 'bg-slate-700'}`}
-                                        >
-                                            <div className={`w-4 h-4 rounded-full bg-white transform transition-transform ${currentMediaSettings.cacheRelayedMedia ? 'translate-x-5' : 'translate-x-0'}`} />
-                                        </button>
-                                    </div>
                                 </div>
                             </div>
                         )}
+
+                        {/* Relay Cache Settings - Always Visible */}
+                        <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <Database size={18} className="text-blue-400" />
+                                <div>
+                                    <h4 className="text-sm font-medium text-slate-200">Cache Relayed Media</h4>
+                                    <p className="text-[10px] text-slate-500">Save copies of media you help others download. Disable to save space (Ephemeral Relay).</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setCurrentMediaSettings(prev => ({ ...prev, cacheRelayedMedia: !prev.cacheRelayedMedia }))}
+                                className={`w-10 h-5 rounded-full p-0.5 transition-colors ${currentMediaSettings.cacheRelayedMedia ? 'bg-blue-500' : 'bg-slate-700'}`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white transform transition-transform ${currentMediaSettings.cacheRelayedMedia ? 'translate-x-5' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
                     </div>
 
                 </div>
@@ -681,288 +681,290 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
                 </div>
 
                 {/* ADMIN SECTIONS */}
-                {user.isAdmin && (
-                    <>
-                        {/* Bridge Configuration */}
-                        <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                            <div className="flex items-center space-x-3 mb-4">
-                                <div className="p-2 bg-slate-800 rounded-lg">
-                                    <Shield className="text-white" size={24} />
-                                </div>
-                                <div>
-                                    <h2 className="text-lg font-bold text-white">Censorship Resistance (Bridges)</h2>
-                                    <p className="text-sm text-slate-400">Configure Tor Bridges to bypass ISP filtering and hide Tor usage.</p>
-                                </div>
-                            </div>
-
-                            <div className="space-y-4">
-                                <textarea
-                                    value={bridgeConf}
-                                    onChange={(e) => setBridgeConf(e.target.value)}
-                                    placeholder="Starts with 'obfs4'..."
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-300 h-24 focus:outline-none focus:border-onion-500 transition-colors resize-none"
-                                />
-                                <div className="flex justify-between items-center">
-                                    <button
-                                        onClick={handleUseDefaultBridges}
-                                        className="text-xs text-onion-400 hover:text-white hover:underline"
-                                    >
-                                        Use Default Bridges (Public)
-                                    </button>
-                                    <button
-                                        onClick={handleSaveBridges}
-                                        className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                                    >
-                                        Save & Restart Tor
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Node Configuration */}
-                        <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                            <div className="flex items-center space-x-3 mb-6 border-b border-slate-800 pb-2">
-                                <Server className="text-onion-500" size={24} />
-                                <h2 className="text-lg font-bold text-white">Node Configuration</h2>
-                            </div>
-
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {
+                    user.isAdmin && (
+                        <>
+                            {/* Bridge Configuration */}
+                            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+                                <div className="flex items-center space-x-3 mb-4">
+                                    <div className="p-2 bg-slate-800 rounded-lg">
+                                        <Shield className="text-white" size={24} />
+                                    </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">Node Alias</label>
+                                        <h2 className="text-lg font-bold text-white">Censorship Resistance (Bridges)</h2>
+                                        <p className="text-sm text-slate-400">Configure Tor Bridges to bypass ISP filtering and hide Tor usage.</p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <textarea
+                                        value={bridgeConf}
+                                        onChange={(e) => setBridgeConf(e.target.value)}
+                                        placeholder="Starts with 'obfs4'..."
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-300 h-24 focus:outline-none focus:border-onion-500 transition-colors resize-none"
+                                    />
+                                    <div className="flex justify-between items-center">
+                                        <button
+                                            onClick={handleUseDefaultBridges}
+                                            className="text-xs text-onion-400 hover:text-white hover:underline"
+                                        >
+                                            Use Default Bridges (Public)
+                                        </button>
+                                        <button
+                                            onClick={handleSaveBridges}
+                                            className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                        >
+                                            Save & Restart Tor
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Node Configuration */}
+                            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+                                <div className="flex items-center space-x-3 mb-6 border-b border-slate-800 pb-2">
+                                    <Server className="text-onion-500" size={24} />
+                                    <h2 className="text-lg font-bold text-white">Node Configuration</h2>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">Node Alias</label>
+                                            <input
+                                                type="text"
+                                                value={nodeAlias}
+                                                onChange={(e) => setNodeAlias(e.target.value)}
+                                                placeholder="e.g. My Home Relay"
+                                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-onion-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">Sync History (Hours)</label>
+                                            <input
+                                                type="number"
+                                                value={currentSyncAge}
+                                                onChange={(e) => onSetSyncAge && onSetSyncAge(parseInt(e.target.value) || 24)}
+                                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-onion-500"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">Description</label>
                                         <input
                                             type="text"
-                                            value={nodeAlias}
-                                            onChange={(e) => setNodeAlias(e.target.value)}
-                                            placeholder="e.g. My Home Relay"
+                                            value={nodeDesc}
+                                            onChange={(e) => setNodeDesc(e.target.value)}
+                                            placeholder="Public description broadcasted to peers"
                                             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-onion-500"
                                         />
                                     </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">Sync History (Hours)</label>
+                                </div>
+                            </div>
+
+                            {/* Network & Peers List */}
+                            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+                                <div className="flex items-center justify-between mb-6 border-b border-slate-800 pb-2">
+                                    <div className="flex items-center space-x-3">
+                                        <Activity className="text-blue-500" size={24} />
+                                        <h2 className="text-lg font-bold text-white">Peer Management</h2>
+                                    </div>
+                                    <div className="text-xs text-slate-500">Connected: {peers.filter(p => p.status === 'online').length}</div>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <div className="flex gap-2">
                                         <input
-                                            type="number"
-                                            value={currentSyncAge}
-                                            onChange={(e) => onSetSyncAge && onSetSyncAge(parseInt(e.target.value) || 24)}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-onion-500"
+                                            type="text"
+                                            placeholder="Add Peer (.onion address)"
+                                            value={newPeerOnion}
+                                            onChange={(e) => setNewPeerOnion(e.target.value)}
+                                            className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-onion-500"
                                         />
+                                        <button onClick={handleAddPeer} className="bg-slate-800 hover:bg-slate-700 text-white px-4 rounded-lg flex items-center"><Plus size={18} /></button>
+                                        <button onClick={() => setShowScanner(true)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 rounded-lg flex items-center"><Camera size={18} /></button>
                                     </div>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">Description</label>
-                                    <input
-                                        type="text"
-                                        value={nodeDesc}
-                                        onChange={(e) => setNodeDesc(e.target.value)}
-                                        placeholder="Public description broadcasted to peers"
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-onion-500"
-                                    />
-                                </div>
-                            </div>
-                        </div>
 
-                        {/* Network & Peers List */}
-                        <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                            <div className="flex items-center justify-between mb-6 border-b border-slate-800 pb-2">
-                                <div className="flex items-center space-x-3">
-                                    <Activity className="text-blue-500" size={24} />
-                                    <h2 className="text-lg font-bold text-white">Peer Management</h2>
-                                </div>
-                                <div className="text-xs text-slate-500">Connected: {peers.filter(p => p.status === 'online').length}</div>
-                            </div>
-
-                            <div className="space-y-3">
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        placeholder="Add Peer (.onion address)"
-                                        value={newPeerOnion}
-                                        onChange={(e) => setNewPeerOnion(e.target.value)}
-                                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-onion-500"
-                                    />
-                                    <button onClick={handleAddPeer} className="bg-slate-800 hover:bg-slate-700 text-white px-4 rounded-lg flex items-center"><Plus size={18} /></button>
-                                    <button onClick={() => setShowScanner(true)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 rounded-lg flex items-center"><Camera size={18} /></button>
-                                </div>
-
-                                {/* Peer List */}
-                                <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
-                                    {peers.map(peer => (
-                                        <div key={peer.onionAddress} className="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-lg group">
-                                            <div className="flex items-center gap-3">
-                                                <div className={`w-2 h-2 rounded-full ${peer.status === 'online' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-600'}`} />
-                                                <div>
-                                                    <p className="text-sm font-mono text-slate-300">{peer.alias || peer.onionAddress.substring(0, 16) + '...'}</p>
-                                                    <p className="text-[10px] text-slate-500">{peer.status} • {peer.latencyMs}ms</p>
-                                                </div>
-                                            </div>
-                                            <div className="flex gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => handleSyncPeer(peer.onionAddress)} className="p-1.5 hover:bg-indigo-500/20 text-indigo-400 rounded"><RefreshCw size={14} /></button>
-                                                <button onClick={() => setNodeInfoTarget({ address: peer.onionAddress, alias: peer.alias, type: 'trusted', status: peer.status, latency: peer.latencyMs, lastSeen: peer.lastSeen })} className="p-1.5 hover:bg-slate-800 text-slate-300 rounded"><Info size={14} /></button>
-                                                <button onClick={() => onRemovePeer(peer.onionAddress)} className="p-1.5 hover:bg-red-500/20 text-red-400 rounded"><Trash2 size={14} /></button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {/* Discovered Peers Section */}
-                                {discoveredPeers.length > 0 && (
-                                    <div className="mt-4 pt-4 border-t border-slate-800">
-                                        <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Discovered via Gossip ({discoveredPeers.length})</h3>
-                                        <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
-                                            {discoveredPeers.map(peer => (
-                                                <div key={peer.id} className="flex items-center justify-between p-3 bg-slate-950/50 border border-slate-800 border-dashed rounded-lg">
+                                    {/* Peer List */}
+                                    <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+                                        {peers.map(peer => (
+                                            <div key={peer.onionAddress} className="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-lg group">
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-2 h-2 rounded-full ${peer.status === 'online' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-600'}`} />
                                                     <div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-sm font-bold text-slate-300">{peer.displayName}</span>
-                                                            <span className="text-[10px] bg-slate-800 px-1.5 rounded text-slate-500">{peer.hops} Hops</span>
+                                                        <p className="text-sm font-mono text-slate-300">{peer.alias || peer.onionAddress.substring(0, 16) + '...'}</p>
+                                                        <p className="text-[10px] text-slate-500">{peer.status} • {peer.latencyMs}ms</p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
+                                                    <button onClick={() => handleSyncPeer(peer.onionAddress)} className="p-1.5 hover:bg-indigo-500/20 text-indigo-400 rounded"><RefreshCw size={14} /></button>
+                                                    <button onClick={() => setNodeInfoTarget({ address: peer.onionAddress, alias: peer.alias, type: 'trusted', status: peer.status, latency: peer.latencyMs, lastSeen: peer.lastSeen })} className="p-1.5 hover:bg-slate-800 text-slate-300 rounded"><Info size={14} /></button>
+                                                    <button onClick={() => onRemovePeer(peer.onionAddress)} className="p-1.5 hover:bg-red-500/20 text-red-400 rounded"><Trash2 size={14} /></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Discovered Peers Section */}
+                                    {discoveredPeers.length > 0 && (
+                                        <div className="mt-4 pt-4 border-t border-slate-800">
+                                            <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Discovered via Gossip ({discoveredPeers.length})</h3>
+                                            <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
+                                                {discoveredPeers.map(peer => (
+                                                    <div key={peer.id} className="flex items-center justify-between p-3 bg-slate-950/50 border border-slate-800 border-dashed rounded-lg">
+                                                        <div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-sm font-bold text-slate-300">{peer.displayName}</span>
+                                                                <span className="text-[10px] bg-slate-800 px-1.5 rounded text-slate-500">{peer.hops} Hops</span>
+                                                            </div>
+                                                            <p className="text-xs font-mono text-slate-500 truncate w-48">{peer.id}</p>
                                                         </div>
-                                                        <p className="text-xs font-mono text-slate-500 truncate w-48">{peer.id}</p>
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => onAddPeer(peer.id)} className="p-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded transition-colors" title="Connect"><Plus size={14} /></button>
+                                                            <button onClick={() => setNodeInfoTarget({ address: peer.id, alias: peer.displayName, description: peer.username, type: 'discovered', hops: peer.hops, lastSeen: peer.lastSeen, via: peer.viaPeerId })} className="p-1.5 bg-slate-800 text-slate-300 hover:text-white rounded transition-colors" title="Info"><Info size={14} /></button>
+                                                            <button onClick={() => onBlockPeer && onBlockPeer(peer.id)} className="p-1.5 bg-slate-800 hover:bg-red-900/30 text-slate-500 hover:text-red-400 rounded transition-colors" title="Block"><XCircle size={14} /></button>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex gap-2">
-                                                        <button onClick={() => onAddPeer(peer.id)} className="p-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded transition-colors" title="Connect"><Plus size={14} /></button>
-                                                        <button onClick={() => setNodeInfoTarget({ address: peer.id, alias: peer.displayName, description: peer.username, type: 'discovered', hops: peer.hops, lastSeen: peer.lastSeen, via: peer.viaPeerId })} className="p-1.5 bg-slate-800 text-slate-300 hover:text-white rounded transition-colors" title="Info"><Info size={14} /></button>
-                                                        <button onClick={() => onBlockPeer && onBlockPeer(peer.id)} className="p-1.5 bg-slate-800 hover:bg-red-900/30 text-slate-500 hover:text-red-400 rounded transition-colors" title="Block"><XCircle size={14} /></button>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
+                                    )}
 
-                                {/* Pending Signals Section */}
-                                {pendingPeers.length > 0 && (
-                                    <div className="mt-4 pt-4 border-t border-slate-800">
-                                        <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><RadioReceiver size={12} className="text-onion-400 animate-pulse" /> Unknown Signals ({pendingPeers.length})</h3>
-                                        <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
-                                            {pendingPeers.map(peerId => (
-                                                <div key={peerId} className="flex items-center justify-between p-3 bg-onion-950/10 border border-onion-500/20 rounded-lg">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="w-2 h-2 rounded-full bg-onion-500 animate-pulse" />
-                                                        <p className="text-xs font-mono text-onion-200 truncate w-48">{peerId}</p>
+                                    {/* Pending Signals Section */}
+                                    {pendingPeers.length > 0 && (
+                                        <div className="mt-4 pt-4 border-t border-slate-800">
+                                            <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><RadioReceiver size={12} className="text-onion-400 animate-pulse" /> Unknown Signals ({pendingPeers.length})</h3>
+                                            <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
+                                                {pendingPeers.map(peerId => (
+                                                    <div key={peerId} className="flex items-center justify-between p-3 bg-onion-950/10 border border-onion-500/20 rounded-lg">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-2 h-2 rounded-full bg-onion-500 animate-pulse" />
+                                                            <p className="text-xs font-mono text-onion-200 truncate w-48">{peerId}</p>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => onAddPeer(peerId)} className="text-xs bg-onion-600 hover:bg-onion-500 text-white px-2 py-1 rounded transition-colors">Accept</button>
+                                                            <button onClick={() => setNodeInfoTarget({ address: peerId, type: 'pending', status: 'unknown' })} className="text-xs bg-slate-800 text-slate-300 hover:text-white px-2 py-1 rounded transition-colors"><Info size={12} /></button>
+                                                            <button onClick={() => onBlockPeer && onBlockPeer(peerId)} className="text-xs bg-slate-800 hover:bg-red-900/30 text-slate-400 hover:text-red-400 px-2 py-1 rounded transition-colors">Block</button>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex gap-2">
-                                                        <button onClick={() => onAddPeer(peerId)} className="text-xs bg-onion-600 hover:bg-onion-500 text-white px-2 py-1 rounded transition-colors">Accept</button>
-                                                        <button onClick={() => setNodeInfoTarget({ address: peerId, type: 'pending', status: 'unknown' })} className="text-xs bg-slate-800 text-slate-300 hover:text-white px-2 py-1 rounded transition-colors"><Info size={12} /></button>
-                                                        <button onClick={() => onBlockPeer && onBlockPeer(peerId)} className="text-xs bg-slate-800 hover:bg-red-900/30 text-slate-400 hover:text-red-400 px-2 py-1 rounded transition-colors">Block</button>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* System Logs */}
-                        <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="flex items-center space-x-3">
-                                    <Terminal className="text-slate-400" size={24} />
-                                    <h2 className="text-lg font-bold text-white">System Logs</h2>
+                                    )}
                                 </div>
-                                <button onClick={() => setShowLogs(!showLogs)} className="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-white transition-colors">
-                                    {showLogs ? 'Hide Console' : 'Show Console'}
-                                </button>
                             </div>
 
-                            {showLogs && (
-                                <div
-                                    ref={logContainerRef}
-                                    onScroll={handleScroll}
-                                    className="bg-black rounded-lg p-4 font-mono text-xs h-64 overflow-y-auto border border-slate-800 shadow-inner relative"
-                                >
-                                    {isUserScrolling && (
-                                        <button onClick={() => { setIsUserScrolling(false); if (logContainerRef.current) logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight; }} className="absolute bottom-4 right-4 bg-onion-600 text-white px-3 py-1 rounded-full text-xs shadow-lg animate-bounce z-10">
-                                            Resume Scroll
+                            {/* System Logs */}
+                            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <div className="flex items-center space-x-3">
+                                        <Terminal className="text-slate-400" size={24} />
+                                        <h2 className="text-lg font-bold text-white">System Logs</h2>
+                                    </div>
+                                    <button onClick={() => setShowLogs(!showLogs)} className="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-white transition-colors">
+                                        {showLogs ? 'Hide Console' : 'Show Console'}
+                                    </button>
+                                </div>
+
+                                {showLogs && (
+                                    <div
+                                        ref={logContainerRef}
+                                        onScroll={handleScroll}
+                                        className="bg-black rounded-lg p-4 font-mono text-xs h-64 overflow-y-auto border border-slate-800 shadow-inner relative"
+                                    >
+                                        {isUserScrolling && (
+                                            <button onClick={() => { setIsUserScrolling(false); if (logContainerRef.current) logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight; }} className="absolute bottom-4 right-4 bg-onion-600 text-white px-3 py-1 rounded-full text-xs shadow-lg animate-bounce z-10">
+                                                Resume Scroll
+                                            </button>
+                                        )}
+                                        {systemLogs.map((log, i) => (
+                                            <div key={i} className="mb-1 break-all flex gap-2">
+                                                <span className="text-slate-600">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                                                <span className={log.level === 'ERROR' ? 'text-red-500' : log.level === 'WARN' ? 'text-amber-500' : 'text-emerald-500'}>{log.level}</span>
+                                                <span className="text-blue-400">[{log.area}]</span>
+                                                <span className="text-slate-300">{log.message}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Data Migration */}
+                            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+                                <div className="flex items-center space-x-3 mb-6 border-b border-slate-800 pb-2">
+                                    <HardDrive className="text-indigo-400" size={24} />
+                                    <h2 className="text-lg font-bold text-white">Data Migration</h2>
+                                </div>
+                                <div className="bg-indigo-900/20 border border-indigo-500/30 rounded-xl p-6 text-center">
+                                    <FileArchive className="mx-auto text-indigo-400 mb-3" size={48} />
+                                    <h3 className="text-white font-bold mb-2">Create Encrypted Backup</h3>
+                                    <p className="text-slate-400 text-sm mb-6 max-w-sm mx-auto">
+                                        Export your entire node state, including keys, contacts, and history.
+                                        The backup is encrypted with a generated password.
+                                    </p>
+
+                                    {migrationPassword ? (
+                                        <div className="bg-slate-900 p-4 rounded-xl border border-indigo-500 max-w-xs mx-auto animate-in zoom-in-95">
+                                            <p className="text-xs text-indigo-400 uppercase font-bold mb-2">Backup Password (Save This!)</p>
+                                            <div className="flex items-center justify-between bg-black/50 p-2 rounded border border-slate-700 mb-3">
+                                                <code className="text-white font-mono text-sm">{migrationPassword}</code>
+                                                <button onClick={copyPassword} className="text-slate-400 hover:text-white"><Copy size={16} /></button>
+                                            </div>
+                                            <div className="text-xs text-green-400 flex items-center justify-center gap-1">
+                                                <Check size={12} /> File Downloaded
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={handleMigrateUser}
+                                            disabled={isMigrating}
+                                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 mx-auto transition-colors disabled:opacity-50"
+                                        >
+                                            {isMigrating ? <Loader2 className="animate-spin" /> : <Download size={20} />}
+                                            <span>Generate Backup</span>
                                         </button>
                                     )}
-                                    {systemLogs.map((log, i) => (
-                                        <div key={i} className="mb-1 break-all flex gap-2">
-                                            <span className="text-slate-600">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                                            <span className={log.level === 'ERROR' ? 'text-red-500' : log.level === 'WARN' ? 'text-amber-500' : 'text-emerald-500'}>{log.level}</span>
-                                            <span className="text-blue-400">[{log.area}]</span>
-                                            <span className="text-slate-300">{log.message}</span>
-                                        </div>
-                                    ))}
                                 </div>
-                            )}
-                        </div>
-
-                        {/* Data Migration */}
-                        <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                            <div className="flex items-center space-x-3 mb-6 border-b border-slate-800 pb-2">
-                                <HardDrive className="text-indigo-400" size={24} />
-                                <h2 className="text-lg font-bold text-white">Data Migration</h2>
                             </div>
-                            <div className="bg-indigo-900/20 border border-indigo-500/30 rounded-xl p-6 text-center">
-                                <FileArchive className="mx-auto text-indigo-400 mb-3" size={48} />
-                                <h3 className="text-white font-bold mb-2">Create Encrypted Backup</h3>
-                                <p className="text-slate-400 text-sm mb-6 max-w-sm mx-auto">
-                                    Export your entire node state, including keys, contacts, and history.
-                                    The backup is encrypted with a generated password.
-                                </p>
 
-                                {migrationPassword ? (
-                                    <div className="bg-slate-900 p-4 rounded-xl border border-indigo-500 max-w-xs mx-auto animate-in zoom-in-95">
-                                        <p className="text-xs text-indigo-400 uppercase font-bold mb-2">Backup Password (Save This!)</p>
-                                        <div className="flex items-center justify-between bg-black/50 p-2 rounded border border-slate-700 mb-3">
-                                            <code className="text-white font-mono text-sm">{migrationPassword}</code>
-                                            <button onClick={copyPassword} className="text-slate-400 hover:text-white"><Copy size={16} /></button>
-                                        </div>
-                                        <div className="text-xs text-green-400 flex items-center justify-center gap-1">
-                                            <Check size={12} /> File Downloaded
-                                        </div>
+                            {/* Danger Zone */}
+                            <div className="bg-red-950/20 rounded-xl border border-red-900/50 p-6">
+                                <div className="flex items-center space-x-3 mb-6 border-b border-red-900/30 pb-2">
+                                    <AlertTriangle className="text-red-500" size={24} />
+                                    <h2 className="text-lg font-bold text-red-500">Danger Zone</h2>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-white font-bold">Factory Reset Node</h3>
+                                        <p className="text-red-400/70 text-sm">Wipes all data, keys, and identity. Irreversible.</p>
                                     </div>
-                                ) : (
                                     <button
-                                        onClick={handleMigrateUser}
-                                        disabled={isMigrating}
-                                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 mx-auto transition-colors disabled:opacity-50"
+                                        onClick={handleFactoryReset}
+                                        className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors"
                                     >
-                                        {isMigrating ? <Loader2 className="animate-spin" /> : <Download size={20} />}
-                                        <span>Generate Backup</span>
+                                        Reset Everything
                                     </button>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Danger Zone */}
-                        <div className="bg-red-950/20 rounded-xl border border-red-900/50 p-6">
-                            <div className="flex items-center space-x-3 mb-6 border-b border-red-900/30 pb-2">
-                                <AlertTriangle className="text-red-500" size={24} />
-                                <h2 className="text-lg font-bold text-red-500">Danger Zone</h2>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h3 className="text-white font-bold">Factory Reset Node</h3>
-                                    <p className="text-red-400/70 text-sm">Wipes all data, keys, and identity. Irreversible.</p>
                                 </div>
-                                <button
-                                    onClick={handleFactoryReset}
-                                    className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors"
-                                >
-                                    Reset Everything
-                                </button>
                             </div>
-                        </div>
-                    </>
-                )}
+                        </>
+                    )
+                }
 
                 {/* Modals */}
                 {showNodeIdentity && user.isAdmin && <IdentityModal type="node" data={{ id: user.homeNodeOnion || 'offline', name: "My Local Node" }} onClose={() => setShowNodeIdentity(false)} />}
                 {showScanner && <QRScanner onScan={parseDeepLink} onClose={() => setShowScanner(false)} />}
                 {nodeInfoTarget && <NodeInfoModal target={nodeInfoTarget} onClose={() => setNodeInfoTarget(null)} onConnect={onAddPeer} onForget={onRemovePeer} onBlock={onBlockPeer} onSync={handleSyncPeer} />}
 
-            </div>
+            </div >
 
             {/* Sticky Footer */}
-            <div className="p-4 border-t border-slate-800 bg-slate-900/95 backdrop-blur supports-[backdrop-filter]:bg-slate-900/60 flex justify-between items-center z-10 shrink-0">
+            < div className="p-4 border-t border-slate-800 bg-slate-900/95 backdrop-blur supports-[backdrop-filter]:bg-slate-900/60 flex justify-between items-center z-10 shrink-0" >
                 <span className="text-sm text-slate-500 hidden md:block">Configuration changes require a save to propagate.</span>
                 <button onClick={handleSaveProfile} disabled={isSaving} className="bg-onion-600 hover:bg-onion-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center space-x-2 transition-all disabled:opacity-50 shadow-lg shadow-onion-900/20 ml-auto">
                     {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                     <span>Save Changes</span>
                 </button>
-            </div>
+            </div >
 
         </div >
     );
