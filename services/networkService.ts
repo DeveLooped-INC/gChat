@@ -205,6 +205,17 @@ export class NetworkService {
         this.log('INFO', 'NETWORK', `Synced ${contacts.length} Contacts to Directory.`);
     }
 
+    public removeTrustedPeer(onion: string) {
+        if (this._trustedPeers.has(onion)) {
+            this._trustedPeers.delete(onion);
+            this._knownPeers.delete(onion);
+            this.log('INFO', 'NETWORK', `Removed Trusted Peer: ${onion}`);
+
+            // Should we disconnect? ideally yes, but socket.io is connectionless for us (over http/tor)
+            // The firewall will block future packets.
+        }
+    }
+
     private setupSocketListeners() {
         this.socket.on('connect', () => {
             this.log('INFO', 'FRONTEND', 'Connected to Local Backend Socket');
