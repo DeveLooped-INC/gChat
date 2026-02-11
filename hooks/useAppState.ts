@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import { UserProfile, Contact, Post, Group, Message, NotificationItem, NodePeer, ConnectionRequest, AppRoute, NotificationCategory, MediaSettings } from '../types';
 import { networkService } from '../services/networkService';
@@ -199,7 +198,11 @@ export const useAppState = (user: UserProfile) => {
 
     // Media Settings
     const [mediaSettings, setMediaSettings] = useState<MediaSettings>({
-        enabled: false, maxFileSizeMB: 10, autoDownloadFriends: false, autoDownloadPrivate: false
+        enabled: false,
+        maxFileSizeMB: 10,
+        autoDownloadFriends: false,
+        autoDownloadPrivate: false,
+        cacheRelayedMedia: false
     });
 
     useEffect(() => {
