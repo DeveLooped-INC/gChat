@@ -139,6 +139,43 @@ export const useNetworkLayer = ({
         networkService.syncTrustedPeers(trustedIds);
     }, [state.contacts, state.isLoaded]);
 
+    // --- PEER ACTIVITY MONITOR (Green Dot Fix) ---
+    useEffect(() => {
+        // We hook into the message stream to detect activity
+        const originalOnMessage = networkService.onMessage;
+
+        networkService.onMessage = (packet, senderOnion) => {
+            // 1. Update Peer Status
+            state.setPeers(prev => {
+                const existing = prev.find(p => p.onionAddress === senderOnion);
+                if (existing) {
+                    // Only update if status changed or it's been a while (throttle updates)
+                    if (existing.status !== 'online' || (Date.now() - existing.lastSeen) > 10000) {
+                        return prev.map(p => p.onionAddress === senderOnion ? { ...p, status: 'online', lastSeen: Date.now() } : p);
+                    }
+                    return prev;
+                } else {
+                    // New Peer Discovered (Active Connection)
+                    return [...prev, {
+                        id: senderOnion,
+                        onionAddress: senderOnion,
+                        status: 'online',
+                        latencyMs: 0,
+                        lastSeen: Date.now(),
+                        trustLevel: 'verified'
+                    }];
+                }
+            });
+
+            // 2. Call Original Handler
+            if (originalOnMessage) originalOnMessage(packet, senderOnion);
+        };
+
+        return () => {
+            networkService.onMessage = originalOnMessage;
+        };
+    }, [state.setPeers, networkService]);
+
     // --- HELPER: Broadcast Post State (Ensures propagation of edits/comments) ---
     const broadcastPostState = useCallback((post: Post) => {
         if (post.privacy !== 'public') return;
