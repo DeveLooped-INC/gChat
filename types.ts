@@ -24,6 +24,7 @@ export interface MediaSettings {
   maxFileSizeMB: number; // 0 - 1024
   autoDownloadFriends: boolean; // Friends-only broadcasts
   autoDownloadPrivate: boolean; // Private chats/DMs
+  cacheRelayedMedia: boolean; // If true, save media proxied for others. Default: false.
 }
 
 export interface ContentSettings {
