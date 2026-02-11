@@ -447,8 +447,24 @@ export class NetworkService {
 
         const { mediaId, chunkIndex, chunkSize, accessKey } = payload;
 
-        // PROXY-SECURITY-FIX: Verify Access Key since we bypass firewall for this packet type
-        const canAccess = await verifyMediaAccess(mediaId, accessKey);
+        // PROXY-SECURITY-FIX: Verify Access Key
+        // 1. Check RAM (Ephemeral Relay / Active Download)
+        // 2. Check DB (Stored Media)
+
+        let canAccess = false;
+        const dl = this._activeDownloads.get(mediaId);
+
+        if (dl && (dl.status === 'active' || dl.status === 'completed_serving')) {
+            if (dl.metadata.accessKey === accessKey) {
+                canAccess = true;
+            }
+        }
+
+        if (!canAccess) {
+            // Fallback to DB check
+            canAccess = await verifyMediaAccess(mediaId, accessKey);
+        }
+
         if (!canAccess) {
             this.log('WARN', 'NETWORK', `Rejected MEDIA_REQUEST from ${senderId} - Invalid Access Key. Access Denied.`);
             return;
@@ -459,7 +475,7 @@ export class NetworkService {
 
         // --- RELAY MEMORY SERVE LOGIC ---
         // Check if we have this chunk in active download memory (High Speed Relay)
-        const dl = this._activeDownloads.get(mediaId);
+        // dl is already defined above
         if (dl && (dl.status === 'active' || dl.status === 'completed_serving') && dl.chunks[chunkIndex]) {
             const memChunk = dl.chunks[chunkIndex] as ArrayBuffer;
             const base64Data = arrayBufferToBase64(memChunk);
