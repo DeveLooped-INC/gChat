@@ -139,37 +139,6 @@ export const useNetworkLayer = ({
         networkService.syncTrustedPeers(trustedIds);
     }, [state.contacts, state.isLoaded]);
 
-    // --- PEER ACTIVITY MONITOR (Green Dot Fix) ---
-    useEffect(() => {
-        // We hook into the message stream to detect activity
-        const originalOnMessage = networkService.onMessage;
-
-        networkService.onMessage = (packet, senderOnion) => {
-            // 1. Update Peer Status
-            state.setPeers(prev => {
-                const existing = prev.find(p => p.onionAddress === senderOnion);
-                if (existing) {
-                    // Only update if status changed or it's been a while (throttle updates)
-                    if (existing.status !== 'online' || (Date.now() - existing.lastSeen) > 10000) {
-                        return prev.map(p => p.onionAddress === senderOnion ? { ...p, status: 'online', lastSeen: Date.now() } : p);
-                    }
-                    return prev;
-                }
-
-                // CRITICAL FIX: Do NOT auto-add peers here.
-                // Discovery should be explicit (e.g. adding a contact or manual connection).
-                // Auto-adding here causes "Zombie Peers" that cannot be removed because they send packets.
-                return prev;
-            });
-
-            // 2. Call Original Handler
-            if (originalOnMessage) originalOnMessage(packet, senderOnion);
-        };
-
-        return () => {
-            networkService.onMessage = originalOnMessage;
-        };
-    }, [state.setPeers, networkService]);
 
     // --- HELPER: Broadcast Post State (Ensures propagation of edits/comments) ---
     const broadcastPostState = useCallback((post: Post) => {
@@ -1095,6 +1064,20 @@ export const useNetworkLayer = ({
         const unsubscribeStatus = networkService.subscribeToStatus((online) => setIsOnline(online));
 
         networkService.onMessage = (packet, sender) => {
+            // --- PEER ACTIVITY MONITOR (Integrated) ---
+            state.setPeers(prev => {
+                const existing = prev.find(p => p.onionAddress === sender);
+                if (existing) {
+                    // Only update if status changed or it's been a while (throttle updates)
+                    if (existing.status !== 'online' || (Date.now() - existing.lastSeen) > 10000) {
+                        return prev.map(p => p.onionAddress === sender ? { ...p, status: 'online', lastSeen: Date.now() } : p);
+                    }
+                    return prev;
+                }
+                // Do NOT auto-add unknown peers here.
+                return prev;
+            });
+
             handlePacketRef.current(packet, sender);
         };
 
