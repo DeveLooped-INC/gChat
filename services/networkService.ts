@@ -844,9 +844,10 @@ export class NetworkService {
                 // Normal cleanup
                 this._activeDownloads.delete(mediaId);
                 this._relayState.delete(mediaId);
-            }
 
-            download.status = 'completed'; // For the listener, it's done
+                // For normal listeners (UI), mark as completed
+                download.status = 'completed';
+            }
             download.listeners.forEach(l => l.onComplete(blob));
 
             // SEND ACK IF WE ARE THE FINAL RECIPIENT
