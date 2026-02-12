@@ -703,6 +703,10 @@ export const useNetworkLayer = ({
                     if (!existingContact.homeNodes.includes(req.fromHomeNode)) {
                         state.setContacts(prev => prev.map(c => c.id === req.fromUserId ? { ...c, homeNodes: [req.fromHomeNode] } : c));
                     }
+                    if (existingContact.handshakeStatus === 'pending') {
+                        console.log(`[Handshake] Contact ${req.fromDisplayName} confirmed active. Status -> completed.`);
+                        state.setContacts(prev => prev.map(c => c.id === req.fromUserId ? { ...c, handshakeStatus: 'completed' } : c));
+                    }
                     return;
                 }
 
