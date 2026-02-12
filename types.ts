@@ -76,6 +76,7 @@ export interface Contact {
   lastActive?: number;
   connectionType?: string;
   latencyMs?: number;
+  handshakeStatus?: 'pending' | 'completed';
 }
 
 export interface AvailablePeer {
