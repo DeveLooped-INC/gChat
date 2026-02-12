@@ -117,7 +117,7 @@ export interface Group {
 
 export interface MediaMetadata {
   id: string;
-  type: 'audio' | 'video' | 'file';
+  type: 'audio' | 'video' | 'file' | 'image';
   mimeType: string;
   size: number;
   duration: number;
