@@ -379,11 +379,19 @@ export const useNetworkLayer = ({
                                 const existing = prev[idx];
                                 const merged = mergePosts(existing, postWithHash);
                                 merged.contentHash = calculatePostHash(merged);
+
+                                storageService.saveItem('posts', merged, currentUser.id).catch(e => console.error("Failed to save merged post", e));
+
                                 const next = [...prev];
                                 next[idx] = merged;
                                 return next;
                             }
                         });
+
+                        // Also persist new items
+                        if (existingIdx === -1) {
+                            storageService.saveItem('posts', postWithHash, currentUser.id).catch(e => console.error("Failed to save new post", e));
+                        }
 
                         // Notification Logic: Only notify if it's a BRAND NEW post we haven't seen before
                         const isRecent = (Date.now() - post.timestamp) < (maxSyncAgeHours * 60 * 60 * 1000);
@@ -589,6 +597,8 @@ export const useNetworkLayer = ({
 
                         // Auto-Download Media
                         if (postData.imageUrl || postData.media) checkAndAutoDownload(postData.imageUrl, postData.media, 'friends', postData.authorId, senderNodeId);
+
+                        storageService.saveItem('posts', postData, currentUser.id).catch(e => console.error("Failed to save friend post", e));
 
                         return [postData, ...prev];
                     });
