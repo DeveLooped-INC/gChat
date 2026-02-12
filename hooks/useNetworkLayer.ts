@@ -1254,27 +1254,59 @@ export const useNetworkLayer = ({
 
         const handleRelayRequest = async (data: { senderId: string, mediaId: string }) => {
             const { senderId, mediaId } = data;
+            const myOnion = state.userRef.current.homeNodeOnion;
+
+            // 1. LOOP PREVENTION: Do not process requests from ourselves
+            if (senderId === myOnion) {
+                console.warn(`[UseNetworkLayer] Loop Detected: Ignoring Relay Request from myself for ${mediaId}`);
+                return;
+            }
+
             console.log(`[UseNetworkLayer] Received Relay Request for ${mediaId} from ${senderId}`);
 
-            // 1. Find the Post/Media in our State
+            // 2. CHECK LOCAL STORAGE: Do we already have it?
+            if (await hasMedia(mediaId)) {
+                console.log(`[UseNetworkLayer] Media ${mediaId} found in local storage. Offering direct serving to ${senderId}`);
+                networkService.sendMessage(senderId, {
+                    id: crypto.randomUUID(),
+                    type: 'MEDIA_RECOVERY_FOUND',
+                    senderId: myOnion,
+                    payload: { mediaId }
+                });
+                return;
+            }
+
+            // 3. PROXY LOGIC: Find the Post/Media in our State
             let foundPost = state.postsRef.current.find(p => p.media?.id === mediaId);
-            // If not in main feed, maybe check threaded comments? (Out of scope for V1)
 
             if (foundPost && foundPost.media && foundPost.originNode) {
                 const trueOrigin = foundPost.originNode;
+                // LOOP PREVENTION 2: Is the Origin actually the requester? (They are asking for their own file? Weird but possible if they lost it)
+                // If the requester IS the origin, we can't help them unless we have a copy (checked above).
+                // If we don't have a copy, we would just ask them for it, which is a loop.
+                if (senderId === trueOrigin) {
+                    console.warn(`[UseNetworkLayer] Requester ${senderId} IS the origin. We don't have a specific copy. Aborting.`);
+                    return;
+                }
+
                 console.log(`[UseNetworkLayer] Found Origin for Relay: ${trueOrigin}. Starting Proxy Download...`);
 
-                // 2. Trigger Proxy Download
-                // We use 'allowUntrusted = true' because we are proxying for a friend.
                 try {
+                    // Trigger Proxy Download
+                    // We need to wait for the download to at least BE REGISTERED as 'active' or 'completed_serving'
+                    // networkService.downloadMedia returns a Promise that resolves when the download session is ESTABLISHED (not finished).
+                    // Actually, looking at networkService, it returns the mediaId immediately or after basic validation.
+                    // We must ensure 'allowUntrusted' is true.
                     await networkService.downloadMedia(trueOrigin, foundPost.media, (p) => { }, true);
 
-                    // 3. Notify the Requester that we have it
-                    console.log(`[UseNetworkLayer] Proxy Download Complete. Notifying ${senderId}`);
+                    // 4. Notify the Requester that we have it (or are getting it)
+                    // Verification: We should ideally check if it's actually legally active in networkService
+
+                    console.log(`[UseNetworkLayer] Proxy Download Active. Notifying ${senderId}`);
                     networkService.sendMessage(senderId, {
                         id: crypto.randomUUID(),
                         type: 'MEDIA_RECOVERY_FOUND',
-                        senderId: state.userRef.current.homeNodeOnion,
+                        senderId: myOnion,
                         payload: { mediaId }
                     });
 
