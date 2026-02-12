@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Contact, Message, UserProfile, ToastMessage, Group, AppRoute, NotificationCategory, MediaMetadata, Post } from '../types';
 import { Search, Send, Lock, ShieldCheck, MoreVertical, Paperclip, MessageSquare, Check, CheckCheck, Clock, WifiOff, Trash2, Ban, Bomb, EyeOff, X, Users, Plus, CheckSquare, Settings, UserMinus, UserPlus, Bell, BellOff, Edit2, Mic, Video, Camera as CameraIcon, Smile, ThumbsUp, ThumbsDown, CornerDownRight, Globe, UserCheck, Quote } from 'lucide-react';
-import { fileToBase64, formatBytes, getTransferConfig, SOCIAL_REACTIONS, DM_REACTIONS, formatUserIdentity } from '../utils';
+import { fileToBase64, formatBytes, getTransferConfig, SOCIAL_REACTIONS, DM_REACTIONS, formatUserIdentity, base64ToArrayBuffer } from '../utils';
 import { MAX_ATTACHMENT_SIZE_BYTES, MAX_ATTACHMENT_SIZE_MB, MAX_CHAT_MEDIA_DURATION } from '../constants';
 import GroupSettingsModal from './GroupSettingsModal';
 import { MediaRecorder, MediaPlayer } from './MediaComponents';
@@ -203,7 +203,36 @@ const Chat: React.FC<ChatProps> = ({
     }
   };
 
-  const handleCameraCapture = (base64: string) => { setAttachment(base64); };
+  const handleCameraCapture = async (base64: string) => {
+    if (selectedChatId) {
+      try {
+        const cleanBase64 = base64.split(',')[1] || base64;
+        const buffer = base64ToArrayBuffer(cleanBase64);
+        const blob = new Blob([buffer], { type: 'image/jpeg' });
+
+        const mediaId = crypto.randomUUID();
+        const accessKey = crypto.randomUUID();
+        await saveMedia(mediaId, blob, accessKey);
+
+        const metadata: MediaMetadata = {
+          id: mediaId,
+          type: 'image',
+          mimeType: 'image/jpeg',
+          size: blob.size,
+          duration: 0,
+          chunkCount: Math.ceil(blob.size / getTransferConfig(blob.size).chunkSize),
+          accessKey,
+          filename: `photo_${Date.now()}.jpg`
+        };
+
+        onSendMessage("", selectedChatId, isEphemeralMode, undefined, metadata, replyingToMessage?.id, messagePrivacy);
+        setShowCamera(false);
+      } catch (e) {
+        console.error("Failed to process camera photo", e);
+        addToast("Error", "Failed to process photo", "error", "chat");
+      }
+    }
+  };
   const handleKeyPress = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
   const handleOptionClick = (action: 'clear' | 'ephemeral' | 'group-settings') => {
     if (action === 'clear' && selectedChatId) { if (window.confirm('Delete all messages?')) onClearHistory(selectedChatId); }
