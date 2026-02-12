@@ -40,6 +40,10 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
     const [feedInitialState, setFeedInitialState] = useState<{ filter: 'public' | 'friends'; authorId?: string; postId?: string } | null>(null);
     const [showUserModal, setShowUserModal] = useState(false);
 
+    // Retry State
+    const inflightMessages = React.useRef(new Set<string>());
+    const inflightHandshakes = React.useRef(new Set<string>());
+
     // --- STATE MANAGEMENT HOOK ---
     const state = useAppState(user);
 
@@ -357,6 +361,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             const user = state.userRef.current;
 
             for (const msg of undeliveredMsgs) {
+                if (inflightMessages.current.has(msg.id)) continue;
+
                 // Skip Group messages for now (too complex to track partials)
                 const group = state.groupsRef.current.find(g => g.id === msg.threadId);
                 if (group) continue;
@@ -369,19 +375,26 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                 if (!isPeerOnline) continue;
 
                 console.log(`Retrying message ${msg.id} to ${contact.displayName}`);
+                inflightMessages.current.add(msg.id);
 
-                // Re-encrypt (or store encrypted? Storing cleartext in state is easier for display, so re-encrypt is fine)
-                const payloadObj = { content: msg.content, media: msg.media, attachment: msg.attachmentUrl, replyToId: msg.replyToId, privacy: msg.privacy };
-                const payloadStr = JSON.stringify(payloadObj);
-                const { nonce, ciphertext } = encryptMessage(payloadStr, contact.encryptionPublicKey, user.keys.encryption.secretKey);
-                const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'MESSAGE', senderId: user.homeNodeOnion, targetUserId: contact.id, payload: { id: msg.id, nonce, ciphertext } };
+                try {
+                    // Re-encrypt (or store encrypted? Storing cleartext in state is easier for display, so re-encrypt is fine)
+                    const payloadObj = { content: msg.content, media: msg.media, attachment: msg.attachmentUrl, replyToId: msg.replyToId, privacy: msg.privacy };
+                    const payloadStr = JSON.stringify(payloadObj);
+                    const { nonce, ciphertext } = encryptMessage(payloadStr, contact.encryptionPublicKey, user.keys.encryption.secretKey);
+                    const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'MESSAGE', senderId: user.homeNodeOnion, targetUserId: contact.id, payload: { id: msg.id, nonce, ciphertext } };
 
-                const success = await networkService.sendMessage(contact.homeNodes[0], packet);
-                if (success) {
-                    state.setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, delivered: true } : m));
+                    const success = await networkService.sendMessage(contact.homeNodes[0], packet);
+                    if (success) {
+                        state.setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, delivered: true } : m));
+                    }
+                } catch (e) {
+                    console.warn(`Message retry failed for ${msg.id}`, e);
+                } finally {
+                    inflightMessages.current.delete(msg.id);
                 }
             }
-        }, 10000); // Check every 10 seconds
+        }, 30000); // Check every 30 seconds
 
         return () => clearInterval(retryInterval);
     }, [state.messagesRef, state.contactsRef, state.peersRef, state.userRef, state.groupsRef, state.setMessages]);
@@ -396,11 +409,13 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
 
             for (const contact of pendingContacts) {
                 if (!contact.homeNodes[0]) continue;
+                if (inflightHandshakes.current.has(contact.id)) continue;
 
                 const isOnline = state.peersRef.current.some(p => p.onionAddress === contact.homeNodes[0] && p.status === 'online');
                 // We try even if offline, triggering a connect attempt
 
                 console.log(`[Handshake] Retrying for ${contact.displayName} at ${contact.homeNodes[0]}...`);
+                inflightHandshakes.current.add(contact.id);
 
                 const reqPayload: ConnectionRequest = {
                     id: crypto.randomUUID(),
@@ -426,9 +441,11 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                     await networkService.sendMessage(contact.homeNodes[0], packet);
                 } catch (e) {
                     console.warn(`[Handshake] Retry failed for ${contact.displayName}`, e);
+                } finally {
+                    inflightHandshakes.current.delete(contact.id);
                 }
             }
-        }, 30000); // Every 30 seconds
+        }, 90000); // Every 90 seconds
 
         return () => clearInterval(handshakeInterval);
     }, [state.contactsRef, state.userRef, state.peersRef]);
