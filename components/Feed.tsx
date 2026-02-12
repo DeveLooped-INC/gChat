@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Post, Contact, UserProfile, ToastMessage, AppRoute, MediaMetadata, NotificationCategory, Comment } from '../types';
 import { Heart, MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban, Paperclip, CheckCircle, ShieldAlert, UserPlus, FileJson, Copy, UserMinus, UserX, ChevronUp, EyeOff } from 'lucide-react';
-import { fileToBase64, getTransferConfig, SOCIAL_REACTIONS, formatUserIdentity, formatBytes } from '../utils';
+import { fileToBase64, getTransferConfig, SOCIAL_REACTIONS, formatUserIdentity, formatBytes, base64ToArrayBuffer } from '../utils';
 import { MAX_ATTACHMENT_SIZE_BYTES, MAX_ATTACHMENT_SIZE_MB, MAX_POST_MEDIA_DURATION } from '../constants';
 import { signData, verifySignature } from '../services/cryptoService';
 import { createPostPayload, mergePosts, appendReply, updateCommentTree, findCommentInTree } from '../utils/dataHelpers';
@@ -269,7 +269,39 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
         }
     };
 
-    const handleCameraCapture = (base64: string) => { setAttachedImage(base64); };
+    const handleCameraCapture = async (base64: string) => {
+        try {
+            // 1. Convert Base64 to Blob
+            // Remove header "data:image/jpeg;base64," if present
+            const cleanBase64 = base64.split(',')[1] || base64;
+            const buffer = base64ToArrayBuffer(cleanBase64);
+            const blob = new Blob([buffer], { type: 'image/jpeg' });
+
+            // 2. Save Media
+            const mediaId = crypto.randomUUID();
+            const accessKey = crypto.randomUUID();
+            await saveMedia(mediaId, blob, accessKey);
+
+            // 3. Create Metadata
+            const metadata: MediaMetadata = {
+                id: mediaId,
+                type: 'image',
+                mimeType: 'image/jpeg',
+                size: blob.size,
+                duration: 0,
+                chunkCount: Math.ceil(blob.size / getTransferConfig(blob.size).chunkSize),
+                accessKey,
+                filename: `capture_${Date.now()}.jpg`
+            };
+
+            setAttachedMedia(metadata);
+            // attachedImage is no longer used for camera captures
+            setAttachedImage(null);
+        } catch (e) {
+            console.error("Camera process failed", e);
+            addToast('Error', 'Failed to process camera image.', 'error', 'admin');
+        }
+    };
     const triggerFileSelect = () => { fileInputRef.current?.click(); };
     const handleVerifyHash = (post: Post) => {
         // Verify using standard helper
