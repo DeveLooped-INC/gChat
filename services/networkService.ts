@@ -249,6 +249,7 @@ export class NetworkService {
                 // The ONLY exception is a 'CONNECTION_REQUEST' (Friend Request/Handshake).
                 const isTrusted = this._trustedPeers.has(sender);
                 const isConnectionRequest = packet.type === 'CONNECTION_REQUEST';
+
                 // PROXY FIX: Allow MEDIA_REQUEST from untrusted if they have the ID (we will verify Access Key in handler)
                 const isMediaRequest = packet.type === 'MEDIA_REQUEST';
                 // PROXY FIX: Allow MEDIA_CHUNK from untrusted (we verify it belongs to active DL in handler)
@@ -260,7 +261,18 @@ export class NetworkService {
                 // RELAY ACK: Allow ACK packets
                 const isAck = packet.type === 'MEDIA_TRANSFER_ACK';
 
-                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk && !isRelay && !isExit && !isAck) {
+                // GOSSIP FIX: Allow Public Broadcast Interactions from Mesh (Daisy Chain)
+                // These must be allowed to propagate even from untrusted intermediaries.
+                const isGossip = [
+                    'POST', 'EDIT_POST', 'DELETE_POST',
+                    'COMMENT', 'COMMENT_VOTE', 'COMMENT_REACTION',
+                    'VOTE', 'REACTION',
+                    'INVENTORY_ANNOUNCE', 'INVENTORY_SYNC_REQUEST', 'INVENTORY_SYNC_RESPONSE',
+                    'FETCH_POST', 'POST_DATA',
+                    'ANNOUNCE_PEER' // Discovery
+                ].includes(packet.type);
+
+                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk && !isRelay && !isExit && !isAck && !isGossip) {
                     this.log('WARN', 'NETWORK', `Blocked packet ${packet.type} from untrusted source ${sender}. Firewall active.`);
                     return; // DROP PACKET
                 }
