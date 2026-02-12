@@ -226,14 +226,14 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         }
     }, [isOnline, addNotification, state.setNodeConfig, state.userRef, state.peersRef]);
 
-    const handleAddUserContact = useCallback(async (pubKey: string, homeNode: string, name: string, encryptionKey?: string) => {
+    const handleAddUserContact = useCallback(async (pubKey: string, homeNode: string, name: string, encryptionKey?: string, initialHandshakeStatus: 'pending' | 'completed' = 'pending') => {
         const cleanNode = homeNode.trim().toLowerCase();
         const user = state.userRef.current;
         if (state.contactsRef.current.some(c => c.id === pubKey)) {
             if (encryptionKey) state.setContacts(prev => prev.map(c => c.id === pubKey ? { ...c, encryptionPublicKey: encryptionKey } : c));
             return;
         }
-        const newContact: Contact = { id: pubKey, encryptionPublicKey: encryptionKey, username: name.toLowerCase().replace(/\s/g, '_'), displayName: name, homeNodes: [cleanNode], status: 'offline', connectionType: 'Onion' };
+        const newContact: Contact = { id: pubKey, encryptionPublicKey: encryptionKey, username: name.toLowerCase().replace(/\s/g, '_'), displayName: name, homeNodes: [cleanNode], status: 'offline', connectionType: 'Onion', handshakeStatus: initialHandshakeStatus };
         state.setContacts(prev => { if (prev.some(c => c.id === pubKey)) return prev; return [...prev, newContact]; });
         if (!state.peersRef.current.some(p => p.onionAddress === cleanNode)) handleAddPeer(cleanNode);
         else networkService.connect(cleanNode);
@@ -250,7 +250,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
     const handleAcceptRequest = useCallback((req: ConnectionRequest) => {
         const user = state.userRef.current;
         state.setConnectionRequests(prev => prev.filter(r => r.id !== req.id));
-        handleAddUserContact(req.fromUserId, req.fromHomeNode, req.fromDisplayName, req.fromEncryptionPublicKey);
+        handleAddUserContact(req.fromUserId, req.fromHomeNode, req.fromDisplayName, req.fromEncryptionPublicKey, 'completed');
         const reqPayload: ConnectionRequest = { id: crypto.randomUUID(), fromUserId: user.id, fromUsername: user.username, fromDisplayName: user.displayName, fromHomeNode: user.homeNodeOnion, fromEncryptionPublicKey: user.keys.encryption.publicKey, timestamp: Date.now() };
         // SIGN THE RESPONSE
         reqPayload.signature = signData(reqPayload, user.keys.signing.secretKey);
@@ -385,6 +385,53 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
 
         return () => clearInterval(retryInterval);
     }, [state.messagesRef, state.contactsRef, state.peersRef, state.userRef, state.groupsRef, state.setMessages]);
+
+    // RETRY LOGIC FOR PENDING HANDSHAKES
+    useEffect(() => {
+        const handshakeInterval = setInterval(async () => {
+            const pendingContacts = state.contactsRef.current.filter(c => c.handshakeStatus === 'pending');
+            if (pendingContacts.length === 0) return;
+
+            const user = state.userRef.current;
+
+            for (const contact of pendingContacts) {
+                if (!contact.homeNodes[0]) continue;
+
+                const isOnline = state.peersRef.current.some(p => p.onionAddress === contact.homeNodes[0] && p.status === 'online');
+                // We try even if offline, triggering a connect attempt
+
+                console.log(`[Handshake] Retrying for ${contact.displayName} at ${contact.homeNodes[0]}...`);
+
+                const reqPayload: ConnectionRequest = {
+                    id: crypto.randomUUID(),
+                    fromUserId: user.id,
+                    fromUsername: user.username,
+                    fromDisplayName: user.displayName,
+                    fromHomeNode: user.homeNodeOnion,
+                    fromEncryptionPublicKey: user.keys.encryption.publicKey,
+                    timestamp: Date.now()
+                };
+                reqPayload.signature = signData(reqPayload, user.keys.signing.secretKey);
+
+                const packet: NetworkPacket = {
+                    id: crypto.randomUUID(),
+                    type: 'CONNECTION_REQUEST',
+                    senderId: user.homeNodeOnion,
+                    targetUserId: contact.id,
+                    payload: reqPayload
+                };
+
+                try {
+                    await networkService.connect(contact.homeNodes[0]);
+                    await networkService.sendMessage(contact.homeNodes[0], packet);
+                } catch (e) {
+                    console.warn(`[Handshake] Retry failed for ${contact.displayName}`, e);
+                }
+            }
+        }, 30000); // Every 30 seconds
+
+        return () => clearInterval(handshakeInterval);
+    }, [state.contactsRef, state.userRef, state.peersRef]);
 
     const handleSendTyping = useCallback((contactId: string) => {
         const user = state.userRef.current;
