@@ -18,6 +18,7 @@ import UserInfoModal from './components/UserInfoModal';
 import { useAppState } from './hooks/useAppState';
 import { useNetworkLayer } from './hooks/useNetworkLayer';
 import { appendReply, updateCommentTree, createPostPayload } from './utils/dataHelpers';
+import { storageService } from './services/storage';
 
 const USER_STORAGE_KEY = 'gchat_user_profile';
 const MAX_GOSSIP_HOPS = 6;
@@ -644,6 +645,12 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const contentHash = calculatePostHash(post);
         const postWithHash = { ...post, contentHash };
         state.setPosts(prev => [postWithHash, ...prev]);
+
+        // Explicitly persist the new post to ensure it's saved against restart
+        storageService.saveItem('posts', postWithHash, user.id).catch(err => {
+            console.error("Failed to save post explicitly", err);
+        });
+
         if (post.privacy === 'public') {
             broadcastPostState(postWithHash);
         } else if (post.privacy === 'friends') {
