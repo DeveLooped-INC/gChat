@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Video, Play, Pause, Square, Download, Trash2, Loader2, FileAudio, FileVideo, AlertTriangle, RefreshCw, Radio, CheckCircle, Cloud, File, FileText, Image as ImageIcon, Camera, X } from 'lucide-react';
 import { formatDuration, formatBytes } from '../utils';
@@ -440,6 +439,12 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
         if (media.type === 'video') {
             return (
                 <video src={blobUrl} controls autoPlay={autoPlay} className="w-full min-w-[260px] sm:min-w-[300px] max-h-96 rounded-lg bg-black border border-slate-700" onError={() => setError("Playback Error")} />
+            );
+        } else if (media.type === 'image') {
+            return (
+                <div className="w-full min-w-[260px] sm:min-w-[300px] max-h-96 rounded-lg bg-black border border-slate-700 flex items-center justify-center overflow-hidden">
+                    <img src={blobUrl} className="max-w-full max-h-full object-contain" alt="media" />
+                </div>
             );
         } else if (media.type === 'audio') {
             return (
