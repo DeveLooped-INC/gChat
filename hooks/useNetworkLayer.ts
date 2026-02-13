@@ -551,6 +551,10 @@ export const useNetworkLayer = ({
                                 if (verifySignature(createPostPayload(inc), inc.truthHash, inc.authorPublicKey)) {
                                     next.push(incWithHash);
                                     addedCount++;
+                                    // FIX: Persist and Propagate New Historical Entires
+                                    storageService.saveItem('posts', incWithHash, currentUser.id).catch(e => console.error("Failed to save new sync post", e));
+                                    // Announce this new find to our peers (Gossip)
+                                    broadcastPostState(incWithHash);
                                 }
                             } else {
                                 const existing = next[idx];
@@ -561,6 +565,11 @@ export const useNetworkLayer = ({
                                         merged.contentHash = calculatePostHash(merged);
                                         next[idx] = merged;
                                         addedCount++;
+
+                                        // FIX: Persist and Propagate Updates (Comments/Reactions)
+                                        storageService.saveItem('posts', merged, currentUser.id).catch(e => console.error("Failed to save merged sync post", e));
+                                        // Announce the update to our peers
+                                        broadcastPostState(merged);
                                     }
                                 }
                             }
