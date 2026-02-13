@@ -641,12 +641,14 @@ export const useNetworkLayer = ({
                 const { userId, displayName, avatarUrl, bio } = packet.payload;
                 state.setContacts(prev => prev.map(c => {
                     if (c.id === userId) {
-                        return {
+                        const updated = {
                             ...c,
                             displayName: displayName || c.displayName,
                             avatarUrl: avatarUrl || c.avatarUrl,
                             bio: bio || c.bio
                         };
+                        storageService.saveItem('contacts', updated, currentUser.id);
+                        return updated;
                     }
                     return c;
                 }));
@@ -702,7 +704,9 @@ export const useNetworkLayer = ({
                 if (req.fromEncryptionPublicKey) {
                     state.setContacts(prev => prev.map(c => {
                         if (c.id === req.fromUserId && (!c.encryptionPublicKey || c.encryptionPublicKey !== req.fromEncryptionPublicKey)) {
-                            return { ...c, encryptionPublicKey: req.fromEncryptionPublicKey };
+                            const updated = { ...c, encryptionPublicKey: req.fromEncryptionPublicKey };
+                            storageService.saveItem('contacts', updated, currentUser.id);
+                            return updated;
                         }
                         return c;
                     }));
@@ -711,11 +715,25 @@ export const useNetworkLayer = ({
                 const existingContact = state.contactsRef.current.find(c => c.id === req.fromUserId);
                 if (existingContact) {
                     if (!existingContact.homeNodes.includes(req.fromHomeNode)) {
-                        state.setContacts(prev => prev.map(c => c.id === req.fromUserId ? { ...c, homeNodes: [req.fromHomeNode] } : c));
+                        state.setContacts(prev => prev.map(c => {
+                            if (c.id === req.fromUserId) {
+                                const updated = { ...c, homeNodes: [req.fromHomeNode] };
+                                storageService.saveItem('contacts', updated, currentUser.id);
+                                return updated;
+                            }
+                            return c;
+                        }));
                     }
                     if (existingContact.handshakeStatus === 'pending') {
                         console.log(`[Handshake] Contact ${req.fromDisplayName} confirmed active. Status -> completed.`);
-                        state.setContacts(prev => prev.map(c => c.id === req.fromUserId ? { ...c, handshakeStatus: 'completed' } : c));
+                        state.setContacts(prev => prev.map(c => {
+                            if (c.id === req.fromUserId) {
+                                const updated = { ...c, handshakeStatus: 'completed' as const }; // Explicit cast for TS
+                                storageService.saveItem('contacts', updated, currentUser.id);
+                                return updated;
+                            }
+                            return c;
+                        }));
                     }
                     return;
                 }
@@ -723,6 +741,7 @@ export const useNetworkLayer = ({
                 state.setConnectionRequests(prev => {
                     if (prev.some(r => r.fromUserId === req.fromUserId)) return prev;
                     addNotificationRef.current('New Connection', `${req.fromDisplayName} wants to connect.`, 'success', 'admin', AppRoute.CONTACTS);
+                    storageService.saveItem('requests', req, currentUser.id);
                     return [...prev, req];
                 });
 
@@ -771,6 +790,7 @@ export const useNetworkLayer = ({
                         };
                         state.setMessages(prev => {
                             if (prev.some(m => m.id === newMsg.id)) return prev;
+                            storageService.saveItem('messages', newMsg, currentUser.id);
                             return [...prev, newMsg];
                         });
 
@@ -826,6 +846,7 @@ export const useNetworkLayer = ({
                 state.setGroups(prev => {
                     if (prev.some(g => g.id === group.id)) return prev;
                     addNotificationRef.current('Group Invite', `Added to group "${group.name}"`, 'success', 'chat', AppRoute.CHAT, group.id);
+                    storageService.saveItem('groups', group, currentUser.id);
                     return [...prev, group];
                 });
                 break;
@@ -836,9 +857,19 @@ export const useNetworkLayer = ({
                 state.setGroups(prev => {
                     const exists = prev.some(g => g.id === updatedGroup.id);
                     if (exists) {
-                        return prev.map(g => g.id === updatedGroup.id ? { ...updatedGroup, isMuted: g.isMuted } : g);
+                        return prev.map(g => {
+                            if (g.id === updatedGroup.id) {
+                                const updated = { ...updatedGroup, isMuted: g.isMuted };
+                                storageService.saveItem('groups', updated, currentUser.id);
+                                return updated;
+                            }
+                            return g;
+                        });
                     } else {
-                        if (updatedGroup.members.includes(currentUser.id)) return [...prev, updatedGroup];
+                        if (updatedGroup.members.includes(currentUser.id)) {
+                            storageService.saveItem('groups', updatedGroup, currentUser.id);
+                            return [...prev, updatedGroup];
+                        }
                         return prev;
                     }
                 });
@@ -877,12 +908,14 @@ export const useNetworkLayer = ({
             case 'GROUP_DELETE': {
                 const { groupId } = packet.payload;
                 state.setGroups(prev => prev.filter(g => g.id !== groupId));
+                storageService.deleteItem('groups', groupId);
                 break;
             }
 
             case 'DELETE_POST':
                 const { postId: delPostId } = packet.payload;
                 state.setPosts(prev => prev.filter(p => p.id !== delPostId));
+                storageService.deleteItem('posts', delPostId);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
 
@@ -893,6 +926,7 @@ export const useNetworkLayer = ({
                     if (p.id === editPostId) {
                         const updated = { ...p, content: newContent, isEdited: true, contentHash: calculatePostHash({ ...p, content: newContent, isEdited: true }) };
                         editedPost = updated;
+                        storageService.saveItem('posts', updated, currentUser.id);
                         return updated;
                     }
                     return p;
@@ -918,6 +952,7 @@ export const useNetworkLayer = ({
                     }
                     updatedPost.contentHash = calculatePostHash(updatedPost);
                     postAfterComment = updatedPost;
+                    storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
 
@@ -954,6 +989,7 @@ export const useNetworkLayer = ({
                     };
                     updatedPost.contentHash = calculatePostHash(updatedPost);
                     postAfterCV = updatedPost;
+                    storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
 
@@ -997,6 +1033,7 @@ export const useNetworkLayer = ({
                     };
                     updatedPost.contentHash = calculatePostHash(updatedPost);
                     postAfterCR = updatedPost;
+                    storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
 
@@ -1023,6 +1060,7 @@ export const useNetworkLayer = ({
                     const updatedPost = { ...p, votes: { ...p.votes, [userId]: type } };
                     updatedPost.contentHash = calculatePostHash(updatedPost);
                     postAfterVote = updatedPost;
+                    storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
 
@@ -1058,6 +1096,7 @@ export const useNetworkLayer = ({
                     const updatedPost = { ...p, reactions: currentReactions };
                     updatedPost.contentHash = calculatePostHash(updatedPost);
                     postAfterReact = updatedPost;
+                    storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
 
