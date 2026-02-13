@@ -1,4 +1,3 @@
-
 import jsSha3 from 'js-sha3';
 
 // @ts-ignore
@@ -58,13 +57,13 @@ export const toBase32 = (buffer: Uint8Array): string => {
 
 // UI Helper for the new Identity System
 export const formatUserIdentity = (fullUsername: string): { handle: string; suffix: string | null } => {
-    const parts = fullUsername.split('.');
-    if (parts.length > 1) {
-        const suffix = parts.pop()!;
-        const handle = parts.join('.');
-        return { handle, suffix: `.${suffix}` };
-    }
-    return { handle: fullUsername, suffix: null };
+  const parts = fullUsername.split('.');
+  if (parts.length > 1) {
+    const suffix = parts.pop()!;
+    const handle = parts.join('.');
+    return { handle, suffix: `.${suffix}` };
+  }
+  return { handle: fullUsername, suffix: null };
 };
 
 export const formatBytes = (bytes: number, decimals = 2) => {
@@ -83,16 +82,16 @@ export const formatDuration = (seconds: number) => {
 };
 
 export interface TransferConfig {
-    chunkSize: number;
-    concurrency: number;
+  chunkSize: number;
+  concurrency: number;
 }
 
 export const getTransferConfig = (bytes: number): TransferConfig => {
-    // Tor favors fewer, larger cells over many small interactions due to RTT.
-    // We use 256KB across the board to be safe against timeouts on slow circuits.
-    // The previous 512KB was occasionally causing timeouts on 2min connection limits.
-    // With AIMD concurrency, 256KB parallel requests will saturate the link effectively.
-    return { chunkSize: 256 * 1024, concurrency: 2 };
+  // Tor favors fewer, larger cells over many small interactions due to RTT.
+  // We use 256KB across the board to be safe against timeouts on slow circuits.
+  // The previous 512KB was occasionally causing timeouts on 2min connection limits.
+  // With AIMD concurrency, 256KB parallel requests will saturate the link effectively.
+  return { chunkSize: 256 * 1024, concurrency: 2 };
 };
 
 // --- EMOTICONS ---
@@ -109,7 +108,7 @@ export const generateRandomProfile = () => {
   const num = Math.floor(Math.random() * 999);
   const displayName = `${adj} ${noun}`;
   const username = `${adj.toLowerCase()}_${noun.toLowerCase()}_${num}`;
-  
+
   return { displayName, username };
 };
 
@@ -119,24 +118,47 @@ export const calculateObjectSize = (obj: any): number => {
 };
 
 export const calculatePostHash = (post: any): string => {
-    // IMPORTANT: This payload must include mutable fields (comments/votes) 
-    // so that the hash changes when activity happens.
-    // This allows the Inventory Sync protocol to detect outdated posts.
-    const payload = {
-        id: post.id,
-        content: post.content,
-        authorId: post.authorId,
-        timestamp: post.timestamp,
-        mediaId: post.media?.id,
-        imageUrl: post.imageUrl?.length, 
-        isEdited: post.isEdited,
-        // --- Social Sync Fields ---
-        commentsCount: post.comments,
-        latestCommentTime: post.commentsList && post.commentsList.length > 0 
-            ? post.commentsList[post.commentsList.length-1].timestamp 
-            : 0,
-        votesCount: Object.keys(post.votes || {}).length,
-        reactionsCount: Object.keys(post.reactions || {}).length
-    };
-    return sha3_256(JSON.stringify(payload));
+  // IMPORTANT: This payload must include mutable fields (comments/votes) 
+  // so that the hash changes when activity happens.
+  // This allows the Inventory Sync protocol to detect outdated posts.
+
+  // Sort keys for deterministic hashing
+  const sortedVotes = Object.keys(post.votes || {}).sort().reduce((acc: any, key) => {
+    acc[key] = post.votes[key];
+    return acc;
+  }, {});
+
+  const sortedReactions = Object.keys(post.reactions || {}).sort().reduce((acc: any, key) => {
+    acc[key] = (post.reactions[key] || []).sort();
+    return acc;
+  }, {});
+
+  // Simplify comments to a content-based structure
+  // We can't just JSON.stringify the list because order might vary or metadata might shift.
+  // We'll map to ID + Timestamp + Content + Author
+  const simplifyComment = (c: any): string => {
+    let str = `${c.id}:${c.timestamp}:${c.content}:${c.authorId}`;
+    // Recurse for replies
+    if (c.replies && c.replies.length > 0) {
+      str += `:[${c.replies.map(simplifyComment).join('|')}]`;
+    }
+    return str;
+  };
+
+  const commentsHashStr = (post.commentsList || []).map(simplifyComment).join(';');
+
+  const payload = {
+    id: post.id,
+    content: post.content,
+    authorId: post.authorId,
+    timestamp: post.timestamp,
+    mediaId: post.media?.id,
+    imageUrl: post.imageUrl?.length,
+    isEdited: post.isEdited,
+    // --- Social Sync Fields ---
+    commentsHash: sha3_256(commentsHashStr),
+    votes: sortedVotes,
+    reactions: sortedReactions
+  };
+  return sha3_256(JSON.stringify(payload));
 };
