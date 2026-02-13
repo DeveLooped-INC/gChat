@@ -383,6 +383,7 @@ export class NetworkService {
                 // Retry Interval: 45s - Tor is slow, and we don't want to spam retries/AVALANCHE
                 // 10s was too aggressive causing "ERR_CANCELED" loops when requests timed out at 30s.
                 if (!dl.lastRecoveryAttempt || (now - dl.lastRecoveryAttempt) > 45000) {
+                    this.log('DEBUG', 'NETWORK', `Recovery Interval Check: ${now} - ${dl.lastRecoveryAttempt || 0} = ${now - (dl.lastRecoveryAttempt || 0)}ms`);
                     dl.lastRecoveryAttempt = now;
                     this.log('INFO', 'NETWORK', `Broadcasting Mesh Relay Retry for ${dl.id}...`);
                     this.attemptMeshRecovery(dl.id, dl.metadata.originNode);
@@ -400,6 +401,10 @@ export class NetworkService {
                 if (now - req.sentAt > dynamicTimeout) {
                     if (req.retries >= 10) {
                         this.log('WARN', 'NETWORK', `Chunk ${req.index} failed 10 times. Triggering Mesh Recovery.`);
+
+                        // FIX: Set lastRecoveryAttempt immediately to prevent "double tap" by the periodic check
+                        dl.lastRecoveryAttempt = Date.now();
+
                         this.attemptMeshRecovery(dl.id, dl.peerOnion); // Pass current peer as Origin Hint
                         dl.status = 'recovering';
                         dl.listeners.forEach(l => l.onError("Source offline. Searching mesh..."));
