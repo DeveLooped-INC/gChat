@@ -1,13 +1,12 @@
-
 import { Post, Comment, MediaMetadata } from '../types';
 
 // Standardize payload creation for both signing and verification
 // This ensures fields like 'media' and 'imageUrl' are treated consistently (null vs undefined)
-export const createPostPayload = (post: { 
-    authorId: string; 
-    content: string; 
-    imageUrl?: string | null; 
-    media?: MediaMetadata; 
+export const createPostPayload = (post: {
+    authorId: string;
+    content: string;
+    imageUrl?: string | null;
+    media?: MediaMetadata;
     timestamp: number;
     location?: string;
     hashtags?: string[];
@@ -15,7 +14,7 @@ export const createPostPayload = (post: {
     authorId: post.authorId,
     content: post.content,
     // Strict null check: Ensure we output null if it's falsy, to match how it might be deserialized
-    imageUrl: post.imageUrl || null, 
+    imageUrl: post.imageUrl || null,
     // Media is undefined if not present. JSON.stringify removes undefined keys.
     media: post.media || undefined,
     timestamp: post.timestamp,
@@ -63,14 +62,47 @@ export const appendReply = (comments: Comment[], parentId: string, newComment: C
     });
 };
 
+// Helper to merge comments (Union by ID, recurse for replies)
+const mergeComments = (localHelpers: Comment[], incomingHelpers: Comment[]): Comment[] => {
+    const allComments = new Map<string, Comment>();
+
+    // Index local
+    localHelpers.forEach(c => allComments.set(c.id, c));
+
+    // Merge incoming
+    incomingHelpers.forEach(inc => {
+        const existing = allComments.get(inc.id);
+        if (existing) {
+            // Recursive merge for replies
+            const mergedReplies = mergeComments(existing.replies || [], inc.replies || []);
+            // Merge votes
+            const mergedVotes = { ...existing.votes, ...inc.votes };
+            // Merge reactions
+            const mergedReactions: Record<string, string[]> = { ...existing.reactions };
+            Object.entries(inc.reactions || {}).forEach(([emoji, users]) => {
+                const current = mergedReactions[emoji] || [];
+                mergedReactions[emoji] = Array.from(new Set([...current, ...users]));
+            });
+
+            allComments.set(inc.id, {
+                ...existing, // Keep local ephemeral state
+                ...inc, // Overwrite content if changed (assuming incoming is newer/authoritative for now)
+                replies: mergedReplies,
+                votes: mergedVotes,
+                reactions: mergedReactions
+            });
+        } else {
+            allComments.set(inc.id, inc);
+        }
+    });
+
+    return Array.from(allComments.values()).sort((a, b) => a.timestamp - b.timestamp);
+};
+
 // Helper to merge posts (Union of comments, votes, reactions)
 export const mergePosts = (local: Post, incoming: Post): Post => {
-    // 1. Merge Comments (Union by ID)
-    const allComments = [...local.commentsList, ...incoming.commentsList];
-    const uniqueCommentsMap = new Map();
-    allComments.forEach(c => uniqueCommentsMap.set(c.id, c));
-    const uniqueComments = Array.from(uniqueCommentsMap.values()) as Comment[];
-    uniqueComments.sort((a, b) => a.timestamp - b.timestamp);
+    // 1. Merge Comments (Recursive)
+    const mergedCommentsList = mergeComments(local.commentsList, incoming.commentsList);
 
     // 2. Merge Votes (Incoming overwrites local if conflict, but preserving unique keys)
     const mergedVotes = { ...local.votes, ...incoming.votes };
@@ -88,8 +120,8 @@ export const mergePosts = (local: Post, incoming: Post): Post => {
     return {
         ...local, // Keep local ephemeral props if any
         ...incoming, // Apply content updates
-        comments: uniqueComments.length,
-        commentsList: uniqueComments,
+        comments: mergedCommentsList.length,
+        commentsList: mergedCommentsList,
         votes: mergedVotes,
         reactions: mergedReactions
     };
