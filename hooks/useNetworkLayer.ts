@@ -190,13 +190,35 @@ export const useNetworkLayer = ({
 
         if (possibleRecipients.length === 0) return;
 
-        const recipients = possibleRecipients.sort(() => 0.5 - Math.random()).slice(0, 4);
+        // Prioritize Online Peers
+        const onlinePeers = state.peersRef.current
+            .filter(p => p.status === 'online')
+            .map(p => p.onionAddress);
 
-        recipients.forEach(async (recipient) => {
-            await new Promise(r => setTimeout(r, Math.random() * 300));
-            networkService.sendMessage(recipient, nextPacket);
+        const onlineRecipients = possibleRecipients.filter(r => onlinePeers.includes(r));
+        const offlineRecipients = possibleRecipients.filter(r => !onlinePeers.includes(r));
+
+        // Pick up to 3 recipients, prefer online
+        const targets: string[] = [];
+        const pickRandom = (arr: string[], count: number) => arr.sort(() => 0.5 - Math.random()).slice(0, count);
+
+        targets.push(...pickRandom(onlineRecipients, 3));
+
+        // If we don't have enough online, fill with offline (maybe they just woke up)
+        if (targets.length < 3) {
+            targets.push(...pickRandom(offlineRecipients, 3 - targets.length));
+        }
+
+        targets.forEach(async (recipient) => {
+            try {
+                // Stagger to avoid congestion
+                await new Promise(r => setTimeout(r, Math.random() * 500 + 100));
+                await networkService.sendMessage(recipient, nextPacket);
+            } catch (err) {
+                console.warn(`[Gossip] Failed to relay to ${recipient}`, err);
+            }
         });
-    }, [state.peersRef, state.userRef]);
+    }, [state.peersRef, state.userRef, state.contactsRef]); // Added contactsRef dependency
 
     // --- PACKET HANDLING LOGIC ---
     // We use a REF to hold the latest version of this function to avoid stale closures in the socket listener
