@@ -75,13 +75,19 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const id = crypto.randomUUID();
         const newNotification: NotificationItem = { id, title, message, type, category, timestamp: Date.now(), read: false, linkRoute, linkId };
         state.setNotifications(prev => [newNotification, ...prev].slice(0, 100));
+
+        // PERSISTENCE: Save new notification
+        storageService.saveItem('notifications', newNotification, state.userRef.current.id).catch(err => {
+            console.error("Failed to save notification", err);
+        });
+
         const action = (linkRoute) ? () => handleNotificationNavigation(linkRoute, linkId) : undefined;
 
         // Check muted types
         if (!state.notificationSettings.mutedCategories.includes(category)) {
             setToasts(prev => [...prev, { id, title, message, type, category, action }]);
         }
-    }, [handleNotificationNavigation, state.setNotifications, state.notificationSettings]);
+    }, [handleNotificationNavigation, state.setNotifications, state.notificationSettings, state.userRef]);
 
     const performGracefulShutdown = useCallback(async () => {
         if (isShuttingDown) return;
@@ -150,10 +156,34 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         return () => clearInterval(gcInterval);
     }, [state.pruneMessages]);
 
-    const handleClearNotifications = () => state.setNotifications([]);
-    const handleMarkNotificationsRead = () => state.setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    const handleClearNotifications = () => {
+        state.setNotifications([]);
+        storageService.clearStore('notifications').catch(e => console.error("Failed to clear notifications", e));
+    };
+
+    const handleMarkNotificationsRead = () => {
+        state.setNotifications(prev => {
+            const updated = prev.map(n => ({ ...n, read: true }));
+            // Batch save isn't available, but we can rely on syncState or just loop
+            // Since syncState exists in useAppState, maybe we rely on it? 
+            // The user wanted EXPLICIT persistence.
+            // Let's use syncState for bulk updates to avoid 100 DB calls.
+            // Triggering the state update will trigger syncState effect.
+            // But to be safe per requirements:
+            storageService.syncState('notifications', updated, state.userRef.current.id).catch(e => console.error("Failed to sync read status", e));
+            return updated;
+        });
+    };
+
     const handleNotificationClick = (item: NotificationItem) => {
-        state.setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, read: true } : n));
+        state.setNotifications(prev => prev.map(n => {
+            if (n.id === item.id) {
+                const updated = { ...n, read: true };
+                storageService.saveItem('notifications', updated, state.userRef.current.id).catch(e => console.error("Failed to save read status", e));
+                return updated;
+            }
+            return n;
+        }));
         if (item.linkRoute) handleNotificationNavigation(item.linkRoute, item.linkId);
     };
 
