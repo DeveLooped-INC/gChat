@@ -76,10 +76,6 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const newNotification: NotificationItem = { id, title, message, type, category, timestamp: Date.now(), read: false, linkRoute, linkId };
         state.setNotifications(prev => [newNotification, ...prev].slice(0, 100));
 
-        // PERSISTENCE: Save new notification
-        storageService.saveItem('notifications', newNotification, state.userRef.current.id).catch(err => {
-            console.error("Failed to save notification", err);
-        });
 
         const action = (linkRoute) ? () => handleNotificationNavigation(linkRoute, linkId) : undefined;
 
@@ -158,7 +154,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
 
     const handleClearNotifications = () => {
         state.setNotifications([]);
-        storageService.clearStore('notifications').catch(e => console.error("Failed to clear notifications", e));
+
     };
 
     const handleMarkNotificationsRead = () => {
@@ -170,7 +166,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             // Let's use syncState for bulk updates to avoid 100 DB calls.
             // Triggering the state update will trigger syncState effect.
             // But to be safe per requirements:
-            storageService.syncState('notifications', updated, state.userRef.current.id).catch(e => console.error("Failed to sync read status", e));
+
             return updated;
         });
     };
@@ -179,7 +175,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         state.setNotifications(prev => prev.map(n => {
             if (n.id === item.id) {
                 const updated = { ...n, read: true };
-                storageService.saveItem('notifications', updated, state.userRef.current.id).catch(e => console.error("Failed to save read status", e));
+
                 return updated;
             }
             return n;
@@ -280,7 +276,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'CONNECTION_REQUEST', senderId: user.homeNodeOnion, targetUserId: pubKey, payload: reqPayload };
         networkService.connect(cleanNode).then(() => networkService.sendMessage(cleanNode, packet));
         addNotification('Request Sent', `Handshake sent to ${name}`, 'success', 'admin');
-        storageService.saveItem('contacts', newContact, user.id);
+
     }, [handleAddPeer, addNotification, state.contactsRef, state.userRef, state.setContacts, state.peersRef]);
 
     const handleAcceptRequest = useCallback((req: ConnectionRequest) => {
@@ -293,12 +289,12 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
 
         const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'CONNECTION_REQUEST', senderId: user.homeNodeOnion, targetUserId: req.fromUserId, payload: reqPayload };
         networkService.sendMessage(req.fromHomeNode, packet);
-        storageService.deleteItem('requests', req.id);
+
     }, [handleAddUserContact, state.userRef, state.setConnectionRequests]);
 
     const handleDeclineRequest = useCallback((reqId: string) => {
         state.setConnectionRequests(prev => prev.filter(r => r.id !== reqId));
-        storageService.deleteItem('requests', reqId);
+
     }, [state.setConnectionRequests]);
 
     const handleDeleteContact = useCallback((contactId: string) => {
@@ -327,7 +323,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             });
         });
         addNotification('Contact Removed', 'Connection severed. Feed and Groups updated.', 'info', 'admin');
-        storageService.deleteItem('contacts', contactId);
+
     }, [addNotification, state.userRef, state.contactsRef, state.setContacts, state.setPosts, state.setGroups]);
 
     const handleSendMessage = useCallback(async (text: string, contactId: string, isEphemeral: boolean, attachment?: string, media?: MediaMetadata, replyToId?: string, privacy: 'public' | 'connections' = 'public') => {
@@ -340,7 +336,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         if (group) {
             const newMessage: Message = { id: msgId, threadId: group.id, senderId: user.id, content: text, timestamp: Date.now(), delivered: false, read: true, isMine: true, media, attachmentUrl: attachment, isEphemeral, replyToId, privacy };
             state.setMessages(prev => [...prev, newMessage]);
-            storageService.saveItem('messages', newMessage, user.id);
+
             let membersToMessage = group.members.filter(mid => mid !== user.id);
             if (privacy === 'connections') membersToMessage = membersToMessage.filter(mid => state.contactsRef.current.some(c => c.id === mid));
 
@@ -370,7 +366,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const { nonce, ciphertext } = encryptMessage(payloadStr, contact.encryptionPublicKey, user.keys.encryption.secretKey);
         const newMsg: Message = { id: msgId, threadId: contact.id, senderId: user.id, content: text, timestamp: Date.now(), delivered: false, read: true, isMine: true, media, attachmentUrl: attachment, isEphemeral, replyToId };
         state.setMessages(prev => [...prev, newMsg]);
-        storageService.saveItem('messages', newMsg, user.id);
+
 
         const targetNode = contact.homeNodes[0];
         const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'MESSAGE', senderId: user.homeNodeOnion, targetUserId: contact.id, payload: { id: msgId, nonce, ciphertext } };
@@ -586,7 +582,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const user = state.userRef.current;
         const newGroup: Group = { id: crypto.randomUUID(), name, members: [...memberIds, user.id], admins: [user.id], ownerId: user.id, bannedIds: [], settings: { allowMemberInvite: false, allowMemberNameChange: false }, isMuted: false };
         state.setGroups(prev => [...prev, newGroup]);
-        storageService.saveItem('groups', newGroup, user.id);
+
         addNotification('Group Created', `"${name}" is ready. Inviting members...`, 'info', 'chat', AppRoute.CHAT, newGroup.id);
         for (const mid of memberIds) {
             const contact = state.contactsRef.current.find(c => c.id === mid);
@@ -614,7 +610,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             });
         }
         addNotification('Group Deleted', 'Group has been removed.', 'info', 'chat');
-        storageService.deleteItem('groups', groupId);
+
     }, [addNotification, state.groupsRef, state.setGroups, state.userRef, state.contactsRef]);
 
     const handleLeaveGroup = useCallback((groupId: string) => {
@@ -635,12 +631,12 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             });
         }
         addNotification('Group Left', 'You have left the group.', 'info', 'chat');
-        storageService.deleteItem('groups', groupId);
+
     }, [addNotification, state.userRef, state.groupsRef, state.setGroups, state.contactsRef]);
 
     const handleUpdateGroup = useCallback((updatedGroup: Group) => {
         state.setGroups(prev => prev.map(g => g.id === updatedGroup.id ? updatedGroup : g));
-        storageService.saveItem('groups', updatedGroup, state.userRef.current.id);
+
         const user = state.userRef.current;
         updatedGroup.members.forEach(mid => {
             if (mid === user.id) return;
@@ -659,7 +655,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         if (group && !group.members.includes(contactId)) {
             const updatedGroup = { ...group, members: [...group.members, contactId] };
             state.setGroups(prev => prev.map(g => g.id === groupId ? updatedGroup : g));
-            storageService.saveItem('groups', updatedGroup, user.id);
+
             const newMember = state.contactsRef.current.find(c => c.id === contactId);
             if (newMember && newMember.homeNodes[0]) {
                 const packet: NetworkPacket = { id: crypto.randomUUID(), type: 'GROUP_INVITE', senderId: user.homeNodeOnion, targetUserId: contactId, payload: updatedGroup };
@@ -681,7 +677,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         state.setGroups(prev => prev.map(g => {
             if (g.id === groupId) {
                 const updated = { ...g, isMuted: !g.isMuted };
-                storageService.saveItem('groups', updated, state.userRef.current.id);
+
                 return updated;
             }
             return g;
@@ -693,11 +689,6 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const contentHash = calculatePostHash(post);
         const postWithHash = { ...post, contentHash };
         state.setPosts(prev => [postWithHash, ...prev]);
-
-        // Explicitly persist the new post to ensure it's saved against restart
-        storageService.saveItem('posts', postWithHash, user.id).catch(err => {
-            console.error("Failed to save post explicitly", err);
-        });
 
         if (post.privacy === 'public') {
             broadcastPostState(postWithHash);
@@ -717,7 +708,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         state.setPosts(prev => prev.map(p => {
             if (p.id === postId) {
                 updatedPost = { ...p, content: newContent, isEdited: true, contentHash: calculatePostHash({ ...p, content: newContent, isEdited: true }) };
-                storageService.saveItem('posts', updatedPost, state.userRef.current.id);
+
                 return updatedPost;
             }
             return p;
@@ -733,7 +724,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                 networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
             }
             addNotification('Post Edited', 'Your post has been updated.', 'info', 'social');
-            storageService.saveItem('posts', updatedPost, state.userRef.current.id);
+
         }
     }, [addNotification, broadcastPostState, state.setPosts, state.userRef, state.peersRef, processedPacketIds]);
 
@@ -743,7 +734,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         processedPacketIds.current.add(packet.id!);
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
         addNotification('Post Deleted', 'Your post has been removed.', 'info', 'social');
-        storageService.deleteItem('posts', postId);
+
     }, [addNotification, state.setPosts, state.userRef, processedPacketIds, state.peersRef]);
 
     const handleComment = useCallback((postId: string, content: string, parentCommentId?: string) => {
@@ -770,7 +761,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             }
             updatedPost.contentHash = calculatePostHash(updatedPost);
             updatedPostForBroadcast = updatedPost;
-            storageService.saveItem('posts', updatedPost, state.userRef.current.id);
+
             return updatedPost;
         }));
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'COMMENT', senderId: user.homeNodeOnion, payload: { postId, comment: newComment, parentCommentId } };
@@ -788,7 +779,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             const updatedPost = { ...post, votes: { ...post.votes, [user.id]: type } };
             updatedPost.contentHash = calculatePostHash(updatedPost);
             updatedPostForBroadcast = updatedPost;
-            storageService.saveItem('posts', updatedPost, state.userRef.current.id);
+
             return updatedPost;
         }));
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'VOTE', senderId: user.homeNodeOnion, payload: { postId, userId: user.id, type } };
