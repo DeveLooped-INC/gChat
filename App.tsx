@@ -238,6 +238,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         state.setPeers(prev => prev.filter(p => p.onionAddress !== onion));
         setPendingNodeRequests(prev => prev.filter(p => p !== onion));
         setDiscoveredPeers(prev => prev.filter(p => p.id !== onion));
+        networkService.removeTrustedPeer(onion); // Actually block at firewall level
         addNotification('Node Blocked', 'Requests from this node will be ignored.', 'warning', 'admin');
     }, [addNotification, state.setPeers]);
 
