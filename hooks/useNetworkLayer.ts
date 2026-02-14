@@ -1229,40 +1229,78 @@ export const useNetworkLayer = ({
         return () => clearInterval(stalenessInterval);
     }, [state.setPeers]);
 
-    // Announcement Heartbeat
+    // --- STARTUP RECONNECT + STEADY HEARTBEAT ---
+    // Phase 1: Aggressive startup reconnect — ping ONLY offline peers frequently until they respond.
+    // Phase 2: Steady-state heartbeat — ping all peers every 10 min for keep-alive.
     useEffect(() => {
-        if (isOnline && user.isDiscoverable) {
-            const announce = () => {
-                const aliasToUse = state.nodeConfig.alias || user.displayName;
-                const packet: NetworkPacket = {
-                    id: crypto.randomUUID(),
-                    hops: MAX_GOSSIP_HOPS,
-                    type: 'ANNOUNCE_PEER',
-                    senderId: user.homeNodeOnion,
-                    payload: { onionAddress: user.homeNodeOnion, alias: aliasToUse, description: state.nodeConfig.description }
-                };
-                processedPacketIds.current.add(packet.id!);
+        if (!isOnline) return;
 
-                // Collect recipients: Active Peers + Contacts' Home Nodes
-                const activePeers = state.peersRef.current.map(p => p.onionAddress);
-                const contactNodes = state.contactsRef.current.flatMap(c => c.homeNodes || []);
-                const recipients = Array.from(new Set([...activePeers, ...contactNodes])).filter(addr => addr !== user.homeNodeOnion);
-
-                if (recipients.length > 0) {
-                    networkService.log('INFO', 'NETWORK', `Announcing presence to ${recipients.length} peers/contacts`, { recipients });
-                    networkService.broadcast(packet, recipients);
-                } else {
-                    networkService.log('WARN', 'NETWORK', 'No known peers or contacts to announce to. Waiting for incoming connections.');
-                }
+        const buildAnnouncePacket = () => {
+            const aliasToUse = state.nodeConfig.alias || user.displayName;
+            const packet: NetworkPacket = {
+                id: crypto.randomUUID(),
+                hops: MAX_GOSSIP_HOPS,
+                type: 'ANNOUNCE_PEER',
+                senderId: user.homeNodeOnion,
+                payload: { onionAddress: user.homeNodeOnion, alias: aliasToUse, description: state.nodeConfig.description }
             };
+            processedPacketIds.current.add(packet.id!);
+            return packet;
+        };
 
-            // Announce on connect
-            announce();
+        const getAllRecipients = () => {
+            const activePeers = state.peersRef.current.map(p => p.onionAddress);
+            const contactNodes = state.contactsRef.current.flatMap(c => c.homeNodes || []);
+            return Array.from(new Set([...activePeers, ...contactNodes])).filter(addr => addr !== user.homeNodeOnion);
+        };
 
-            // Re-announce periodically
-            const interval = setInterval(announce, 1000 * 60 * 10); // Every 10 minutes
-            return () => clearInterval(interval);
-        }
+        const getOfflineRecipients = () => {
+            const onlinePeerAddrs = new Set(state.peersRef.current.filter(p => p.status === 'online').map(p => p.onionAddress));
+            return getAllRecipients().filter(addr => !onlinePeerAddrs.has(addr));
+        };
+
+        // --- Phase 1: Startup Reconnect Loop ---
+        // Ping offline peers with increasing intervals: 30s → 60s → 120s
+        let reconnectAttempt = 0;
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const reconnectLoop = () => {
+            const offlinePeers = getOfflineRecipients();
+
+            if (offlinePeers.length === 0) {
+                networkService.log('INFO', 'NETWORK', 'All known peers are online. Startup reconnect complete.');
+                return; // All peers online — stop reconnecting
+            }
+
+            reconnectAttempt++;
+            // Backoff: 30s for first 10 attempts (~5min), then 60s for next 10 (~10min), then 120s ongoing
+            const interval = reconnectAttempt <= 10 ? 30000 : reconnectAttempt <= 20 ? 60000 : 120000;
+
+            networkService.log('INFO', 'NETWORK', `Reconnect attempt ${reconnectAttempt}: Pinging ${offlinePeers.length} offline peers (next in ${interval / 1000}s)`);
+            const packet = buildAnnouncePacket();
+            networkService.broadcast(packet, offlinePeers);
+
+            reconnectTimer = setTimeout(reconnectLoop, interval);
+        };
+
+        // Start first reconnect ping immediately
+        const initialDelay = setTimeout(() => reconnectLoop(), 5000); // 5s after startup to let Tor settle
+
+        // --- Phase 2: Steady-State Heartbeat (all peers, every 10 min) ---
+        const heartbeatInterval = setInterval(() => {
+            const recipients = getAllRecipients();
+            if (recipients.length > 0) {
+                networkService.log('INFO', 'NETWORK', `Heartbeat: Announcing presence to ${recipients.length} peers/contacts`);
+                const packet = buildAnnouncePacket();
+                networkService.broadcast(packet, recipients);
+            }
+        }, 1000 * 60 * 10); // Every 10 minutes
+
+        return () => {
+            clearTimeout(initialDelay);
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            clearInterval(heartbeatInterval);
+        };
     }, [isOnline, user.isDiscoverable, state.nodeConfig, state.peersRef, user.homeNodeOnion, state.contactsRef, networkService]);
 
     // --- SYNC SETTINGS ---
