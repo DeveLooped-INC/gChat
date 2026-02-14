@@ -1231,15 +1231,19 @@ export const useNetworkLayer = ({
 
     // --- STARTUP RECONNECT + STEADY HEARTBEAT ---
     // Phase 1: Aggressive startup reconnect — ping ONLY offline peers frequently until they respond.
+    //          Uses hops:0 so the packet is never gossiped (privacy-safe for all nodes).
     // Phase 2: Steady-state heartbeat — ping all peers every 10 min for keep-alive.
+    //          Only uses gossip hops if node is discoverable.
     useEffect(() => {
         if (!isOnline) return;
 
-        const buildAnnouncePacket = () => {
+        const buildAnnouncePacket = (useGossip: boolean) => {
             const aliasToUse = state.nodeConfig.alias || user.displayName;
             const packet: NetworkPacket = {
                 id: crypto.randomUUID(),
-                hops: MAX_GOSSIP_HOPS,
+                // PRIVACY: Only use gossip hops when the node is discoverable AND caller requests it.
+                // hops:0 means the packet is NEVER forwarded to third parties.
+                hops: (useGossip && user.isDiscoverable) ? MAX_GOSSIP_HOPS : 0,
                 type: 'ANNOUNCE_PEER',
                 senderId: user.homeNodeOnion,
                 payload: { onionAddress: user.homeNodeOnion, alias: aliasToUse, description: state.nodeConfig.description }
@@ -1261,6 +1265,7 @@ export const useNetworkLayer = ({
 
         // --- Phase 1: Startup Reconnect Loop ---
         // Ping offline peers with increasing intervals: 30s → 60s → 120s
+        // Always uses hops:0 (direct ping only, never gossiped)
         let reconnectAttempt = 0;
         let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1277,21 +1282,22 @@ export const useNetworkLayer = ({
             const interval = reconnectAttempt <= 10 ? 30000 : reconnectAttempt <= 20 ? 60000 : 120000;
 
             networkService.log('INFO', 'NETWORK', `Reconnect attempt ${reconnectAttempt}: Pinging ${offlinePeers.length} offline peers (next in ${interval / 1000}s)`);
-            const packet = buildAnnouncePacket();
+            const packet = buildAnnouncePacket(false); // hops:0 — direct ping, never gossiped
             networkService.broadcast(packet, offlinePeers);
 
             reconnectTimer = setTimeout(reconnectLoop, interval);
         };
 
-        // Start first reconnect ping immediately
-        const initialDelay = setTimeout(() => reconnectLoop(), 5000); // 5s after startup to let Tor settle
+        // Start first reconnect ping after a short delay to let Tor settle
+        const initialDelay = setTimeout(() => reconnectLoop(), 5000);
 
         // --- Phase 2: Steady-State Heartbeat (all peers, every 10 min) ---
         const heartbeatInterval = setInterval(() => {
             const recipients = getAllRecipients();
             if (recipients.length > 0) {
                 networkService.log('INFO', 'NETWORK', `Heartbeat: Announcing presence to ${recipients.length} peers/contacts`);
-                const packet = buildAnnouncePacket();
+                // Only use gossip hops if discoverable — otherwise direct ping only
+                const packet = buildAnnouncePacket(true);
                 networkService.broadcast(packet, recipients);
             }
         }, 1000 * 60 * 10); // Every 10 minutes
