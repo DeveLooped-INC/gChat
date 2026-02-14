@@ -7,9 +7,11 @@ interface NotificationSettingsModalProps {
     onClose: () => void;
     mutedCategories: NotificationCategory[];
     onToggleMute: (category: NotificationCategory) => void;
+    maxCount: number;
+    onSetMaxCount: (count: number) => void;
 }
 
-const NotificationSettingsModal: React.FC<NotificationSettingsModalProps> = ({ isOpen, onClose, mutedCategories = [], onToggleMute }) => {
+const NotificationSettingsModal: React.FC<NotificationSettingsModalProps> = ({ isOpen, onClose, mutedCategories = [], onToggleMute, maxCount, onSetMaxCount }) => {
     if (!isOpen) return null;
 
     const categories: { id: NotificationCategory, label: string, description: string, icon: React.ReactNode, color: string }[] = [
@@ -75,6 +77,33 @@ const NotificationSettingsModal: React.FC<NotificationSettingsModalProps> = ({ i
                                 </div>
                             );
                         })}
+                    </div>
+
+                    {/* History Limit */}
+                    <div className="px-4 pb-6">
+                        <div className="p-4 bg-slate-800/50 rounded-xl space-y-3">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h4 className="text-sm font-bold text-slate-200">History Limit</h4>
+                                    <p className="text-xs text-slate-500">Maximum notifications to keep</p>
+                                </div>
+                                <span className="text-sm font-mono text-onion-400 bg-slate-900 px-3 py-1 rounded-lg">{maxCount}</span>
+                            </div>
+                            <input
+                                type="range"
+                                min={10}
+                                max={1000}
+                                step={10}
+                                value={maxCount}
+                                onChange={(e) => onSetMaxCount(Number(e.target.value))}
+                                className="w-full accent-onion-500 cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[10px] text-slate-600">
+                                <span>10</span>
+                                <span>500</span>
+                                <span>1000</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
