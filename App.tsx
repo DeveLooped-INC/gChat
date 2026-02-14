@@ -74,7 +74,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
     const addNotification = useCallback((title: string, message: string, type: ToastMessage['type'], category: NotificationCategory = 'admin', linkRoute?: AppRoute, linkId?: string) => {
         const id = crypto.randomUUID();
         const newNotification: NotificationItem = { id, title, message, type, category, timestamp: Date.now(), read: false, linkRoute, linkId };
-        state.setNotifications(prev => [newNotification, ...prev].slice(0, 100));
+        state.setNotifications(prev => [newNotification, ...prev].slice(0, state.notificationSettings.maxCount || 100));
 
 
         const action = (linkRoute) ? () => handleNotificationNavigation(linkRoute, linkId) : undefined;
@@ -1044,6 +1044,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                     onNotificationClick={handleNotificationClick}
                     mutedCategories={state.notificationSettings.mutedCategories}
                     onToggleMute={state.toggleMuteCategory}
+                    maxCount={state.notificationSettings.maxCount}
+                    onSetMaxCount={state.setNotificationMaxCount}
                 />
             )}
 
