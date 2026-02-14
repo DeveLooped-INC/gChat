@@ -257,7 +257,7 @@ export class NetworkService {
                 // RELAY FIX: Allow Relay Requests/Recovery signals from mesh (Daisy Chain)
                 const isRelay = packet.type === 'MEDIA_RELAY_REQUEST' || packet.type === 'MEDIA_RECOVERY_FOUND';
                 // EXIT FIX: Allow Exit signals so we know when peers leave
-                const isExit = packet.type === 'USER_EXIT' || packet.type === 'USER_EXIT_ACK';
+                const isExit = packet.type === 'USER_EXIT' || packet.type === 'USER_EXIT_ACK' || packet.type === 'NODE_SHUTDOWN_ACK';
                 // RELAY ACK: Allow ACK packets
                 const isAck = packet.type === 'MEDIA_TRANSFER_ACK';
 
@@ -1012,7 +1012,7 @@ export class NetworkService {
 
     public async sendMessage(targetOnionAddress: string, packet: any, streamId?: string, retries?: number): Promise<boolean> {
         if (targetOnionAddress.endsWith('.onion')) this._knownPeers.add(targetOnionAddress);
-        if (this._isShuttingDown && packet.type !== 'NODE_SHUTDOWN' && packet.type !== 'USER_EXIT') return false;
+        if (this._isShuttingDown && packet.type !== 'NODE_SHUTDOWN' && packet.type !== 'NODE_SHUTDOWN_ACK' && packet.type !== 'USER_EXIT') return false;
 
         // --- ENFORCE LINK IDENTITY ---
         // Always stamp the packet with OUR address as the Sender.
@@ -1034,7 +1034,7 @@ export class NetworkService {
     }
 
     public async broadcast(packet: any, recipients: string[], retries?: number) {
-        if (this._isShuttingDown && packet.type !== 'USER_EXIT') return;
+        if (this._isShuttingDown && packet.type !== 'USER_EXIT' && packet.type !== 'NODE_SHUTDOWN') return;
         const promises = recipients.map(async (onionAddress) => {
             if (onionAddress === this._myOnionAddress) return;
             await this.sendMessage(onionAddress, packet, undefined, retries);
@@ -1048,25 +1048,67 @@ export class NetworkService {
         this._isShuttingDown = true;
         this.socket.emit('system-shutdown-prep');
 
-        const packet = {
+        // 1. Broadcast USER_EXIT (best effort, contact-level offline)
+        const exitPacket = {
             id: crypto.randomUUID(),
             type: 'USER_EXIT',
             senderId: homeNode,
             payload: { userId }
         };
 
-        // Best effort broadcast
-        const peerPromises = peers.map(p => this.sendMessage(p, packet));
-
-        // Best effort contact notification
+        const peerPromises = peers.map(p => this.sendMessage(p, exitPacket));
         const contactPromises = contacts.map(c => {
             if (c.homeNodes && c.homeNodes.length > 0) {
-                return this.sendMessage(c.homeNodes[0], packet);
+                return this.sendMessage(c.homeNodes[0], exitPacket);
             }
             return Promise.resolve(false);
         });
-
         await Promise.all([...peerPromises, ...contactPromises]);
+
+        // 2. Broadcast NODE_SHUTDOWN with ACK wait (node-level offline)
+        const shutdownPacket = {
+            id: crypto.randomUUID(),
+            type: 'NODE_SHUTDOWN',
+            senderId: homeNode,
+            payload: { onionAddress: homeNode }
+        };
+
+        // Collect all unique recipients
+        const allRecipients = new Set<string>(peers);
+        contacts.forEach(c => {
+            if (c.homeNodes && c.homeNodes.length > 0) allRecipients.add(c.homeNodes[0]);
+        });
+        const recipientList = Array.from(allRecipients);
+        const pendingAcks = new Set<string>(recipientList);
+
+        // Listen for ACKs
+        const ackListener = (ackPacket: any) => {
+            if (ackPacket.type === 'NODE_SHUTDOWN_ACK') {
+                const sender = ackPacket.senderId || ackPacket.sender;
+                if (sender && pendingAcks.has(sender)) {
+                    this.log('INFO', 'NETWORK', `Received shutdown ACK from ${sender}`);
+                    pendingAcks.delete(sender);
+                }
+            }
+        };
+        this.socket.on('tor-packet', ackListener);
+
+        await this.broadcast(shutdownPacket, recipientList);
+
+        this.log('INFO', 'FRONTEND', `Waiting for NODE_SHUTDOWN ACKs from ${pendingAcks.size} peers (max 30s)...`);
+
+        // Wait for ACKs or 30s timeout
+        const startTime = Date.now();
+        while (pendingAcks.size > 0 && (Date.now() - startTime) < 30000) {
+            await new Promise(r => setTimeout(r, 500));
+        }
+        this.socket.off('tor-packet', ackListener);
+
+        if (pendingAcks.size > 0) {
+            this.log('WARN', 'FRONTEND', `Shutdown Timeout. Missing ACKs from: ${Array.from(pendingAcks).join(', ')}`);
+        } else {
+            this.log('INFO', 'FRONTEND', 'All peers acknowledged shutdown.');
+        }
     }
 
     public confirmShutdown() {
