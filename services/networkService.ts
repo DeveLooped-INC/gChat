@@ -1048,6 +1048,12 @@ export class NetworkService {
         this._isShuttingDown = true;
         this.socket.emit('system-shutdown-prep');
 
+        // Skip broadcast entirely if there's nobody to notify
+        if (peers.length === 0 && contacts.length === 0) {
+            this.log('INFO', 'FRONTEND', 'No peers or contacts online. Skipping shutdown announcements.');
+            return;
+        }
+
         // 1. Broadcast USER_EXIT (best effort, contact-level offline)
         const exitPacket = {
             id: crypto.randomUUID(),
