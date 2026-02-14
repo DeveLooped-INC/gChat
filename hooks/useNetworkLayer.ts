@@ -586,13 +586,21 @@ export const useNetworkLayer = ({
                 const info = packet.payload;
                 if (info && info.onionAddress) {
                     const existingPeer = state.peersRef.current.find(p => p.onionAddress === info.onionAddress);
+                    // Also check if this address belongs to a known contact's home node
+                    const isKnownContact = state.contactsRef.current.some(c =>
+                        c.homeNodes?.includes(info.onionAddress)
+                    );
 
-                    if (existingPeer) {
-                        state.setPeers(prev => prev.map(p =>
-                            p.onionAddress === info.onionAddress
-                                ? { ...p, alias: info.alias || p.alias, status: 'online', lastSeen: Date.now() }
-                                : p
-                        ));
+                    if (existingPeer || isKnownContact) {
+                        // Update existing peer status if it's in the peer list
+                        if (existingPeer) {
+                            state.setPeers(prev => prev.map(p =>
+                                p.onionAddress === info.onionAddress
+                                    ? { ...p, alias: info.alias || p.alias, status: 'online', lastSeen: Date.now() }
+                                    : p
+                            ));
+                        }
+                        // Always clean from discovered list if it's a known connection
                         setDiscoveredPeers(prev => prev.filter(p => p.id !== info.onionAddress));
                     } else {
                         setDiscoveredPeers(prev => {
@@ -1395,33 +1403,43 @@ export const useNetworkLayer = ({
         // Update Ref
         prevOnlinePeerIds.current = currentOnlineIds;
 
-        // Filter for Trusted Contacts Only
-        const trustedNewlyOnline = newlyOnlinePeers.filter(p =>
-            state.contacts.flatMap(c => c.homeNodes || []).some(addr => addr === p.onionAddress)
-        );
-
-        if (trustedNewlyOnline.length > 0) {
+        if (newlyOnlinePeers.length > 0) {
             // Delay sync to avoid stacking with the announcement/packet that just made them online
             const syncTimeout = setTimeout(() => {
-                console.log(`[Network] Smart Sync: ${trustedNewlyOnline.length} Trusted Peers came online. Requesting sync.`);
+                console.log(`[Network] Smart Sync: ${newlyOnlinePeers.length} peers came online. Requesting sync.`);
 
-                const packet: NetworkPacket = {
+                const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
+                const syncTargets = newlyOnlinePeers.map(p => p.onionAddress);
+
+                // Request INVENTORY_SYNC for posts/broadcasts
+                const inventoryPacket: NetworkPacket = {
                     id: crypto.randomUUID(),
                     type: 'INVENTORY_SYNC_REQUEST',
                     senderId: state.userRef.current.homeNodeOnion,
                     payload: {
-                        since: Date.now() - (24 * 60 * 60 * 1000), // Sync last 24h
-                        inventory: state.postsRef.current.map(p => ({ id: p.id, hash: calculatePostHash(p) })),
+                        since,
+                        inventory: state.postsRef.current
+                            .filter(p => p.timestamp > since && p.privacy === 'public')
+                            .map(p => ({ id: p.id, hash: calculatePostHash(p) })),
                         requestDiscoveredPeers: true
                     }
                 };
+                networkService.broadcast(inventoryPacket, syncTargets);
 
-                networkService.broadcast(packet, trustedNewlyOnline.map(p => p.onionAddress));
+                // Also request GROUP_QUERY to sync group chats
+                const groupPacket: NetworkPacket = {
+                    id: crypto.randomUUID(),
+                    type: 'GROUP_QUERY',
+                    senderId: state.userRef.current.homeNodeOnion,
+                    payload: { requesterId: state.userRef.current.id }
+                };
+                networkService.broadcast(groupPacket, syncTargets);
+
             }, 10000); // 10-second delay to let Tor settle
 
             return () => clearTimeout(syncTimeout);
         }
-    }, [state.peers, state.isLoaded]); // Triggers when peers array changes (status updates)
+    }, [state.peers, state.isLoaded, maxSyncAgeHours]); // Triggers when peers array changes (status updates)
 
     // --- SMART RELAY LISTENER ---
     useEffect(() => {
