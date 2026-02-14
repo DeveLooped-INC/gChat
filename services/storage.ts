@@ -1,4 +1,3 @@
-
 import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest } from '../types';
 import { networkService } from './networkService';
 
@@ -6,11 +5,39 @@ type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' 
 
 class StorageService {
 
+  private async waitForSocket(): Promise<any> {
+    // @ts-ignore
+    const socket = networkService.socket;
+    if (socket && socket.connected) return socket;
+
+    return new Promise((resolve) => {
+      const check = setInterval(() => {
+        // @ts-ignore
+        const s = networkService.socket;
+        if (s && s.connected) {
+          clearInterval(check);
+          resolve(s);
+        }
+      }, 100);
+
+      // Timeout after 10s (increased for slow Tor init)
+      setTimeout(() => {
+        clearInterval(check);
+        // Fallback: Return socket anyway? Or null? 
+        // If we return null, operations fail.
+        // Let's return current socket state and let emit fail if needed.
+        // @ts-ignore
+        resolve(networkService.socket);
+      }, 10000);
+    });
+  }
+
   // --- GENERIC OPERATIONS ---
 
   public async saveItem<T extends { id: string }>(storeName: StoreName, item: T, ownerId: string): Promise<void> {
+    const socket = await this.waitForSocket();
     return new Promise((resolve, reject) => {
-      networkService.socket.emit('db:save', storeName, item, ownerId, (response: any) => {
+      socket.emit('db:save', storeName, item, ownerId, (response: any) => {
         if (response.success) resolve();
         else reject(new Error(response.error));
       });
@@ -18,17 +45,26 @@ class StorageService {
   }
 
   public async syncState<T extends { id: string }>(storeName: StoreName, items: T[], ownerId: string): Promise<void> {
+    const socket = await this.waitForSocket();
     return new Promise((resolve, reject) => {
-      networkService.socket.emit('db:sync', storeName, items, ownerId, (response: any) => {
-        if (response.success) resolve();
-        else reject(new Error(response.error));
+      // console.log(`[Storage] Syncing ${storeName}, Count: ${items.length}`);
+      socket.emit('db:sync', storeName, items, ownerId, (response: any) => {
+        if (response.success) {
+          // console.log(`[Storage] Sync Success for ${storeName}`);
+          resolve();
+        }
+        else {
+          console.error(`[Storage] Sync Error for ${storeName}:`, response.error);
+          reject(new Error(response.error));
+        }
       });
     });
   }
 
   public async getItems<T>(storeName: StoreName, ownerId: string): Promise<T[]> {
+    const socket = await this.waitForSocket();
     return new Promise((resolve, reject) => {
-      networkService.socket.emit('db:get-all', storeName, ownerId, (response: any) => {
+      socket.emit('db:get-all', storeName, ownerId, (response: any) => {
         if (response.success) resolve(response.items);
         else reject(new Error(response.error));
       });
@@ -36,8 +72,9 @@ class StorageService {
   }
 
   public async deleteItem(storeName: StoreName, id: string): Promise<void> {
+    const socket = await this.waitForSocket();
     return new Promise((resolve, reject) => {
-      networkService.socket.emit('db:delete', storeName, id, (response: any) => {
+      socket.emit('db:delete', storeName, id, (response: any) => {
         if (response.success) resolve();
         else reject(new Error(response.error));
       });
@@ -45,8 +82,9 @@ class StorageService {
   }
 
   public async clearStore(storeName: StoreName): Promise<void> {
+    const socket = await this.waitForSocket();
     return new Promise((resolve, reject) => {
-      networkService.socket.emit('db:clear', storeName, (response: any) => {
+      socket.emit('db:clear', storeName, (response: any) => {
         if (response.success) resolve();
         else reject(new Error(response.error));
       });
