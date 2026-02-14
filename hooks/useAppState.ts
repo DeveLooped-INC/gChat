@@ -50,7 +50,7 @@ export const useAppState = (user: UserProfile) => {
 
                 if (fetchedPeers) setPeers(fetchedPeers);
                 if (fetchedConfig) setNodeConfig(fetchedConfig);
-                if (fetchedNotifSettings) setNotificationSettings({ mutedCategories: fetchedNotifSettings.mutedCategories || [] });
+                if (fetchedNotifSettings) setNotificationSettings({ mutedCategories: fetchedNotifSettings.mutedCategories || [], maxCount: fetchedNotifSettings.maxCount || 100 });
                 if (fetchedMediaSettings) setMediaSettings(fetchedMediaSettings);
                 if (fetchedContentSettings) setContentSettings(fetchedContentSettings);
 
@@ -96,7 +96,8 @@ export const useAppState = (user: UserProfile) => {
                     if (newItems.length > 0) {
                         console.log(`[useAppState] Merging ${newItems.length} new notifications with ${db.length} from DB.`);
                     }
-                    return [...db, ...newItems];
+                    // Sort newest-first and enforce limit
+                    return [...db, ...newItems].sort((a, b) => b.timestamp - a.timestamp);
                 });
 
                 setConnectionRequests(prev => {
@@ -217,7 +218,7 @@ export const useAppState = (user: UserProfile) => {
     }, [posts, user.id, user.followersCount, contacts.length]);
 
     // Notification Settings
-    const [notificationSettings, setNotificationSettings] = useState<{ mutedCategories: NotificationCategory[] }>({ mutedCategories: [] });
+    const [notificationSettings, setNotificationSettings] = useState<{ mutedCategories: NotificationCategory[], maxCount: number }>({ mutedCategories: [], maxCount: 100 });
 
     useEffect(() => {
         if (isLoaded) kvService.set('gchat_notification_settings_v2', notificationSettings);
@@ -227,11 +228,19 @@ export const useAppState = (user: UserProfile) => {
         setNotificationSettings(prev => {
             const isMuted = prev.mutedCategories.includes(category);
             return {
+                ...prev,
                 mutedCategories: isMuted
                     ? prev.mutedCategories.filter(c => c !== category)
                     : [...prev.mutedCategories, category]
             };
         });
+    };
+
+    const setNotificationMaxCount = (maxCount: number) => {
+        const clamped = Math.max(10, Math.min(1000, maxCount));
+        setNotificationSettings(prev => ({ ...prev, maxCount: clamped }));
+        // Trim existing notifications if needed
+        setNotifications(prev => prev.length > clamped ? prev.slice(0, clamped) : prev);
     };
 
     // Media Settings
@@ -283,6 +292,7 @@ export const useAppState = (user: UserProfile) => {
         settingsUnread,
         userStats,
         notificationSettings,
-        toggleMuteCategory
+        toggleMuteCategory,
+        setNotificationMaxCount
     };
 };
