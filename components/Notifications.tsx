@@ -3,8 +3,12 @@ import { NotificationItem, NotificationCategory } from '../types';
 import { CheckCircle, Info, AlertTriangle, AlertCircle, Bell, Check, Trash2, ExternalLink, Settings } from 'lucide-react';
 import NotificationSettingsModal from './NotificationSettingsModal';
 
-const formatTimeAgo = (timestamp: number): string => {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+const formatTimeAgo = (timestamp: number | string): string => {
+    const time = new Date(timestamp).getTime();
+    if (isNaN(time)) return 'Unknown date';
+
+    const seconds = Math.floor((Date.now() - time) / 1000);
+
     if (seconds < 60) return 'just now';
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ago`;
