@@ -1314,11 +1314,14 @@ export const useNetworkLayer = ({
     useEffect(() => {
         if (!state.isLoaded) return;
 
+        // Use state.peers directly (not peersRef) to ensure we have the committed value
+        const currentPeers = state.peers;
+
         state.setContacts(prev => prev.map(c => {
             const homeNodes = c.homeNodes || [];
             // Check if ANY of the contact's home nodes are currently online
             const isOnline = homeNodes.some(nodeAddr => {
-                const peer = state.peersRef.current.find(p => p.onionAddress === nodeAddr);
+                const peer = currentPeers.find(p => p.onionAddress === nodeAddr);
                 return peer?.status === 'online';
             });
 
