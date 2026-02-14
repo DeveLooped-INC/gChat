@@ -30,7 +30,9 @@ export const useAppState = (user: UserProfile) => {
     useEffect(() => {
         const loadData = async () => {
             try {
+
                 // 1. Load Settings (KV Store)
+                console.log("[useAppState] Loading Data for User:", user.id);
                 // We load these first or in parallel? Parallel is fine.
                 const [
                     fetchedPeers,
@@ -68,6 +70,10 @@ export const useAppState = (user: UserProfile) => {
                 setMessages(dbMsgs || []);
                 setContacts(dbContacts || []);
                 setGroups(dbGroups || []);
+
+                setGroups(dbGroups || []);
+
+                console.log("[useAppState] Loaded Notifications:", dbNotifs);
                 setNotifications(Array.isArray(dbNotifs) ? dbNotifs : []);
                 setConnectionRequests(dbRequests || [])
 
@@ -105,7 +111,13 @@ export const useAppState = (user: UserProfile) => {
     useEffect(() => { if (isLoaded) storageService.syncState('groups', groups, user.id); }, [groups, user.id, isLoaded]);
     useEffect(() => { if (isLoaded) storageService.syncState('messages', messages, user.id); }, [messages, user.id, isLoaded]);
     useEffect(() => { if (isLoaded) storageService.syncState('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
-    useEffect(() => { if (isLoaded) storageService.syncState('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
+    useEffect(() => {
+        if (isLoaded) {
+            console.log("[useAppState] Syncing Notifications:", notifications.length);
+            // 1. Sync to DB
+            storageService.syncState('notifications', notifications, user.id);
+        }
+    }, [notifications, user.id, isLoaded]);
 
     // Config and Peers (Write to KV)
     useEffect(() => { if (isLoaded) kvService.set(NODE_CONFIG_KEY, nodeConfig); }, [nodeConfig, isLoaded]);
