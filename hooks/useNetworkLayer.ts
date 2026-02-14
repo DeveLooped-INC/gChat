@@ -1205,9 +1205,10 @@ export const useNetworkLayer = ({
     }, [state.isLoaded]);
 
     // --- STALENESS TIMEOUT ---
-    // If a peer hasn't sent ANY packet in 5 minutes, assume they're offline.
+    // If a peer hasn't sent ANY packet in 15 minutes, assume they're offline.
+    // Must be > heartbeat interval (10 min) to account for Tor latency.
     // The Contact Status Sync effect will cascade this to contacts automatically.
-    const PEER_STALE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    const PEER_STALE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
     useEffect(() => {
         const stalenessInterval = setInterval(() => {
             const now = Date.now();
@@ -1223,7 +1224,7 @@ export const useNetworkLayer = ({
                     return p;
                 });
             });
-        }, 60000); // Check every 60 seconds
+        }, 120000); // Check every 2 minutes
 
         return () => clearInterval(stalenessInterval);
     }, [state.setPeers]);
@@ -1356,20 +1357,25 @@ export const useNetworkLayer = ({
         );
 
         if (trustedNewlyOnline.length > 0) {
-            console.log(`[Network] Smart Sync: ${trustedNewlyOnline.length} Trusted Peers came online. Requesting sync.`);
+            // Delay sync to avoid stacking with the announcement/packet that just made them online
+            const syncTimeout = setTimeout(() => {
+                console.log(`[Network] Smart Sync: ${trustedNewlyOnline.length} Trusted Peers came online. Requesting sync.`);
 
-            const packet: NetworkPacket = {
-                id: crypto.randomUUID(),
-                type: 'INVENTORY_SYNC_REQUEST',
-                senderId: state.userRef.current.homeNodeOnion,
-                payload: {
-                    since: Date.now() - (24 * 60 * 60 * 1000), // Sync last 24h
-                    inventory: state.postsRef.current.map(p => ({ id: p.id, hash: calculatePostHash(p) })),
-                    requestDiscoveredPeers: true
-                }
-            };
+                const packet: NetworkPacket = {
+                    id: crypto.randomUUID(),
+                    type: 'INVENTORY_SYNC_REQUEST',
+                    senderId: state.userRef.current.homeNodeOnion,
+                    payload: {
+                        since: Date.now() - (24 * 60 * 60 * 1000), // Sync last 24h
+                        inventory: state.postsRef.current.map(p => ({ id: p.id, hash: calculatePostHash(p) })),
+                        requestDiscoveredPeers: true
+                    }
+                };
 
-            networkService.broadcast(packet, trustedNewlyOnline.map(p => p.onionAddress));
+                networkService.broadcast(packet, trustedNewlyOnline.map(p => p.onionAddress));
+            }, 10000); // 10-second delay to let Tor settle
+
+            return () => clearTimeout(syncTimeout);
         }
     }, [state.peers, state.isLoaded]); // Triggers when peers array changes (status updates)
 
