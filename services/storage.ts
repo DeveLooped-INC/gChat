@@ -6,29 +6,39 @@ type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' 
 class StorageService {
 
   private async waitForSocket(): Promise<any> {
-    // @ts-ignore
-    const socket = networkService.socket;
-    if (socket && socket.connected) return socket;
+    if (networkService.socket?.connected) {
+      return networkService.socket;
+    }
 
     return new Promise((resolve) => {
-      const check = setInterval(() => {
-        // @ts-ignore
+      let resolved = false;
+      let checkInterval: NodeJS.Timeout | null = null;
+      let timeoutId: NodeJS.Timeout | null = null;
+
+      const onConnect = () => {
+        if (resolved) return;
+        resolved = true;
+        if (checkInterval) clearInterval(checkInterval);
+        if (timeoutId) clearTimeout(timeoutId);
+        const s = networkService.socket;
+        if (s) resolve(s);
+      };
+
+      checkInterval = setInterval(() => {
         const s = networkService.socket;
         if (s && s.connected) {
-          clearInterval(check);
-          resolve(s);
+          onConnect();
         }
       }, 100);
 
-      // Timeout after 10s (increased for slow Tor init)
-      setTimeout(() => {
-        clearInterval(check);
-        // Fallback: Return socket anyway? Or null? 
-        // If we return null, operations fail.
-        // Let's return current socket state and let emit fail if needed.
-        // @ts-ignore
-        resolve(networkService.socket);
-      }, 10000);
+      timeoutId = setTimeout(() => {
+        if (!resolved) {
+          if (checkInterval) clearInterval(checkInterval);
+          const s = networkService.socket;
+          console.warn("StorageService: Socket wait timeout. Proceeding anyway (offline mode).");
+          resolve(s);
+        }
+      }, 5000);
     });
   }
 
