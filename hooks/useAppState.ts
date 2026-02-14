@@ -105,8 +105,7 @@ export const useAppState = (user: UserProfile) => {
     useEffect(() => { if (isLoaded) storageService.syncState('groups', groups, user.id); }, [groups, user.id, isLoaded]);
     useEffect(() => { if (isLoaded) storageService.syncState('messages', messages, user.id); }, [messages, user.id, isLoaded]);
     useEffect(() => { if (isLoaded) storageService.syncState('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
-    // Notifications are persisted explicitly in App.tsx to avoid race conditions
-    // useEffect(() => { if (isLoaded) storageService.syncState('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
+    useEffect(() => { if (isLoaded) storageService.syncState('notifications', notifications, user.id); }, [notifications, user.id, isLoaded]);
 
     // Config and Peers (Write to KV)
     useEffect(() => { if (isLoaded) kvService.set(NODE_CONFIG_KEY, nodeConfig); }, [nodeConfig, isLoaded]);
