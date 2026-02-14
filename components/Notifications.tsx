@@ -27,9 +27,11 @@ interface NotificationsProps {
     onNotificationClick: (item: NotificationItem) => void;
     mutedCategories: NotificationCategory[];
     onToggleMute: (category: NotificationCategory) => void;
+    maxCount: number;
+    onSetMaxCount: (count: number) => void;
 }
 
-const Notifications: React.FC<NotificationsProps> = ({ notifications, onClear, onMarkRead, onNotificationClick, mutedCategories, onToggleMute }) => {
+const Notifications: React.FC<NotificationsProps> = ({ notifications, onClear, onMarkRead, onNotificationClick, mutedCategories, onToggleMute, maxCount, onSetMaxCount }) => {
     const [showSettings, setShowSettings] = React.useState(false);
     const [, setTick] = React.useState(0);
 
@@ -68,6 +70,8 @@ const Notifications: React.FC<NotificationsProps> = ({ notifications, onClear, o
                 onClose={() => setShowSettings(false)}
                 mutedCategories={mutedCategories}
                 onToggleMute={onToggleMute}
+                maxCount={maxCount}
+                onSetMaxCount={onSetMaxCount}
             />
 
             {/* Header */}
