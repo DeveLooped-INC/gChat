@@ -605,18 +605,27 @@ io.on('connection', (socket) => {
     socket.on('db:sync', async (storeName, items, ownerId, cb) => {
         try {
             if (storeName === 'notifications') {
-                console.log(`[BACKEND] db:sync notifications. Owner: ${ownerId}, Count: ${items.length}`);
+                const logMsg = `[BACKEND] ${new Date().toISOString()} db:sync notifications. Owner: ${ownerId}, Count: ${items.length}\n`;
+                fs.appendFileSync(path.join(APP_DATA_ROOT, 'debug_backend.log'), logMsg);
+                console.log(logMsg.trim());
             }
             await db.syncItems(storeName, items, ownerId);
             cb({ success: true });
         } catch (e) {
-            console.error(`[BACKEND] db:sync failed for ${storeName}:`, e);
+            const errorMsg = `[BACKEND] ${new Date().toISOString()} db:sync failed for ${storeName}: ${e.message}\n`;
+            fs.appendFileSync(path.join(APP_DATA_ROOT, 'debug_backend.log'), errorMsg);
+            console.error(errorMsg.trim());
             cb({ success: false, error: e.message });
         }
     });
     socket.on('db:get-all', async (storeName, ownerId, cb) => {
         try {
             const items = await db.getItems(storeName, ownerId);
+            if (storeName === 'notifications') {
+                const logMsg = `[BACKEND] ${new Date().toISOString()} db:get-all notifications. Owner: ${ownerId}, Count: ${items.length}, FirstID: ${items[0]?.id || 'NONE'}\n`;
+                fs.appendFileSync(path.join(APP_DATA_ROOT, 'debug_backend.log'), logMsg);
+                console.log(logMsg.trim());
+            }
             cb({ success: true, items });
         } catch (e) { cb({ success: false, error: e.message }); }
     });
@@ -739,7 +748,11 @@ io.on('connection', (socket) => {
     });
     socket.on('client-log', (entry) => {
         const color = entry.level === 'ERROR' ? '\x1b[31m' : entry.level === 'WARN' ? '\x1b[33m' : '\x1b[36m';
-        console.log(`${color}[CLIENT][${entry.level}] [${entry.area}] ${entry.message}\x1b[0m`);
+        const msg = `[CLIENT][${entry.level}] [${entry.area}] ${entry.message}`;
+        console.log(`${color}${msg}\x1b[0m`);
+        try {
+            fs.appendFileSync(path.join(APP_DATA_ROOT, 'debug_backend.log'), `${new Date().toISOString()} ${msg}\n`);
+        } catch (e) { }
     });
     socket.on('ping-peer', async ({ targetOnion }, callback) => {
         try {
