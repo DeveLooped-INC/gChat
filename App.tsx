@@ -90,9 +90,13 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         setIsShuttingDown(true);
         setShutdownStep('Notifying peers...');
         try {
+            const onlinePeers = state.peersRef.current.filter(p => p.status === 'online');
+            const onlinePeerAddrs = new Set(onlinePeers.map(p => p.onionAddress));
             await networkService.announceExit(
-                state.peersRef.current.map(p => p.onionAddress),
-                state.contactsRef.current.map(c => ({ homeNodes: c.homeNodes, id: c.id })),
+                onlinePeers.map(p => p.onionAddress),
+                state.contactsRef.current
+                    .filter(c => c.homeNodes?.some(h => onlinePeerAddrs.has(h)))
+                    .map(c => ({ homeNodes: c.homeNodes, id: c.id })),
                 state.userRef.current.homeNodeOnion,
                 state.userRef.current.id
             );
