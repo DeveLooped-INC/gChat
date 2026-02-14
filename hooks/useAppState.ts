@@ -48,7 +48,7 @@ export const useAppState = (user: UserProfile) => {
                     kvService.get<any>('gchat_content_settings')
                 ]);
 
-                if (fetchedPeers) setPeers(fetchedPeers);
+                if (fetchedPeers) setPeers(fetchedPeers.map(p => ({ ...p, status: 'offline' as const })));
                 if (fetchedConfig) setNodeConfig(fetchedConfig);
                 if (fetchedNotifSettings) setNotificationSettings({ mutedCategories: fetchedNotifSettings.mutedCategories || [], maxCount: fetchedNotifSettings.maxCount || 100 });
                 if (fetchedMediaSettings) setMediaSettings(fetchedMediaSettings);
@@ -77,9 +77,9 @@ export const useAppState = (user: UserProfile) => {
                     return [...db, ...prev.filter(m => !dbIds.has(m.id))];
                 });
                 setContacts(prev => {
-                    const db = dbContacts || [];
+                    const db = (dbContacts || []).map(c => ({ ...c, status: 'offline' as const }));
                     const dbIds = new Set(db.map(c => c.id));
-                    return [...db, ...prev.filter(c => !dbIds.has(c.id))];
+                    return [...db, ...prev.filter(c => !dbIds.has(c.id)).map(c => ({ ...c, status: 'offline' as const }))];
                 });
 
                 setGroups(prev => {
