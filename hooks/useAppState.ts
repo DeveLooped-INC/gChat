@@ -88,13 +88,13 @@ export const useAppState = (user: UserProfile) => {
                     return [...db, ...prev.filter(g => !dbIds.has(g.id))];
                 });
 
-                console.log("[useAppState] Loaded Notifications:", dbNotifs?.length);
+                console.log("[useAppState] Loaded Notifications from DB:", dbNotifs?.length);
                 setNotifications(prev => {
                     const db = Array.isArray(dbNotifs) ? dbNotifs : [];
                     const dbIds = new Set(db.map(n => n.id));
                     const newItems = prev.filter(n => !dbIds.has(n.id));
                     if (newItems.length > 0) {
-                        console.log(`[useAppState] Merging ${newItems.length} new notifications with ${db.length} persisted ones.`);
+                        console.log(`[useAppState] Merging ${newItems.length} new notifications with ${db.length} from DB.`);
                     }
                     return [...db, ...newItems];
                 });
@@ -141,8 +141,6 @@ export const useAppState = (user: UserProfile) => {
     useEffect(() => { if (isLoaded) storageService.syncState('requests', connectionRequests, user.id); }, [connectionRequests, user.id, isLoaded]);
     useEffect(() => {
         if (isLoaded) {
-            console.log("[useAppState] Syncing Notifications:", notifications.length);
-            // 1. Sync to DB
             storageService.syncState('notifications', notifications, user.id);
         }
     }, [notifications, user.id, isLoaded]);
