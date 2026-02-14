@@ -1035,11 +1035,21 @@ export class NetworkService {
 
     public async broadcast(packet: any, recipients: string[], retries?: number) {
         if (this._isShuttingDown && packet.type !== 'USER_EXIT' && packet.type !== 'NODE_SHUTDOWN') return;
-        const promises = recipients.map(async (onionAddress) => {
-            if (onionAddress === this._myOnionAddress) return;
-            await this.sendMessage(onionAddress, packet, undefined, retries);
-        });
-        await Promise.all(promises);
+
+        // Sequential sends with spacing to avoid overwhelming the Tor SOCKS proxy.
+        // Shutdown packets skip the delay for urgency.
+        const isUrgent = packet.type === 'USER_EXIT' || packet.type === 'NODE_SHUTDOWN';
+        const SEND_SPACING_MS = isUrgent ? 500 : 2000;
+
+        for (const onionAddress of recipients) {
+            if (onionAddress === this._myOnionAddress) continue;
+            try {
+                await this.sendMessage(onionAddress, packet, undefined, retries);
+            } catch (e) { /* Best effort - continue to next recipient */ }
+            if (recipients.indexOf(onionAddress) < recipients.length - 1) {
+                await new Promise(r => setTimeout(r, SEND_SPACING_MS));
+            }
+        }
     }
 
     // --- EXIT & SHUTDOWN ---
