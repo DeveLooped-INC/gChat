@@ -1204,6 +1204,30 @@ export const useNetworkLayer = ({
         };
     }, [state.isLoaded]);
 
+    // --- STALENESS TIMEOUT ---
+    // If a peer hasn't sent ANY packet in 5 minutes, assume they're offline.
+    // The Contact Status Sync effect will cascade this to contacts automatically.
+    const PEER_STALE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    useEffect(() => {
+        const stalenessInterval = setInterval(() => {
+            const now = Date.now();
+            state.setPeers(prev => {
+                const hasStale = prev.some(p => p.status === 'online' && (now - p.lastSeen) > PEER_STALE_TIMEOUT_MS);
+                if (!hasStale) return prev;
+
+                return prev.map(p => {
+                    if (p.status === 'online' && (now - p.lastSeen) > PEER_STALE_TIMEOUT_MS) {
+                        networkService.log('INFO', 'NETWORK', `Peer ${p.onionAddress.substring(0, 8)}... marked offline (no activity for ${Math.round((now - p.lastSeen) / 60000)}m)`);
+                        return { ...p, status: 'offline' as const };
+                    }
+                    return p;
+                });
+            });
+        }, 60000); // Check every 60 seconds
+
+        return () => clearInterval(stalenessInterval);
+    }, [state.setPeers]);
+
     // Announcement Heartbeat
     useEffect(() => {
         if (isOnline && user.isDiscoverable) {
