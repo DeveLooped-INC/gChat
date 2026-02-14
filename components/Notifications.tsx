@@ -1,8 +1,20 @@
-
 import React from 'react';
 import { NotificationItem, NotificationCategory } from '../types';
 import { CheckCircle, Info, AlertTriangle, AlertCircle, Bell, Check, Trash2, ExternalLink, Settings } from 'lucide-react';
 import NotificationSettingsModal from './NotificationSettingsModal';
+
+const formatTimeAgo = (timestamp: number): string => {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    const months = Math.floor(days / 30);
+    return `${months}mo ago`;
+};
 
 interface NotificationsProps {
     notifications: NotificationItem[];
@@ -15,6 +27,13 @@ interface NotificationsProps {
 
 const Notifications: React.FC<NotificationsProps> = ({ notifications, onClear, onMarkRead, onNotificationClick, mutedCategories, onToggleMute }) => {
     const [showSettings, setShowSettings] = React.useState(false);
+    const [, setTick] = React.useState(0);
+
+    // Re-render every 60s to keep relative times current
+    React.useEffect(() => {
+        const timer = setInterval(() => setTick(t => t + 1), 60000);
+        return () => clearInterval(timer);
+    }, []);
 
     const getIcon = (type: NotificationItem['type']) => {
         switch (type) {
@@ -109,7 +128,7 @@ const Notifications: React.FC<NotificationsProps> = ({ notifications, onClear, o
                                     {item.linkRoute && <ExternalLink size={12} className="opacity-50" />}
                                 </h3>
                                 <span className="text-[10px] text-slate-500 whitespace-nowrap ml-2">
-                                    {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {formatTimeAgo(item.timestamp)}
                                 </span>
                             </div>
                             <p className={`text-xs mt-1 leading-relaxed ${item.read ? 'text-slate-500' : 'text-slate-300'}`}>
