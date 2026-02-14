@@ -66,16 +66,44 @@ export const useAppState = (user: UserProfile) => {
                     storageService.getItems<ConnectionRequest>('requests', oid)
                 ]);
 
-                setPosts(dbPosts || []);
-                setMessages(dbMsgs || []);
-                setContacts(dbContacts || []);
-                setGroups(dbGroups || []);
+                setPosts(prev => {
+                    const db = dbPosts || [];
+                    const dbIds = new Set(db.map(p => p.id));
+                    return [...db, ...prev.filter(p => !dbIds.has(p.id))];
+                });
+                setMessages(prev => {
+                    const db = dbMsgs || [];
+                    const dbIds = new Set(db.map(m => m.id));
+                    return [...db, ...prev.filter(m => !dbIds.has(m.id))];
+                });
+                setContacts(prev => {
+                    const db = dbContacts || [];
+                    const dbIds = new Set(db.map(c => c.id));
+                    return [...db, ...prev.filter(c => !dbIds.has(c.id))];
+                });
 
-                setGroups(dbGroups || []);
+                setGroups(prev => {
+                    const db = dbGroups || [];
+                    const dbIds = new Set(db.map(g => g.id));
+                    return [...db, ...prev.filter(g => !dbIds.has(g.id))];
+                });
 
-                console.log("[useAppState] Loaded Notifications:", dbNotifs);
-                setNotifications(Array.isArray(dbNotifs) ? dbNotifs : []);
-                setConnectionRequests(dbRequests || [])
+                console.log("[useAppState] Loaded Notifications:", dbNotifs?.length);
+                setNotifications(prev => {
+                    const db = Array.isArray(dbNotifs) ? dbNotifs : [];
+                    const dbIds = new Set(db.map(n => n.id));
+                    const newItems = prev.filter(n => !dbIds.has(n.id));
+                    if (newItems.length > 0) {
+                        console.log(`[useAppState] Merging ${newItems.length} new notifications with ${db.length} persisted ones.`);
+                    }
+                    return [...db, ...newItems];
+                });
+
+                setConnectionRequests(prev => {
+                    const db = dbRequests || [];
+                    const dbIds = new Set(db.map(r => r.id));
+                    return [...db, ...prev.filter(r => !dbIds.has(r.id))];
+                });
 
                 setIsLoaded(true);
             } catch (e) {
