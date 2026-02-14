@@ -1290,8 +1290,41 @@ export const useNetworkLayer = ({
             const interval = reconnectAttempt <= 10 ? 30000 : reconnectAttempt <= 20 ? 60000 : 120000;
 
             networkService.log('INFO', 'NETWORK', `Reconnect attempt ${reconnectAttempt}: Pinging ${offlinePeers.length} offline peers (next in ${interval / 1000}s)`);
-            const packet = buildAnnouncePacket(false); // hops:0 — direct ping, never gossiped
-            networkService.broadcast(packet, offlinePeers);
+            const announcePacket = buildAnnouncePacket(false); // hops:0 — direct ping, never gossiped
+            networkService.broadcast(announcePacket, offlinePeers);
+
+            // Also send INVENTORY_SYNC_REQUEST so peer immediately returns missing data
+            const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
+            const syncPacket: NetworkPacket = {
+                id: crypto.randomUUID(),
+                type: 'INVENTORY_SYNC_REQUEST',
+                senderId: user.homeNodeOnion,
+                payload: {
+                    since,
+                    inventory: state.postsRef.current
+                        .filter(p => p.timestamp > since && p.privacy === 'public')
+                        .map(p => ({ id: p.id, hash: calculatePostHash(p) })),
+                    requestDiscoveredPeers: false, // Privacy: don't request peer gossip during reconnect
+                    senderIdentity: {
+                        username: state.userRef.current.username,
+                        displayName: state.userRef.current.displayName,
+                        avatarUrl: state.userRef.current.avatarUrl,
+                        bio: state.userRef.current.bio
+                    }
+                }
+            };
+            processedPacketIds.current.add(syncPacket.id!);
+            networkService.broadcast(syncPacket, offlinePeers);
+
+            // Also send GROUP_QUERY to catch up on group chats
+            const groupPacket: NetworkPacket = {
+                id: crypto.randomUUID(),
+                type: 'GROUP_QUERY',
+                senderId: user.homeNodeOnion,
+                payload: { requesterId: state.userRef.current.id }
+            };
+            processedPacketIds.current.add(groupPacket.id!);
+            networkService.broadcast(groupPacket, offlinePeers);
 
             reconnectTimer = setTimeout(reconnectLoop, interval);
         };
@@ -1327,37 +1360,57 @@ export const useNetworkLayer = ({
         const interval = setInterval(() => {
             if (!state.isLoaded) return;
 
-            // STRICT PRIVACY: Only Sync with Trusted Contacts
-            const trustedOnionAddresses = state.contactsRef.current
+            // Sync with all peers (trusted contacts + direct peers)
+            const contactNodes = state.contactsRef.current
                 .flatMap(c => c.homeNodes || [])
                 .filter(addr => addr.endsWith('.onion'));
+            const peerAddrs = state.peersRef.current.map(p => p.onionAddress);
+            const allRecipients = Array.from(new Set([...contactNodes, ...peerAddrs]))
+                .filter(addr => addr !== state.userRef.current.homeNodeOnion);
 
-            // We might want to filter by 'Online' status, but for now, let's try all trusted contacts 
-            // to re-establish connections if they are lost.
+            if (allRecipients.length === 0) return;
 
-            if (trustedOnionAddresses.length === 0) return;
-
-            console.log(`[Network] Initiating Inventory Sync with ${trustedOnionAddresses.length} trusted peers`);
+            const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
+            networkService.log('INFO', 'NETWORK', `Periodic Inventory Sync with ${allRecipients.length} peers`);
 
             const packet: NetworkPacket = {
                 id: crypto.randomUUID(),
                 type: 'INVENTORY_SYNC_REQUEST',
                 senderId: state.userRef.current.homeNodeOnion,
                 payload: {
-                    since: Date.now() - (24 * 60 * 60 * 1000), // Sync last 24h
-                    inventory: state.postsRef.current.map(p => ({ id: p.id, hash: calculatePostHash(p) })),
-                    requestDiscoveredPeers: true
+                    since,
+                    inventory: state.postsRef.current
+                        .filter(p => p.timestamp > since && p.privacy === 'public')
+                        .map(p => ({ id: p.id, hash: calculatePostHash(p) })),
+                    requestDiscoveredPeers: true,
+                    senderIdentity: {
+                        username: state.userRef.current.username,
+                        displayName: state.userRef.current.displayName,
+                        avatarUrl: state.userRef.current.avatarUrl,
+                        bio: state.userRef.current.bio
+                    }
                 }
             };
 
-            networkService.broadcast(packet, trustedOnionAddresses).catch(err => {
+            networkService.broadcast(packet, allRecipients).catch(err => {
                 console.error("[Network] Sync Broadcast Failed", err);
             });
 
-        }, 3600000); // Every 1 Hour (User requested reduction)
+            // Also sync group chats
+            const groupPacket: NetworkPacket = {
+                id: crypto.randomUUID(),
+                type: 'GROUP_QUERY',
+                senderId: state.userRef.current.homeNodeOnion,
+                payload: { requesterId: state.userRef.current.id }
+            };
+            networkService.broadcast(groupPacket, allRecipients).catch(err => {
+                console.error("[Network] Group Query Failed", err);
+            });
+
+        }, 3600000); // Every 1 Hour
 
         return () => clearInterval(interval);
-    }, [state.isLoaded, state.contactsRef, state.userRef, state.postsRef, networkService]);
+    }, [state.isLoaded, state.contactsRef, state.peersRef, state.userRef, state.postsRef, networkService, maxSyncAgeHours]);
 
     // --- SMART SYNC TRIGGERS ---
     const prevOnlinePeerIds = useRef<Set<string>>(new Set());
@@ -1421,7 +1474,13 @@ export const useNetworkLayer = ({
                         inventory: state.postsRef.current
                             .filter(p => p.timestamp > since && p.privacy === 'public')
                             .map(p => ({ id: p.id, hash: calculatePostHash(p) })),
-                        requestDiscoveredPeers: true
+                        requestDiscoveredPeers: true,
+                        senderIdentity: {
+                            username: state.userRef.current.username,
+                            displayName: state.userRef.current.displayName,
+                            avatarUrl: state.userRef.current.avatarUrl,
+                            bio: state.userRef.current.bio
+                        }
                     }
                 };
                 networkService.broadcast(inventoryPacket, syncTargets);
