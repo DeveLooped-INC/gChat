@@ -1,4 +1,3 @@
-
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -605,9 +604,15 @@ io.on('connection', (socket) => {
     });
     socket.on('db:sync', async (storeName, items, ownerId, cb) => {
         try {
+            if (storeName === 'notifications') {
+                console.log(`[BACKEND] db:sync notifications. Owner: ${ownerId}, Count: ${items.length}`);
+            }
             await db.syncItems(storeName, items, ownerId);
             cb({ success: true });
-        } catch (e) { cb({ success: false, error: e.message }); }
+        } catch (e) {
+            console.error(`[BACKEND] db:sync failed for ${storeName}:`, e);
+            cb({ success: false, error: e.message });
+        }
     });
     socket.on('db:get-all', async (storeName, ownerId, cb) => {
         try {
