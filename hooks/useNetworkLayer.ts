@@ -277,7 +277,8 @@ export const useNetworkLayer = ({
         if (packet.id) processedPacketIds.current.add(packet.id);
 
         // --- PEER STATUS UPDATE ---
-        if (senderNodeId) {
+        // Skip auto-online for exit/shutdown packets — their handlers set offline explicitly
+        if (senderNodeId && packet.type !== 'USER_EXIT' && packet.type !== 'NODE_SHUTDOWN') {
             state.setPeers(prev => prev.map(p => {
                 if (p.onionAddress === senderNodeId && p.status !== 'online') {
                     return { ...p, status: 'online', lastSeen: Date.now() };
@@ -694,6 +695,7 @@ export const useNetworkLayer = ({
                 if (!targetAddress) break;
 
                 networkService.log('WARN', 'NETWORK', `Peer Shutdown Signal from ${targetAddress}`);
+                addNotificationRef.current('Node Shutdown', `Peer ${targetAddress.substring(0, 8)}... has shut down.`, 'warning', 'admin', AppRoute.NODE_SETTINGS);
 
                 state.setPeers(prev => prev.map(p =>
                     p.onionAddress === targetAddress
@@ -706,9 +708,21 @@ export const useNetworkLayer = ({
                 ));
 
                 setDiscoveredPeers(prev => prev.filter(p => p.id !== targetAddress));
-                if (packet.hops && packet.hops > 0) {
-                    if (!isReplay) daisyChainPacket(packet, senderNodeId);
+
+                // ACK: Confirm receipt of shutdown signal
+                if (senderNodeId) {
+                    try {
+                        const ackPacket: NetworkPacket = {
+                            id: crypto.randomUUID(),
+                            type: 'NODE_SHUTDOWN_ACK',
+                            senderId: currentUser.homeNodeOnion,
+                            payload: { originalPacketId: packet.id }
+                        };
+                        networkService.sendMessage(senderNodeId, ackPacket);
+                    } catch (e) { /* Ignore send errors during peer shutdown */ }
                 }
+
+                if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
             }
 
@@ -1157,18 +1171,21 @@ export const useNetworkLayer = ({
 
         networkService.onMessage = (packet, sender) => {
             // --- PEER ACTIVITY MONITOR (Integrated) ---
-            state.setPeers(prev => {
-                const existing = prev.find(p => p.onionAddress === sender);
-                if (existing) {
-                    // Only update if status changed or it's been a while (throttle updates)
-                    if (existing.status !== 'online' || (Date.now() - existing.lastSeen) > 10000) {
-                        return prev.map(p => p.onionAddress === sender ? { ...p, status: 'online', lastSeen: Date.now() } : p);
+            // Skip auto-online for exit/shutdown packets — their handlers set offline explicitly
+            if (packet.type !== 'USER_EXIT' && packet.type !== 'NODE_SHUTDOWN') {
+                state.setPeers(prev => {
+                    const existing = prev.find(p => p.onionAddress === sender);
+                    if (existing) {
+                        // Only update if status changed or it's been a while (throttle updates)
+                        if (existing.status !== 'online' || (Date.now() - existing.lastSeen) > 10000) {
+                            return prev.map(p => p.onionAddress === sender ? { ...p, status: 'online', lastSeen: Date.now() } : p);
+                        }
+                        return prev;
                     }
+                    // Do NOT auto-add unknown peers here.
                     return prev;
-                }
-                // Do NOT auto-add unknown peers here.
-                return prev;
-            });
+                });
+            }
 
             handlePacketRef.current(packet, sender);
         };
