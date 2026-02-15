@@ -12,6 +12,7 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCa
   try {
     // 1. Cache locally for performance (Split Cache)
     const cacheName = isCache ? 'gchat-media-cache-v1' : 'gchat-media-user-v1';
+    // console.debug(`[MediaStorage] Saving ${id} to ${cacheName}`);
     const cache = await caches.open(cacheName);
     await cache.put(new Request(`/media/${id}`), new Response(blob, {
       headers: { 'Content-Type': blob.type }
@@ -19,6 +20,7 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCa
 
     // 2. Upload to Backend (Persistence)
     if (socket && socket.connected) {
+      // console.debug(`[MediaStorage] Uploading ${id} to Backend (isCache=${isCache})...`);
       const buffer = await blob.arrayBuffer();
 
       // Get owner ID for metadata
@@ -56,17 +58,24 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
     // 1. Try User Cache (Permanent)
     const userCache = await caches.open('gchat-media-user-v1');
     const userResponse = await userCache.match(`/media/${id}`);
-    if (userResponse) return await userResponse.blob();
+    if (userResponse) {
+      // console.debug(`[MediaStorage] Found ${id} in User Cache`);
+      return await userResponse.blob();
+    }
 
     // 2. Try Temp Cache (Ephemeral)
     const tempCache = await caches.open('gchat-media-cache-v1');
     const tempResponse = await tempCache.match(`/media/${id}`);
-    if (tempResponse) return await tempResponse.blob();
+    if (tempResponse) {
+      // console.debug(`[MediaStorage] Found ${id} in Temp Cache`);
+      return await tempResponse.blob();
+    }
 
     // 3. Try Backend
     if (socket && socket.connected) {
+      console.debug(`[MediaStorage] Fetching ${id} from Backend...`);
       return new Promise((resolve) => {
-        socket!.emit('media:download', id, async (res: any) => {
+        socket!.emit('media:download', { id }, async (res: any) => {
           if (res && res.success && res.buffer) {
             // Buffer is likely an ArrayBuffer or Buffer object from Socket.IO
             const mimeType = res.metadata?.mimeType || 'application/octet-stream';
@@ -79,6 +88,7 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
             tempCache.put(new Request(`/media/${id}`), new Response(blob, { headers: { 'Content-Type': mimeType } }));
             resolve(blob);
           } else {
+            console.warn(`[MediaStorage] Backend download failed for ${id}:`, res?.error || 'Unknown Error');
             resolve(null);
           }
         });
