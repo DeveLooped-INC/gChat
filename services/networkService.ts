@@ -131,11 +131,13 @@ export class NetworkService {
             timestamp: Date.now(),
             level,
             area,
-            message,
+            message: `[${this._instanceId}] ${message}`,
             details
         };
         this.addLogEntry(entry);
     }
+
+    private _instanceId = Math.random().toString(36).substring(7);
 
     private addLogEntry(entry: LogEntry, skipForward: boolean = false) {
         this._logs.push(entry);
@@ -1185,4 +1187,14 @@ export class NetworkService {
     }
 }
 
+// --- HMR / SINGLETON HANDLING ---
+// Prevent duplicate instances during hot-reloads
+if ((window as any).__gchat_network_service) {
+    console.debug("[NetworkService] Disconnecting previous HMR instance...");
+    try {
+        (window as any).__gchat_network_service.disconnect();
+    } catch (e) { console.error("Failed to disconnect old instance", e); }
+}
+
 export const networkService = new NetworkService();
+(window as any).__gchat_network_service = networkService;
