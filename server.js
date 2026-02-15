@@ -716,17 +716,30 @@ io.on('connection', (socket) => {
 
     socket.on('media:verify', async (id, providedKey, cb) => {
         try {
+            console.log(`[MediaVerify] Request for ${id} with key: ${providedKey}`);
             if (!isValidMediaId(id)) {
+                console.warn(`[MediaVerify] Invalid ID: ${id}`);
                 cb(false);
                 return;
             }
             const metadata = await db.getMediaMetadata(id);
             if (!metadata) {
+                console.warn(`[MediaVerify] Metadata NOT FOUND for ${id}`);
                 cb(false); // Media not found, deny access
                 return;
             }
+
+            console.log(`[MediaVerify] DB Metadata for ${id}:`, JSON.stringify(metadata));
+
             // If accessKey matches, OR if no accessKey set (public?), allow.
             const allowed = (metadata.accessKey === providedKey) || (!metadata.accessKey);
+
+            if (!allowed) {
+                console.warn(`[MediaVerify] DENIED. DB Key: '${metadata.accessKey}' vs Provided: '${providedKey}'`);
+            } else {
+                console.log(`[MediaVerify] ALLOWED.`);
+            }
+
             cb(allowed);
         } catch (e) {
             console.error("Verify Error", e);
