@@ -705,6 +705,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                 networkService.sendMessage(onion, packet);
             });
         }
+        storageService.saveItem('posts', postWithHash, state.userRef.current.id);
         addNotification('Post Created', 'Your post has been published.', 'success', 'social');
     }, [addNotification, broadcastPostState, state.setPosts, state.contactsRef, state.userRef]);
 
@@ -728,6 +729,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                 processedPacketIds.current.add(packet.id!);
                 networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
             }
+            storageService.saveItem('posts', updatedPost, state.userRef.current.id);
             addNotification('Post Edited', 'Your post has been updated.', 'info', 'social');
 
         }
@@ -737,7 +739,9 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         state.setPosts(prev => prev.filter(p => p.id !== postId));
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'DELETE_POST', senderId: state.userRef.current.homeNodeOnion, payload: { postId } };
         processedPacketIds.current.add(packet.id!);
+        networkService.log('DEBUG', 'APP', `Initiating DELETE_POST broadcast (Hops: ${MAX_GOSSIP_HOPS})`);
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
+        storageService.deleteItem('posts', postId);
         addNotification('Post Deleted', 'Your post has been removed.', 'info', 'social');
 
     }, [addNotification, state.setPosts, state.userRef, processedPacketIds, state.peersRef]);
@@ -771,8 +775,12 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         }));
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'COMMENT', senderId: user.homeNodeOnion, payload: { postId, comment: newComment, parentCommentId } };
         processedPacketIds.current.add(packet.id!);
+        networkService.log('DEBUG', 'APP', `Initiating COMMENT broadcast`);
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
-        if (updatedPostForBroadcast) broadcastPostState(updatedPostForBroadcast);
+        if (updatedPostForBroadcast) {
+            broadcastPostState(updatedPostForBroadcast);
+            storageService.saveItem('posts', updatedPostForBroadcast, state.userRef.current.id);
+        }
         addNotification('New Comment', 'Your comment has been added.', 'success', 'social');
     }, [addNotification, broadcastPostState, state.userRef, state.setPosts, processedPacketIds, state.peersRef]);
 
@@ -789,8 +797,12 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         }));
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'VOTE', senderId: user.homeNodeOnion, payload: { postId, userId: user.id, type } };
         processedPacketIds.current.add(packet.id!);
+        networkService.log('DEBUG', 'APP', `Initiating VOTE broadcast`);
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
-        if (updatedPostForBroadcast) broadcastPostState(updatedPostForBroadcast);
+        if (updatedPostForBroadcast) {
+            broadcastPostState(updatedPostForBroadcast);
+            storageService.saveItem('posts', updatedPostForBroadcast, state.userRef.current.id);
+        }
         addNotification('Post Voted', 'Your vote has been recorded.', 'info', 'social');
     }, [addNotification, broadcastPostState, state.userRef, state.setPosts, processedPacketIds, state.peersRef]);
 
@@ -818,9 +830,12 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
             const updatedPost = { ...p, reactions: currentReactions };
             updatedPost.contentHash = calculatePostHash(updatedPost);
             updatedPostForBroadcast = updatedPost;
-            storageService.saveItem('posts', updatedPost, state.userRef.current.id);
             return updatedPost;
         }));
+
+        if (updatedPostForBroadcast) {
+            storageService.saveItem('posts', updatedPostForBroadcast, state.userRef.current.id);
+        }
 
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'REACTION', senderId: user.homeNodeOnion, payload: { postId, userId: user.id, emoji, action } };
         processedPacketIds.current.add(packet.id!);
@@ -847,7 +862,10 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'COMMENT_VOTE', senderId: user.homeNodeOnion, payload: { postId, commentId, userId: user.id, type } };
         processedPacketIds.current.add(packet.id!);
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
-        if (updatedPostForBroadcast) broadcastPostState(updatedPostForBroadcast);
+        if (updatedPostForBroadcast) {
+            broadcastPostState(updatedPostForBroadcast);
+            storageService.saveItem('posts', updatedPostForBroadcast, state.userRef.current.id);
+        }
         addNotification('Comment Voted', 'Your comment vote has been recorded.', 'info', 'social');
     }, [addNotification, broadcastPostState, state.userRef, state.setPosts, processedPacketIds, state.peersRef]);
 
