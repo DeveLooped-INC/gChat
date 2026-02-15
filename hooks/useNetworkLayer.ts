@@ -166,7 +166,12 @@ export const useNetworkLayer = ({
     // --- DAISY CHAIN GOSSIP (OPTIMIZED) ---
     const daisyChainPacket = useCallback(async (packet: NetworkPacket, sourceNodeId?: string) => {
         const currentHops = packet.hops || 0;
-        if (currentHops <= 0) return;
+        if (currentHops <= 0) {
+            networkService.log('DEBUG', 'NETWORK', `DaisyChain: Dropping ${packet.type} (TTL Expired)`);
+            return;
+        }
+
+        networkService.log('DEBUG', 'NETWORK', `DaisyChain: Forwarding ${packet.type} (Hops: ${currentHops} -> ${currentHops - 1})`);
 
         // Sanitize Payload: Remove 'originNode' to force Daisy-Chaining
         // The recipient must see US as the source, not the original author.
@@ -195,45 +200,13 @@ export const useNetworkLayer = ({
             return !isSource && !isOrigin && !isSelf;
         });
 
-        if (possibleRecipients.length === 0) return;
-
-        // Prioritize Online Peers
-        const onlinePeers = state.peersRef.current
-            .filter(p => p.status === 'online')
-            .map(p => p.onionAddress);
-
-        const onlineRecipients = possibleRecipients.filter(r => onlinePeers.includes(r));
-        const offlineRecipients = possibleRecipients.filter(r => !onlinePeers.includes(r));
-
-        // Pick up to 3 recipients, prefer online
-        const targets: string[] = [];
-        const pickRandom = (arr: string[], count: number) => arr.sort(() => 0.5 - Math.random()).slice(0, count);
-
-        // BROADCAST TO ALL ONLINE PEERS (No 3-Peer Limit)
-        // This ensures the packet traverses the entire mesh graph efficiently.
-        // We rely on the `processedPacketIds` deduplication in `handlePacket` to stop flood loops.
-
-        targets.push(...onlineRecipients);
-
-        // If we have minimal online peers, try to wake up offline ones (Best Effort)
-        if (targets.length < 3 && offlineRecipients.length > 0) {
-            const needed = 3 - targets.length;
-            // Pick random offline peers to try and wake up
-            targets.push(...pickRandom(offlineRecipients, needed));
+        if (possibleRecipients.length > 0) {
+            networkService.log('DEBUG', 'NETWORK', `DaisyChain: Broadcasting to ${possibleRecipients.length} peers`);
+            networkService.broadcast(nextPacket, possibleRecipients);
+        } else {
+            networkService.log('DEBUG', 'NETWORK', `DaisyChain: No valid recipients found for ${packet.type}`);
         }
-
-        console.log(`[Gossip] Relaying packet ${packet.type} to ${targets.length} peers (Online: ${onlineRecipients.length})`);
-
-        targets.forEach(async (recipient) => {
-            try {
-                // Stagger to avoid congestion (100ms - 600ms)
-                await new Promise(r => setTimeout(r, Math.random() * 500 + 100));
-                await networkService.sendMessage(recipient, nextPacket);
-            } catch (err) {
-                console.warn(`[Gossip] Failed to relay to ${recipient}`, err);
-            }
-        });
-    }, [state.peersRef, state.userRef, state.contactsRef]); // Added contactsRef dependency
+    }, [state.peersRef, state.contactsRef, state.userRef]);
 
     // --- PACKET HANDLING LOGIC ---
     // We use a REF to hold the latest version of this function to avoid stale closures in the socket listener
@@ -241,6 +214,8 @@ export const useNetworkLayer = ({
 
     const handlePacket = useCallback(async (packet: NetworkPacket, senderNodeId: string, isReplay = false) => {
         // CRITICAL FIX: If state is not loaded (contacts empty), queue packet.
+        if (packet.id && processedPacketIds.current.has(packet.id)) return;
+        networkService.log('DEBUG', 'NETWORK', `Handling Packet: ${packet.type} from ${senderNodeId} (Hops: ${packet.hops})`);
         if (!state.isLoaded) {
             console.log(`[Network] State not loaded. Queuing packet ${packet.type} from ${senderNodeId}`);
             packetQueue.current.push({ packet, senderNodeId });
@@ -286,9 +261,7 @@ export const useNetworkLayer = ({
         }
 
         // --- DEDUPLICATION ---
-        if (packet.id && processedPacketIds.current.has(packet.id)) {
-            return;
-        }
+        // --- DEDUPLICATION ---
         if (packet.id) processedPacketIds.current.add(packet.id);
 
         // --- PEER STATUS UPDATE ---
@@ -889,7 +862,9 @@ export const useNetworkLayer = ({
                     } else {
                         if (!currentReactions[emoji].includes(userId)) currentReactions[emoji] = [...currentReactions[emoji], userId];
                     }
-                    return { ...m, reactions: currentReactions };
+                    const updatedMsg = { ...m, reactions: currentReactions };
+                    storageService.saveItem('messages', updatedMsg, currentUser.id);
+                    return updatedMsg;
                 }));
                 break;
             }
@@ -904,7 +879,9 @@ export const useNetworkLayer = ({
                     } else {
                         currentVotes[userId] = type;
                     }
-                    return { ...m, votes: currentVotes };
+                    const updatedMsg = { ...m, votes: currentVotes };
+                    storageService.saveItem('messages', updatedMsg, currentUser.id);
+                    return updatedMsg;
                 }));
                 break;
             }
