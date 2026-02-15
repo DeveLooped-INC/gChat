@@ -39,13 +39,16 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCa
         ownerId
       };
 
-      socket.emit('media:upload', {
-        id,
-        data: buffer, // Send Raw Buffer
-        metadata,
-        isCache
-      }, (res: any) => {
-        if (!res?.success) console.error("Media upload failed:", res?.error);
+      await new Promise<void>((resolve) => {
+        socket!.emit('media:upload', {
+          id,
+          data: buffer, // Send Raw Buffer
+          metadata,
+          isCache
+        }, (res: any) => {
+          if (!res?.success) console.error("Media upload failed:", res?.error);
+          resolve();
+        });
       });
     }
   } catch (e) {
