@@ -217,6 +217,13 @@ const MEDIA_BASE_DIR = path.join(APP_DATA_ROOT, 'media');
 const MEDIA_LOCAL_DIR = path.join(MEDIA_BASE_DIR, 'local');
 const MEDIA_CACHE_DIR = path.join(MEDIA_BASE_DIR, 'cache');
 
+// SECURITY: Sanitize Media IDs to prevent path traversal
+function isValidMediaId(id) {
+    if (!id || typeof id !== 'string') return false;
+    // Allow UUIDs (alphanumeric + hyphens). Reject dots, slashes, etc.
+    return /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
 if (!fs.existsSync(MEDIA_LOCAL_DIR)) fs.mkdirSync(MEDIA_LOCAL_DIR, { recursive: true });
 if (!fs.existsSync(MEDIA_CACHE_DIR)) fs.mkdirSync(MEDIA_CACHE_DIR, { recursive: true });
 
@@ -645,6 +652,11 @@ io.on('connection', (socket) => {
     // --- MEDIA OPERATIONS ---
     socket.on('media:upload', async ({ id, data, metadata, isCache }, cb) => {
         try {
+            if (!isValidMediaId(id)) {
+                if (typeof cb === 'function') cb({ success: false, error: 'Invalid Media ID' });
+                return;
+            }
+
             const targetDir = isCache ? MEDIA_CACHE_DIR : MEDIA_LOCAL_DIR;
             const filePath = path.join(targetDir, id);
 
@@ -654,7 +666,9 @@ io.on('connection', (socket) => {
             } else {
                 buffer = Buffer.from(data, 'base64');
             }
-            fs.writeFileSync(filePath, buffer);
+
+            // SECURITY: Restrict file permissions to Owner Read/Write Only (600)
+            fs.writeFileSync(filePath, buffer, { mode: 0o600 });
 
             await db.saveMediaMetadata(metadata);
             if (typeof cb === 'function') cb({ success: true });
@@ -666,6 +680,11 @@ io.on('connection', (socket) => {
 
     socket.on('media:download', async ({ id }, cb) => {
         try {
+            if (!isValidMediaId(id)) {
+                cb({ success: false, error: 'Invalid Media ID' });
+                return;
+            }
+
             // Check Local First
             let filePath = path.join(MEDIA_LOCAL_DIR, id);
             if (!fs.existsSync(filePath)) {
@@ -685,6 +704,10 @@ io.on('connection', (socket) => {
 
     socket.on('media:exists', async ({ id }, cb) => {
         try {
+            if (!isValidMediaId(id)) {
+                cb({ success: false });
+                return;
+            }
             const local = fs.existsSync(path.join(MEDIA_LOCAL_DIR, id));
             const cache = fs.existsSync(path.join(MEDIA_CACHE_DIR, id));
             cb({ success: local || cache });
@@ -693,18 +716,40 @@ io.on('connection', (socket) => {
 
     socket.on('media:verify', async (id, providedKey, cb) => {
         try {
+            if (!isValidMediaId(id)) {
+                cb(false);
+                return;
+            }
             const metadata = await db.getMediaMetadata(id);
             if (!metadata) {
                 cb(false); // Media not found, deny access
                 return;
             }
             // If accessKey matches, OR if no accessKey set (public?), allow.
-            // For now, assume simple equality.
             const allowed = (metadata.accessKey === providedKey) || (!metadata.accessKey);
             cb(allowed);
         } catch (e) {
             console.error("Verify Error", e);
             cb(false);
+        }
+    });
+
+    socket.on('media:delete', async (id) => {
+        try {
+            if (!isValidMediaId(id)) return;
+
+            // Only delete from LOCAL (User) storage.
+            // Cache is ephemeral and handled by pruning.
+            const filePath = path.join(MEDIA_LOCAL_DIR, id);
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log(`[Media] Deleted user media: ${id}`);
+            }
+
+            // Always cleanup metadata
+            await db.deleteMediaMetadata(id);
+        } catch (e) {
+            console.error("Media Delete Error", e);
         }
     });
 
