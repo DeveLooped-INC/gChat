@@ -1,4 +1,3 @@
-
 # gChat Architecture
 
 ## High-Level Overview
@@ -26,7 +25,7 @@ The visual interface and cryptographic engine.
 *   **Cryptography**: All encryption happens here in the browser context. The backend only sees encrypted blobs.
 *   **Storage**: 
     *   `localStorage`: JSON state (Posts, Messages, Contacts).
-    *   `Cache Storage API`: Large binary media files (`gchat-media-v1`).
+    *   `Cache Storage API`: Split into `gchat-media-user-v1` (permanent user uploads) and `gchat-media-cache-v1` (ephemeral/relayed content).
 
 ## Network Protocols
 
