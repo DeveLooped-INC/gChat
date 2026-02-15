@@ -685,6 +685,8 @@ io.on('connection', (socket) => {
                 return;
             }
 
+            console.log(`[MediaDownload] Request for ${id}`);
+
             // Check Local First
             let filePath = path.join(MEDIA_LOCAL_DIR, id);
             if (!fs.existsSync(filePath)) {
