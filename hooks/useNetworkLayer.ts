@@ -120,7 +120,7 @@ export const useNetworkLayer = ({
                     console.log(`[AutoDownload] Fetching URL ${url} (${(size / 1024 / 1024).toFixed(2)}MB)...`);
                     const res = await fetch(url);
                     const blob = await res.blob();
-                    if (mediaId) await saveMedia(mediaId, blob);
+                    if (mediaId) await saveMedia(mediaId, blob, undefined, true);
                 } else {
                     console.log(`[AutoDownload] Skipped URL: Size ${size} > Limit ${maxBytes}`);
                 }
