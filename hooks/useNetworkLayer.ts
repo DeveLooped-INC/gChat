@@ -176,10 +176,17 @@ export const useNetworkLayer = ({
 
         const nextPacket = { ...packet, payload: safePayload, hops: currentHops - 1 };
 
-        // STRICT PRIVACY: Only gossip to Trusted Contacts.
-        const trustedOnionAddresses = state.contactsRef.current
+        // EXPANDED MESH: Gossip to ALL Connected Peers, not just Contacts.
+        // This fixes the "Firewall" issue where data wouldn't bridge across non-contact nodes.
+        const allConnectedPeers = state.peersRef.current.map(p => p.onionAddress);
+
+        // Also include contacts who might not be in the active peer list yet (bootstrapping)
+        const contactNodes = state.contactsRef.current
             .flatMap(c => c.homeNodes || [])
             .filter(addr => addr.endsWith('.onion'));
+
+        const allPotentialNodes = new Set([...allConnectedPeers, ...contactNodes]);
+        const trustedOnionAddresses = Array.from(allPotentialNodes);
 
         const possibleRecipients = trustedOnionAddresses.filter(addr => {
             const isSource = addr === sourceNodeId;
@@ -202,16 +209,24 @@ export const useNetworkLayer = ({
         const targets: string[] = [];
         const pickRandom = (arr: string[], count: number) => arr.sort(() => 0.5 - Math.random()).slice(0, count);
 
-        targets.push(...pickRandom(onlineRecipients, 3));
+        // BROADCAST TO ALL ONLINE PEERS (No 3-Peer Limit)
+        // This ensures the packet traverses the entire mesh graph efficiently.
+        // We rely on the `processedPacketIds` deduplication in `handlePacket` to stop flood loops.
 
-        // If we don't have enough online, fill with offline (maybe they just woke up)
-        if (targets.length < 3) {
-            targets.push(...pickRandom(offlineRecipients, 3 - targets.length));
+        targets.push(...onlineRecipients);
+
+        // If we have minimal online peers, try to wake up offline ones (Best Effort)
+        if (targets.length < 3 && offlineRecipients.length > 0) {
+            const needed = 3 - targets.length;
+            // Pick random offline peers to try and wake up
+            targets.push(...pickRandom(offlineRecipients, needed));
         }
+
+        console.log(`[Gossip] Relaying packet ${packet.type} to ${targets.length} peers (Online: ${onlineRecipients.length})`);
 
         targets.forEach(async (recipient) => {
             try {
-                // Stagger to avoid congestion
+                // Stagger to avoid congestion (100ms - 600ms)
                 await new Promise(r => setTimeout(r, Math.random() * 500 + 100));
                 await networkService.sendMessage(recipient, nextPacket);
             } catch (err) {
@@ -1253,7 +1268,7 @@ export const useNetworkLayer = ({
                 // hops:0 means the packet is NEVER forwarded to third parties.
                 hops: (useGossip && user.isDiscoverable) ? MAX_GOSSIP_HOPS : 0,
                 type: 'ANNOUNCE_PEER',
-                senderId: user.homeNodeOnion,
+                senderId: user.homeNodeOnion, // Always sign with our address (daisy chain removes this in payload only if proxying)
                 payload: { onionAddress: user.homeNodeOnion, alias: aliasToUse, description: state.nodeConfig.description }
             };
             processedPacketIds.current.add(packet.id!);
@@ -1274,6 +1289,7 @@ export const useNetworkLayer = ({
         // --- Phase 1: Startup Reconnect Loop ---
         // Ping offline peers with increasing intervals: 30s → 60s → 120s
         // Always uses hops:0 (direct ping only, never gossiped)
+        // Also ensure that we check *all* known peers, not just contacts or recent peers.
         let reconnectAttempt = 0;
         let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1304,7 +1320,7 @@ export const useNetworkLayer = ({
                     inventory: state.postsRef.current
                         .filter(p => p.timestamp > since && p.privacy === 'public')
                         .map(p => ({ id: p.id, hash: calculatePostHash(p) })),
-                    requestDiscoveredPeers: false, // Privacy: don't request peer gossip during reconnect
+                    requestDiscoveredPeers: true, // Privacy: Always request peers to build the mesh
                     senderIdentity: {
                         username: state.userRef.current.username,
                         displayName: state.userRef.current.displayName,
