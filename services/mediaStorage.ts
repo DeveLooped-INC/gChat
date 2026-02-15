@@ -62,7 +62,7 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
     const userCache = await caches.open('gchat-media-user-v1');
     const userResponse = await userCache.match(`/media/${id}`);
     if (userResponse) {
-      // console.debug(`[MediaStorage] Found ${id} in User Cache`);
+      console.debug(`[MediaStorage] Found ${id} in User Cache`);
       return await userResponse.blob();
     }
 
@@ -70,7 +70,7 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
     const tempCache = await caches.open('gchat-media-cache-v1');
     const tempResponse = await tempCache.match(`/media/${id}`);
     if (tempResponse) {
-      // console.debug(`[MediaStorage] Found ${id} in Temp Cache`);
+      console.debug(`[MediaStorage] Found ${id} in Temp Cache`);
       return await tempResponse.blob();
     }
 
@@ -96,6 +96,8 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
           }
         });
       });
+    } else {
+      console.warn(`[MediaStorage] Socket disconnected. Cannot fetch ${id} from backend.`);
     }
 
     return null;
@@ -130,18 +132,31 @@ export const hasMedia = async (id: string): Promise<boolean> => {
 };
 
 export const verifyMediaAccess = async (id: string, providedKey?: string): Promise<boolean> => {
+  console.log(`[MediaVerify] Checking access for ${id}. Key: ${providedKey}`);
   // Check backend for access
   if (socket && socket.connected) {
     return new Promise((resolve) => {
+      let resolved = false;
       // Timeout safety (5s)
-      const t = setTimeout(() => resolve(false), 5000);
+      const t = setTimeout(() => {
+        if (!resolved) {
+          console.warn(`[MediaVerify] Timeout waiting for backend response for ${id}`);
+          resolve(false);
+          resolved = true;
+        }
+      }, 5000);
+
       socket!.emit('media:verify', id, providedKey, (allowed: boolean) => {
+        if (resolved) return;
         clearTimeout(t);
+        console.log(`[MediaVerify] Backend response for ${id}: ${allowed}`);
         resolve(allowed);
+        resolved = true;
       });
     });
   }
   // Fallback (safe fail)
+  console.warn(`[MediaVerify] Socket disconnected or unavailable. Denying access.`);
   return false;
 };
 
