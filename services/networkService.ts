@@ -484,8 +484,9 @@ export class NetworkService {
 
         if (!canAccess) {
             // Fallback to DB check
-            this.log('DEBUG', 'NETWORK', `Relay: Checking DB for ${mediaId}...`);
+            this.log('DEBUG', 'NETWORK', `Relay: Checking DB for ${mediaId} (AccessKey: ${accessKey || 'None'})...`);
             canAccess = await verifyMediaAccess(mediaId, accessKey);
+            this.log('DEBUG', 'NETWORK', `Relay: DB Access Result for ${mediaId}: ${canAccess}`);
         }
 
         if (!canAccess) {
@@ -514,7 +515,10 @@ export class NetworkService {
         // --------------------------------
 
         const blob = await getMedia(mediaId);
-        if (!blob) return;
+        if (!blob) {
+            this.log('WARN', 'NETWORK', `Relay: Media ${mediaId} authorized but blob NOT FOUND in storage/cache.`);
+            return;
+        }
 
         const totalChunks = Math.ceil(blob.size / size);
         if (chunkIndex >= totalChunks) return;
