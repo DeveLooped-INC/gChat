@@ -739,7 +739,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         state.setPosts(prev => prev.filter(p => p.id !== postId));
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'DELETE_POST', senderId: state.userRef.current.homeNodeOnion, payload: { postId } };
         processedPacketIds.current.add(packet.id!);
-        networkService.log('DEBUG', 'APP', `Initiating DELETE_POST broadcast (Hops: ${MAX_GOSSIP_HOPS})`);
+        networkService.log('DEBUG', 'FRONTEND', `Initiating DELETE_POST broadcast (Hops: ${MAX_GOSSIP_HOPS})`);
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
         storageService.deleteItem('posts', postId);
         addNotification('Post Deleted', 'Your post has been removed.', 'info', 'social');
@@ -775,7 +775,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         }));
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'COMMENT', senderId: user.homeNodeOnion, payload: { postId, comment: newComment, parentCommentId } };
         processedPacketIds.current.add(packet.id!);
-        networkService.log('DEBUG', 'APP', `Initiating COMMENT broadcast`);
+        networkService.log('DEBUG', 'FRONTEND', `Initiating COMMENT broadcast`);
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
         if (updatedPostForBroadcast) {
             broadcastPostState(updatedPostForBroadcast);
@@ -797,7 +797,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
         }));
         const packet: NetworkPacket = { id: crypto.randomUUID(), hops: MAX_GOSSIP_HOPS, type: 'VOTE', senderId: user.homeNodeOnion, payload: { postId, userId: user.id, type } };
         processedPacketIds.current.add(packet.id!);
-        networkService.log('DEBUG', 'APP', `Initiating VOTE broadcast`);
+        networkService.log('DEBUG', 'FRONTEND', `Initiating VOTE broadcast`);
         networkService.broadcast(packet, state.peersRef.current.map(p => p.onionAddress));
         if (updatedPostForBroadcast) {
             broadcastPostState(updatedPostForBroadcast);
