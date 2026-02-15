@@ -1228,10 +1228,10 @@ export const useNetworkLayer = ({
     }, [state.isLoaded]);
 
     // --- STALENESS TIMEOUT ---
-    // If a peer hasn't sent ANY packet in 15 minutes, assume they're offline.
-    // Must be > heartbeat interval (10 min) to account for Tor latency.
+    // If a peer hasn't sent ANY packet in 5 minutes (3x heartbeat), assume they're offline.
+    // Must be > heartbeat interval (2 min).
     // The Contact Status Sync effect will cascade this to contacts automatically.
-    const PEER_STALE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+    const PEER_STALE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
     useEffect(() => {
         const stalenessInterval = setInterval(() => {
             const now = Date.now();
@@ -1302,8 +1302,9 @@ export const useNetworkLayer = ({
             }
 
             reconnectAttempt++;
-            // Backoff: 30s for first 10 attempts (~5min), then 60s for next 10 (~10min), then 120s ongoing
-            const interval = reconnectAttempt <= 10 ? 30000 : reconnectAttempt <= 20 ? 60000 : 120000;
+            // Backoff: 10s for first 10 attempts (aggressive), then 30s, then 60s capped.
+            // Tor circuits can be flaky, so we want to try re-establishing quickly.
+            const interval = reconnectAttempt <= 10 ? 10000 : reconnectAttempt <= 20 ? 30000 : 60000;
 
             networkService.log('INFO', 'NETWORK', `Reconnect attempt ${reconnectAttempt}: Pinging ${offlinePeers.length} offline peers (next in ${interval / 1000}s)`);
             const announcePacket = buildAnnouncePacket(false); // hops:0 — direct ping, never gossiped
@@ -1357,7 +1358,7 @@ export const useNetworkLayer = ({
                 const packet = buildAnnouncePacket(true);
                 networkService.broadcast(packet, recipients);
             }
-        }, 1000 * 60 * 10); // Every 10 minutes
+        }, 1000 * 60 * 2); // Every 2 minutes (Keep Tor circuits alive)
 
         return () => {
             clearTimeout(initialDelay);
