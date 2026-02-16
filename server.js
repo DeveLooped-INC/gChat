@@ -203,7 +203,18 @@ app.get('/gchat/health', (req, res) => {
 });
 
 app.post('/gchat/packet', (req, res) => {
-    broadcastLog('INFO', 'NETWORK', `Packet received from ${req.ip}`, { type: req.body?.type, sender: req.body?.senderId });
+    // ECHO CANCELLATION: Drop packets from ourselves
+    if (myOnionAddress && req.body?.senderId === myOnionAddress) {
+        return res.status(200).send({ status: 'ignored_echo' });
+    }
+
+    // Rate Limit / Spam Protection (Basic)? 
+    // For now, just Log at DEBUG to reduce noise unless it's important
+    // broadcastLog('DEBUG', 'NETWORK', `Packet received from ${req.ip}`, { type: req.body?.type, sender: req.body?.senderId });
+
+    // Only log INFO for critical packet types or specific debug needs
+    // broadcastLog('INFO', 'NETWORK', `Packet received`, { type: req.body?.type });
+
     io.emit('tor-packet', req.body);
     res.status(200).send({ status: 'received' });
 });
