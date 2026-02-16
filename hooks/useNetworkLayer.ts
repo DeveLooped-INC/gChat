@@ -1,4 +1,3 @@
-
 import { TYPING_TIMEOUT_MS } from '../constants';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { UserProfile, NetworkPacket, AvailablePeer, Post, ToastMessage, AppRoute, MediaMetadata, EncryptedPayload, Message, Group, ConnectionRequest, NotificationCategory } from '../types';
@@ -434,6 +433,11 @@ export const useNetworkLayer = ({
                         storageService.saveItem('posts', postData, currentUser.id).catch(e => secureLog('ERROR', 'Failed to save friend post', e));
                         return [postData, ...prev];
                     });
+
+                    // CRITICAL: Propagate public posts to the mesh (Only if verified)
+                    if (!isReplay && postData.privacy === 'public') {
+                        daisyChainPacket(packet, senderNodeId);
+                    }
                 }
                 break;
             }
