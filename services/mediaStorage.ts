@@ -28,7 +28,7 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCa
       try {
         const profile = await kvService.get<any>('gchat_user_profile');
         if (profile) ownerId = profile.id;
-      } catch (e) { }
+      } catch (e) { console.warn('Failed to get owner profile for media upload:', e); }
 
       const metadata = {
         id,
@@ -170,7 +170,7 @@ export const deleteMedia = async (id: string) => {
     if (socket && socket.connected) {
       socket.emit('media:delete', id);
     }
-  } catch (e) { }
+  } catch (e) { console.warn(`Failed to delete media ${id}:`, e); }
 };
 
 // --- SYSTEM OPERATIONS ---
