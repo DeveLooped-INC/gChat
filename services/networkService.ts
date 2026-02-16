@@ -53,6 +53,9 @@ interface ActiveDownload {
     recoveryStartedAt?: number;
     lastRecoveryAttempt?: number;
     isRelayOnly?: boolean; // Ephemeral Relay Flag
+
+    // Request Buffering (Fix for Race Condition)
+    pendingRequests: Map<number, { senderId: string, streamId: string }[]>;
 }
 
 type StatusListener = (isOnline: boolean, nodeId?: string) => void;
@@ -365,6 +368,13 @@ export class NetworkService {
                 payload: { mediaId, chunkIndex, totalChunks: dl.totalChunks, data: base64Data }
             }, `media_stream_${mediaId}`);
             return;
+        } else {
+            // BUFFER THE REQUEST (Fix for Race Condition)
+            // The chunk is being downloaded but hasn't arrived yet.
+            this.log('INFO', 'NETWORK', `Relay: Chunk ${chunkIndex} pending. Buffering request from ${senderId}.`);
+            if (!dl.pendingRequests.has(chunkIndex)) dl.pendingRequests.set(chunkIndex, []);
+            dl.pendingRequests.get(chunkIndex)!.push({ senderId, streamId: `media_stream_${mediaId}` });
+            return;
         }
         // --------------------------------
 
@@ -438,6 +448,22 @@ export class NetworkService {
         if (download.chunks[chunkIndex] === null) {
             download.chunks[chunkIndex] = chunkData;
             download.receivedCount++;
+
+            // FULFILL BUFFERED REQUESTS
+            const pending = download.pendingRequests.get(chunkIndex);
+            if (pending && pending.length > 0) {
+                this.log('INFO', 'NETWORK', `Relay: Fulfilling buffered request for Chunk ${chunkIndex} to ${pending.length} peers.`);
+                const base64Data = arrayBufferToBase64(chunkData);
+
+                pending.forEach(req => {
+                    this.sendMessage(req.senderId, {
+                        type: 'MEDIA_CHUNK',
+                        senderId: this._myOnionAddress || 'system',
+                        payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
+                    }, req.streamId);
+                });
+                download.pendingRequests.delete(chunkIndex);
+            }
         }
 
         const progress = Math.round((download.receivedCount / download.totalChunks) * 100);
@@ -811,7 +837,8 @@ export class NetworkService {
                 rttSamples: [],
                 avgRtt: 5000,
                 listeners: [{ onProgress, onComplete: resolve, onError: reject }],
-                isRelayOnly: isRelay
+                isRelayOnly: isRelay,
+                pendingRequests: new Map()
             });
 
             const dl = this._activeDownloads.get(metadata.id)!;
