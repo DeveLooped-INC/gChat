@@ -4,7 +4,7 @@ import { LogEntry, MediaMetadata, TorStats as ITorStats, MediaSettings } from '.
 import { getMedia, saveMedia, hasMedia, verifyMediaAccess, setMediaSocket } from './mediaStorage';
 import { getTransferConfig, arrayBufferToBase64, base64ToArrayBuffer } from '../utils';
 import { kvService } from './kv'; // Import KV Service
-import { NetworkPacketSchema } from './schema';
+import { NetworkPacketSchema } from './packetSchema';
 
 const BACKEND_URL = 'http://127.0.0.1:3001';
 
