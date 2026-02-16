@@ -1149,30 +1149,13 @@ export const useNetworkLayer = ({
             if (offlinePeers.length === 0) return;
 
             reconnectAttempt++;
-            const interval = reconnectAttempt <= 10 ? 10000 : reconnectAttempt <= 20 ? 30000 : 60000;
+            // FIX: Less aggressive interval (30s start, max 60s) to prevent echo loops
+            const interval = reconnectAttempt <= 5 ? 30000 : 60000;
 
             const announcePacket = buildAnnouncePacket(false);
+            // Only send ANNOUNCE to wake them up.
+            // When they reply, they become "online" and the Smart Sync (line 1066) will trigger the heavy sync.
             networkService.broadcast(announcePacket, offlinePeers as string[]);
-
-            // Also send INVENTORY_SYNC_REQUEST so peer immediately returns missing data
-            const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
-            const syncPacket: NetworkPacket = {
-                id: crypto.randomUUID(), type: 'INVENTORY_SYNC_REQUEST', senderId: user.homeNodeOnion,
-                payload: {
-                    since,
-                    inventory: state.postsRef.current.filter((p: Post) => p.timestamp > since && p.privacy === 'public').map((p: Post) => ({ id: p.id, hash: calculatePostHash(p) })),
-                    requestDiscoveredPeers: true,
-                    senderIdentity: { username: user.username, displayName: user.displayName, avatarUrl: user.avatarUrl, bio: user.bio }
-                }
-            };
-            networkService.broadcast(syncPacket, offlinePeers as string[]);
-
-            // Also send GROUP_QUERY to catch up on group chats
-            const groupPacket: NetworkPacket = {
-                id: crypto.randomUUID(), type: 'GROUP_QUERY', senderId: user.homeNodeOnion,
-                payload: { requesterId: user.id }
-            };
-            networkService.broadcast(groupPacket, offlinePeers as string[]);
 
             reconnectTimer = setTimeout(reconnectLoop, interval);
         };
