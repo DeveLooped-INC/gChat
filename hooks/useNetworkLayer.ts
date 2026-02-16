@@ -913,6 +913,34 @@ export const useNetworkLayer = ({
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
             }
+
+            // --- MEDIA TRANSFER HANDLERS ---
+            // These delegate to networkService which manages the download state machine
+
+            case 'MEDIA_REQUEST': {
+                networkService.handleMediaRequest(senderNodeId, packet.payload);
+                break;
+            }
+
+            case 'MEDIA_CHUNK': {
+                networkService.handleMediaChunk(senderNodeId, packet.payload);
+                break;
+            }
+
+            case 'MEDIA_RELAY_REQUEST': {
+                networkService.handleRelayRequest(senderNodeId, packet.payload);
+                break;
+            }
+
+            case 'MEDIA_RECOVERY_FOUND': {
+                networkService.handleRecoveryFound(senderNodeId, packet.payload);
+                break;
+            }
+
+            case 'MEDIA_TRANSFER_ACK': {
+                networkService.handleMediaTransferAck(senderNodeId, packet.payload);
+                break;
+            }
         }
     }, [state, broadcastPostState, daisyChainPacket, checkAndAutoDownload, handleDiscoveryPacket, addNotificationRef, onUpdateUser, maxSyncAgeHours, user.id, user.homeNodeOnion]);
 
