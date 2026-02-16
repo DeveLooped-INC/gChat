@@ -4,6 +4,7 @@ import { LogEntry, MediaMetadata, TorStats as ITorStats, MediaSettings } from '.
 import { getMedia, saveMedia, hasMedia, verifyMediaAccess, setMediaSocket } from './mediaStorage';
 import { getTransferConfig, arrayBufferToBase64, base64ToArrayBuffer } from '../utils';
 import { kvService } from './kv'; // Import KV Service
+import { NetworkPacketSchema } from './schema';
 
 const BACKEND_URL = 'http://127.0.0.1:3001';
 
@@ -62,8 +63,7 @@ let wakeLock: any = null;
 const requestWakeLock = async () => {
     try {
         if ('wakeLock' in navigator && !wakeLock) {
-            // @ts-ignore
-            wakeLock = await navigator.wakeLock.request('screen');
+            wakeLock = await (navigator as any).wakeLock.request('screen');
         }
     } catch (err) {
         console.warn('Wake Lock failed:', err);
@@ -73,20 +73,21 @@ const releaseWakeLock = () => {
     if (wakeLock) {
         wakeLock.release().then(() => {
             wakeLock = null;
-        }).catch(() => { });
+        }).catch((e) => { console.warn('Wake lock release failed:', e); });
     }
 };
 
 export class NetworkService {
     public socket: Socket;
 
-    public onMessage: (data: any, senderId: string) => void = () => { };
+    public onMessage: (data: import('../types').NetworkPacket, senderId: string) => void = () => { };
     public onPeerStatus: PeerStatusListener = () => { };
     public onLog: (msg: string) => void = () => { };
     public onStats: (stats: TorStats) => void = () => { };
     public onShutdownRequest: () => void = () => { };
 
     private _statusListeners: Set<StatusListener> = new Set();
+    private _isOnline: boolean = false;
     private _logs: LogEntry[] = [];
     public isDebugEnabled: boolean = false;
 
@@ -97,27 +98,13 @@ export class NetworkService {
     // Daisy Chain Relay State
     private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata }> = new Map(); // MediaID -> { Listeners, Metadata }
     private _relayHistory: Map<string, number> = new Map(); // RequestSignature -> Timestamp
+    private _processedPacketIds: Set<string> = new Set(); // Protocol-level deduplication (short term)
     private _contactDirectory: Map<string, string> = new Map(); // OwnerID -> HomeNodeOnion
     private _mediaSettings: MediaSettings = { enabled: true, maxFileSizeMB: 10, autoDownloadFriends: true, autoDownloadPrivate: true, cacheRelayedMedia: false };
     private _isShuttingDown: boolean = false;
 
     constructor() {
-        // Async load debug mode later
-
-        this.socket = io(BACKEND_URL, {
-            reconnectionAttempts: 10,
-            reconnectionDelay: 1000,
-            timeout: 20000,
-            autoConnect: true,
-            transports: ['websocket', 'polling']
-        });
-
-        // INJECT SOCKET INTO MEDIA SERVICE
-        setMediaSocket(this.socket);
-
-        this.setupSocketListeners();
-
-        // --- SLIDING WINDOW MONITOR ---
+        // Sliding Window Monitor for Downloads
         setInterval(() => {
             if (this._isShuttingDown) return;
             this.maintainDownloads();
@@ -155,6 +142,7 @@ export class NetworkService {
     }
 
     private notifyStatus(isOnline: boolean, nodeId?: string) {
+        this._isOnline = isOnline;
         this._statusListeners.forEach(l => l(isOnline, nodeId));
     }
 
@@ -164,9 +152,10 @@ export class NetworkService {
 
     public subscribeToStatus(listener: StatusListener): () => void {
         this._statusListeners.add(listener);
-        // Immediately notify current status
-        const isReady = this.socket.connected && !!this._myOnionAddress;
-        listener(isReady, this._myOnionAddress || undefined);
+        // Immediately notify current status from internal tracking.
+        // This ensures late subscribers (after connect/node-identity already fired)
+        // still receive the correct online state.
+        listener(this._isOnline, this._myOnionAddress || undefined);
 
         return () => {
             this._statusListeners.delete(listener);
@@ -224,143 +213,6 @@ export class NetworkService {
         }
     }
 
-    private setupSocketListeners() {
-        this.socket.on('connect', () => {
-            this.log('INFO', 'FRONTEND', 'Connected to Local Backend Socket');
-            if (!this._myOnionAddress) {
-                this.socket.emit('get-onion-address', (addr: string) => {
-                    if (addr) {
-                        this._myOnionAddress = addr;
-                        this.notifyStatus(true, addr);
-                    }
-                });
-            }
-        });
-
-        this.socket.on('onion-address', (address: string) => {
-            this._myOnionAddress = address;
-            this.notifyStatus(true, address);
-            this.log('INFO', 'FRONTEND', `Onion Address Assigned: ${address}`);
-        });
-
-        this.socket.on('tor-packet', (packet: any) => {
-            const sender = packet.senderId || packet.sender;
-            if (packet && sender) {
-                // --- STRICT FIREWALL ---
-                // We ONLY accept packets from Trusted Peers (Contacts/Manual Connections).
-                // The ONLY exception is a 'CONNECTION_REQUEST' (Friend Request/Handshake).
-                const isTrusted = this._trustedPeers.has(sender);
-                const isConnectionRequest = packet.type === 'CONNECTION_REQUEST';
-
-                // PROXY FIX: Allow MEDIA_REQUEST from untrusted if they have the ID (we will verify Access Key in handler)
-                const isMediaRequest = packet.type === 'MEDIA_REQUEST';
-                // PROXY FIX: Allow MEDIA_CHUNK from untrusted (we verify it belongs to active DL in handler)
-                const isMediaChunk = packet.type === 'MEDIA_CHUNK';
-                // RELAY FIX: Allow Relay Requests/Recovery signals from mesh (Daisy Chain)
-                const isRelay = packet.type === 'MEDIA_RELAY_REQUEST' || packet.type === 'MEDIA_RECOVERY_FOUND';
-                // EXIT FIX: Allow Exit signals so we know when peers leave
-                const isExit = packet.type === 'USER_EXIT' || packet.type === 'USER_EXIT_ACK' || packet.type === 'NODE_SHUTDOWN_ACK';
-                // RELAY ACK: Allow ACK packets
-                const isAck = packet.type === 'MEDIA_TRANSFER_ACK';
-
-                // GOSSIP FIX: Allow Public Broadcast Interactions from Mesh (Daisy Chain)
-                // These must be allowed to propagate even from untrusted intermediaries.
-                const isGossip = [
-                    'POST', 'EDIT_POST', 'DELETE_POST',
-                    'COMMENT', 'COMMENT_VOTE', 'COMMENT_REACTION',
-                    'VOTE', 'REACTION',
-                    'INVENTORY_ANNOUNCE', 'INVENTORY_SYNC_REQUEST', 'INVENTORY_SYNC_RESPONSE',
-                    'FETCH_POST', 'POST_DATA',
-                    'ANNOUNCE_PEER' // Discovery
-                ].includes(packet.type);
-
-                if (!isTrusted && !isConnectionRequest && !isMediaRequest && !isMediaChunk && !isRelay && !isExit && !isAck && !isGossip) {
-                    this.log('WARN', 'NETWORK', `Blocked packet ${packet.type} from untrusted source ${sender}. Firewall active.`);
-                    return; // DROP PACKET
-                }
-                // -----------------------
-
-                if (sender.endsWith('.onion')) this._knownPeers.add(sender);
-
-                if (packet.type === 'MEDIA_REQUEST') this.handleMediaRequest(sender, packet.payload);
-                else if (packet.type === 'MEDIA_CHUNK') this.handleMediaChunk(sender, packet.payload);
-                else if (packet.type === 'MEDIA_RELAY_REQUEST') this.handleRelayRequest(sender, packet.payload);
-                else if (packet.type === 'MEDIA_RECOVERY_FOUND') this.handleRecoveryFound(sender, packet.payload);
-                else if (packet.type === 'MEDIA_TRANSFER_ACK') this.handleMediaTransferAck(sender, packet.payload);
-                else {
-                    if (packet.type !== 'MEDIA_CHUNK') this.log('DEBUG', 'FRONTEND', `Received Packet [${packet.type}] from ${sender}`);
-                    if (this.onMessage) this.onMessage(packet, sender);
-                }
-            }
-        });
-
-        this.socket.on('tor-status', (status: string) => {
-            if (status === 'connected' && this._myOnionAddress) this.notifyStatus(true, this._myOnionAddress);
-            else if (status === 'disconnected') this.notifyStatus(false);
-        });
-
-        this.socket.on('tor-stats', (stats: TorStats) => this.onStats(stats));
-        this.socket.on('tor-log', (msg: string) => this.onLog(msg));
-        this.socket.on('debug-log', (entry: LogEntry) => this.addLogEntry(entry, true));
-
-        this.socket.on('connect_error', (err) => {
-            this.notifyStatus(false);
-            this.log('ERROR', 'FRONTEND', `Socket Connection Error: ${err.message}`);
-        });
-
-        this.socket.on('system-shutdown-scheduled', async () => {
-            this.log('WARN', 'FRONTEND', 'System Shutdown Requested. Broadcasting exit signal to peers...');
-            this._isShuttingDown = true;
-
-            const packet = {
-                id: crypto.randomUUID(),
-                type: 'USER_EXIT',
-                senderId: this._myOnionAddress || 'unknown',
-                payload: { userId: 'system-shutdown' }
-            };
-
-            const trustedPeers = Array.from(this._trustedPeers);
-            const pendingAcks = new Set(trustedPeers);
-
-            // Listener for ACKs
-            const ackListener = (ackPacket: any) => {
-                if (ackPacket.type === 'USER_EXIT_ACK') {
-                    const sender = ackPacket.senderId || ackPacket.sender;
-                    if (sender && pendingAcks.has(sender)) {
-                        this.log('INFO', 'NETWORK', `Received shutdown ACK from ${sender}`);
-                        pendingAcks.delete(sender);
-                    }
-                }
-            };
-            this.socket.on('tor-packet', ackListener);
-
-            // Broadcast Exit Packet
-            await this.broadcast(packet, trustedPeers);
-
-            this.log('INFO', 'FRONTEND', `Waiting for ACKs from ${pendingAcks.size} peers (max 30s)...`);
-
-            // Wait for ACKs or Timeout
-            const startTime = Date.now();
-            while (pendingAcks.size > 0 && (Date.now() - startTime) < 30000) {
-                await new Promise(r => setTimeout(r, 500));
-            }
-
-            this.socket.off('tor-packet', ackListener);
-
-            if (pendingAcks.size > 0) {
-                this.log('WARN', 'FRONTEND', `Shutdown Timeout. Missing ACKs from: ${Array.from(pendingAcks).join(', ')}`);
-            } else {
-                this.log('INFO', 'FRONTEND', 'All peers acknowledged shutdown.');
-            }
-
-            this.socket.emit('system-shutdown-confirm');
-        });
-
-        this.socket.on('system-shutdown-request', () => {
-            this.log('WARN', 'NETWORK', 'Backend requested graceful shutdown...');
-            if (this.onShutdownRequest) this.onShutdownRequest();
-        });
-    }
 
     // --- DOWNLOAD MANAGER LOOP ---
     private maintainDownloads() {
@@ -540,7 +392,7 @@ export class NetworkService {
         }, `media_stream_${mediaId}`);
     }
 
-    private handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: any }) {
+    private handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: string | ArrayBuffer }) {
         if (this._isShuttingDown) return;
 
         const { mediaId, chunkIndex, totalChunks, data } = payload;
@@ -981,19 +833,72 @@ export class NetworkService {
 
     // --- STANDARD METHODS (INIT, CONNECT, SEND) ---
 
-    public init(nodeId: string) {
-        if (this.socket.disconnected) this.socket.connect();
-        this.socket.emit('get-onion-address', (addr: string) => {
-            if (addr) {
-                this._myOnionAddress = addr;
-                this.notifyStatus(true, addr);
+    public init(userId?: string) {
+        if (this.socket) return;
+
+        this.socket = io(BACKEND_URL, {
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+        });
+
+        // INJECT SOCKET INTO MEDIA SERVICE
+        setMediaSocket(this.socket);
+
+        this.socket.on('connect', () => {
+            this.onLog('Connected to Local Tor Backend.');
+            this.socket.emit('register-ui', userId || 'frontend-init');
+            this.notifyStatus(true, this._myOnionAddress || undefined);
+            requestWakeLock();
+        });
+
+        this.socket.on('disconnect', () => {
+            this.onLog('Disconnected from Backend.');
+            this.notifyStatus(false);
+            releaseWakeLock();
+        });
+
+        // GENERIC MESSAGE HANDLER
+        this.socket.on('message', (packet: any) => {
+            // 1. Zod Validation
+            const validation = NetworkPacketSchema.safeParse(packet);
+            if (!validation.success) {
+                console.warn("[Security] Dropped Invalid Packet:", validation.error.format());
+                this.onLog(`[Security] Dropped Invalid Packet: ${packet.type}`);
+                return;
+            }
+
+            const validPacket = validation.data;
+            const sender = validPacket.senderId;
+
+            // 2. Protocol Logging
+            if (this.isDebugEnabled) {
+                // console.log(`[Network] Received ${packet.type} from ${sender}`);
+            }
+
+            // 3. Deduplication (Protocol Level)
+            if (validPacket.id && this._processedPacketIds.has(validPacket.id)) {
+                // console.log(`[Network] Duplicate packet ${packet.id} ignored.`);
+                return;
+            }
+
+            // 4. Pass to Application Layer
+            this.onMessage(validPacket, sender);
+        });
+
+        this.socket.on('peer-status', (data: { peerId: string, status: 'online' | 'offline', latency?: number }) => {
+            this.onPeerStatus(data.peerId, data.status, data.latency);
+        });
+
+        this.socket.on('node-identity', (address: string) => {
+            if (address) {
+                this._myOnionAddress = address;
+                this.notifyStatus(true, address);
             }
         });
-    }
 
-    public restartTor() {
-        this.socket.emit('restart-tor');
-        this.notifyStatus(false);
+        this.socket.on('tor-stats', (stats: TorStats) => this.onStats(stats));
+        this.socket.on('shutdown-requested', () => this.onShutdownRequest());
     }
 
     public async connect(onionAddress: string): Promise<PingResult> {
