@@ -64,6 +64,9 @@ export const useNetworkLayer = ({
     // Packet Queue
     const packetQueue = useRef<{ packet: NetworkPacket, senderNodeId: string }[]>([]);
 
+    // Flood Prevention: Rate Limit Per Sender
+    const packetRateLimit = useRef<Map<string, { count: number, start: number }>>(new Map());
+
     // --- SECURE LOGGING HELPER ---
     // Only log to console if explicitly enabled or in dev mode.
     // Always send to networkService for internal debug buffering.
@@ -99,6 +102,22 @@ export const useNetworkLayer = ({
         if (!isReplay && packet.id) {
             if (processedPacketIds.current.has(packet.id)) return;
             processedPacketIds.current.add(packet.id);
+        }
+
+        // 2. RATE LIMIT CHECK (Flood Prevention)
+        if (!isReplay && senderNodeId) {
+            const now = Date.now();
+            let limit = packetRateLimit.current.get(senderNodeId);
+            if (!limit || now - limit.start > 1000) {
+                limit = { count: 0, start: now };
+            }
+            limit.count++;
+            packetRateLimit.current.set(senderNodeId, limit);
+
+            if (limit.count > 10) {
+                if (limit.count === 11) secureLog('WARN', `Flood detected from ${senderNodeId}. Dropping packets.`);
+                return;
+            }
         }
 
         networkService.log('DEBUG', 'NETWORK', `Handling Packet: ${packet.type} from ${senderNodeId} (Hops: ${packet.hops})`);
@@ -335,6 +354,8 @@ export const useNetworkLayer = ({
                         }
                     };
                     networkService.sendMessage(senderNodeId, respPacket);
+                } else {
+                    secureLog('DEBUG', `Inventory Match with ${senderNodeId}. No updates to send.`);
                 }
 
                 const { senderIdentity } = packet.payload;
