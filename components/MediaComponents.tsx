@@ -491,7 +491,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
             {/* Thumbnail / Placeholder */}
             {media.type === 'video' ? (
                 media.thumbnail ? (
-                    <img src={media.thumbnail} className="w-full h-full object-cover opacity-50" />
+                    <img src={media.thumbnail} className="w-full h-full object-cover opacity-50" alt="Video thumbnail" />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center bg-black">
                         <FileVideo size={48} className="text-slate-600" />
