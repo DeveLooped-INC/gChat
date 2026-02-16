@@ -243,11 +243,10 @@ const PacketTypes = {
         type: z.literal('MEDIA_RELAY_REQUEST'),
         payload: z.object({
             mediaId: z.string(),
-            originNode: z.string(),
-            targetNode: z.string(), // The FINAL destination (Alice)
-            requesterId: z.string(), // Example: Alice's ID
-            signature: z.string(),
-            accessKey: z.string().optional()
+            originNode: z.string().optional(),
+            ownerId: z.string().optional(),
+            accessKey: z.string().optional(),
+            metadata: MediaMetadataSchema.optional()
         })
     }),
     MEDIA_REQUEST: BasePacket.extend({
@@ -257,6 +256,14 @@ const PacketTypes = {
     MEDIA_CHUNK: BasePacket.extend({
         type: z.literal('MEDIA_CHUNK'),
         payload: z.object({ mediaId: z.string(), chunkIndex: z.number(), totalChunks: z.number(), data: z.string() }) // Base64 data
+    }),
+    MEDIA_RECOVERY_FOUND: BasePacket.extend({
+        type: z.literal('MEDIA_RECOVERY_FOUND'),
+        payload: z.object({ mediaId: z.string() })
+    }),
+    MEDIA_TRANSFER_ACK: BasePacket.extend({
+        type: z.literal('MEDIA_TRANSFER_ACK'),
+        payload: z.object({ mediaId: z.string() })
     }),
 
     // 8. SHUTDOWN / EXIT
@@ -303,6 +310,8 @@ export const NetworkPacketSchema = z.discriminatedUnion('type', [
     PacketTypes.MEDIA_RELAY_REQUEST,
     PacketTypes.MEDIA_REQUEST,
     PacketTypes.MEDIA_CHUNK,
+    PacketTypes.MEDIA_RECOVERY_FOUND,
+    PacketTypes.MEDIA_TRANSFER_ACK,
     PacketTypes.USER_EXIT,
     PacketTypes.NODE_SHUTDOWN
 ]);
