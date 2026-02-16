@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, ArrowRight, Lock, Server, Loader2, RefreshCw, Upload, UserPlus, LogIn, Key, Copy, Check, Trash2, AlertTriangle, Cpu, FileArchive, X, Users } from 'lucide-react';
 import { UserProfile } from '../types';
 import { networkService } from '../services/networkService';
-import { loadWordlist, generateMnemonic, validateMnemonic, keysFromMnemonic } from '../services/mnemonicService';
+import { generateMnemonic, validateMnemonic, keysFromMnemonic } from '../services/mnemonicService';
 import { generateTripcode } from '../services/cryptoService';
 import { restoreMigrationPackage } from '../services/migrationService';
 import { storageService } from '../services/storage';
@@ -32,7 +31,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     const [calculatedTripcode, setCalculatedTripcode] = useState<string>('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [wordlistLoaded, setWordlistLoaded] = useState(false);
+
 
     // Mismatch State
     const [showMismatchWarning, setShowMismatchWarning] = useState(false);
@@ -48,12 +47,9 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     // Port Warning
     const isCorrectPort = window.location.port === '3000';
 
-    useEffect(() => {
-        loadWordlist().then(success => {
-            if (success) setWordlistLoaded(true);
-            else console.warn("Failed to load security wordlist.");
-        });
 
+
+    useEffect(() => {
         networkService.onLog = (msg) => {
             setLogs(prev => {
                 const newLogs = [...prev, msg];
@@ -333,7 +329,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                                 className="bg-black rounded-lg p-4 font-mono text-xs flex-1 overflow-y-auto border border-slate-800 shadow-inner"
                             >
                                 {logs.map((log, i) => (
-                                    <div key={i} className={`mb-1 break-all ${log.includes('ERROR') ? 'text-red-500' : 'text-slate-400'
+                                    <div key={`${i}-${log.substring(0, 10)}`} className={`mb-1 break-all ${log.includes('ERROR') ? 'text-red-500' : 'text-slate-400'
                                         }`}>
                                         {log}
                                     </div>
@@ -427,7 +423,6 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
                         <button
                             onClick={generateNewIdentity}
-                            disabled={!wordlistLoaded}
                             className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center justify-center space-x-2 transition-all disabled:opacity-50"
                         >
                             <UserPlus size={20} />
@@ -437,7 +432,6 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                         <div className="grid grid-cols-2 gap-3">
                             <button
                                 onClick={() => setAuthMode('login')}
-                                disabled={!wordlistLoaded}
                                 className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold flex flex-col items-center justify-center gap-1 transition-all disabled:opacity-50"
                             >
                                 <LogIn size={20} />
@@ -506,7 +500,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                             </h3>
                             <div className="grid grid-cols-3 gap-2 mb-4">
                                 {mnemonic.map((word, i) => (
-                                    <span key={i} className="text-xs font-mono bg-black/50 text-slate-300 p-1.5 rounded text-center">
+                                    <span key={`${i}-${word}`} className="text-xs font-mono bg-black/50 text-slate-300 p-1.5 rounded text-center">
                                         {i + 1}. {word}
                                     </span>
                                 ))}
