@@ -43,11 +43,22 @@ export const useGossipProtocol = (state: any, currentUser: any, addNotification:
             const isSource = addr === sourceNodeId;
             const isOrigin = addr === packet.senderId;
             const isSelf = addr === state.userRef.current.homeNodeOnion;
+
+            // Debug POST Routing
+            if (packet.type === 'POST') {
+                // networkService.log('DEBUG', 'NETWORK', `[DaisyChain] Check ${addr}: Source=${isSource}, Origin=${isOrigin}, Self=${isSelf}`);
+            }
+
             return !isSource && !isOrigin && !isSelf;
         });
 
         if (possibleRecipients.length > 0) {
+            networkService.log('DEBUG', 'NETWORK', `DaisyChaining ${packet.type} to ${possibleRecipients.length} peers`, possibleRecipients);
             networkService.broadcast(nextPacket, possibleRecipients);
+        } else {
+            if (packet.type === 'POST') {
+                networkService.log('DEBUG', 'NETWORK', `DaisyChain End: No valid recipients for ${packet.type} (Hops: ${currentHops}). Source: ${sourceNodeId}, Sender: ${packet.senderId}`);
+            }
         }
     }, [state.peersRef, state.contactsRef, state.userRef]);
 
