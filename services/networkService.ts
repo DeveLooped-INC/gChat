@@ -859,7 +859,7 @@ export class NetworkService {
         });
 
         // GENERIC MESSAGE HANDLER
-        this.socket.on('message', (packet: any) => {
+        this.socket.on('tor-packet', (packet: any) => {
             // 1. Zod Validation
             const validation = NetworkPacketSchema.safeParse(packet);
             if (!validation.success) {
@@ -890,7 +890,7 @@ export class NetworkService {
             this.onPeerStatus(data.peerId, data.status, data.latency);
         });
 
-        this.socket.on('node-identity', (address: string) => {
+        this.socket.on('onion-address', (address: string) => {
             if (address) {
                 this._myOnionAddress = address;
                 this.notifyStatus(true, address);
