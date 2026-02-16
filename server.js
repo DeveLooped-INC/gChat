@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import helmet from 'helmet';
 import { spawn, exec, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -56,7 +57,10 @@ const httpServer = createServer(app);
 httpServer.setTimeout(CONNECTION_TIMEOUT_MS);
 
 const io = new Server(httpServer, {
-    cors: { origin: "*", methods: ["GET", "POST"] },
+    cors: {
+        origin: ["http://localhost:3000", "http://127.0.0.1:3000", "tauri://localhost"],
+        methods: ["GET", "POST"]
+    },
     pingTimeout: 60000,
     pingInterval: 25000
 });
@@ -174,7 +178,10 @@ process.stdin.on('keypress', (str, key) => {
 });
 
 // --- EXPRESS ---
-app.use(cors());
+app.use(helmet()); // Secure Headers
+app.use(cors({
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'tauri://localhost']
+}));
 app.use(express.json({ limit: '50mb' }));
 
 app.use((err, req, res, next) => {
@@ -352,7 +359,7 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
                 httpAgent: agent,
                 httpsAgent: agent,
                 signal: controller.signal,
-                validateStatus: () => true,
+                validateStatus: (status) => status < 500, // Retry on Server Errors (5xx), accepts 4xx as terminal failure
                 data: options.body,
                 maxContentLength: Infinity,
                 maxBodyLength: Infinity,
@@ -362,9 +369,14 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
             const res = await axios(config);
             clearTimeout(timeout);
 
+            if (res.status < 200 || res.status >= 300) {
+                broadcastLog('WARN', 'NETWORK', `HTTP Error ${res.status} from ${url}`);
+            }
+
             return {
                 ok: res.status >= 200 && res.status < 300,
-                status: res.status
+                status: res.status,
+                data: res.data
             };
         } catch (err) {
             clearTimeout(timeout);
