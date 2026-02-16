@@ -41,6 +41,14 @@ export const useNetworkLayer = ({
     const addNotificationRef = useRef(addNotification);
     useEffect(() => { addNotificationRef.current = addNotification; }, [addNotification]);
 
+    // --- FORCE STARTUP RE-CHECK ---
+    useEffect(() => {
+        if (state.isLoaded) {
+            secureLog('INFO', 'Startup: Resetting peer status to offline to force re-verification.');
+            state.setPeers(prev => prev.map(p => ({ ...p, status: 'offline' })));
+        }
+    }, [state.isLoaded]);
+
     // --- SUB-HOOKS ---
     const {
         discoveredPeers,
