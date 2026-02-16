@@ -345,7 +345,7 @@ const Chat: React.FC<ChatProps> = ({
         <div className="flex-1 overflow-y-auto">
           {groups && groups.length > 0 && <div className="px-4 py-2 text-xs font-bold text-slate-500 uppercase">Groups</div>}
           {(groups || []).map(group => (
-            <div key={group.id} onClick={() => setSelectedChatId(group.id)} className={`p-4 hover:bg-slate-800 cursor-pointer transition-colors border-l-4 ${selectedChatId === group.id ? 'bg-slate-800 border-indigo-500' : 'border-transparent'} `}>
+            <div key={group.id} onClick={() => setSelectedChatId(group.id)} role="button" tabIndex={0} onKeyDown={e => e.key === 'Enter' && setSelectedChatId(group.id)} className={`p-4 hover:bg-slate-800 cursor-pointer transition-colors border-l-4 ${selectedChatId === group.id ? 'bg-slate-800 border-indigo-500' : 'border-transparent'} `}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center border border-indigo-500/30">{group.isMuted ? <BellOff size={18} /> : <Users size={18} />}</div>
@@ -358,7 +358,7 @@ const Chat: React.FC<ChatProps> = ({
           {contacts.map(contact => {
             const { handle, suffix } = formatUserIdentity(contact.username || contact.displayName);
             return (
-              <div key={contact.id} onClick={() => setSelectedChatId(contact.id)} className={`p-4 hover:bg-slate-800 cursor-pointer transition-colors border-l-4 ${selectedChatId === contact.id ? 'bg-slate-800 border-onion-500' : 'border-transparent'} `}>
+              <div key={contact.id} onClick={() => setSelectedChatId(contact.id)} role="button" tabIndex={0} onKeyDown={e => e.key === 'Enter' && setSelectedChatId(contact.id)} className={`p-4 hover:bg-slate-800 cursor-pointer transition-colors border-l-4 ${selectedChatId === contact.id ? 'bg-slate-800 border-onion-500' : 'border-transparent'} `}>
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3">
                     <div className="relative">
@@ -396,9 +396,9 @@ const Chat: React.FC<ChatProps> = ({
               {activeGroup ? (
                 <div className="w-8 h-8 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center border border-indigo-500/30">{activeGroup.isMuted ? <BellOff size={16} /> : <Users size={16} />}</div>
               ) : (
-                <div onClick={() => openUserInfo(activeContact?.id || '')} className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white text-sm font-bold cursor-pointer hover:bg-slate-600 overflow-hidden border border-slate-600">
+                <div onClick={() => openUserInfo(activeContact?.id || '')} role="button" tabIndex={0} aria-label="View contact info" className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white text-sm font-bold cursor-pointer hover:bg-slate-600 overflow-hidden border border-slate-600">
                   {activeContact?.avatarUrl ? (
-                    <img src={activeContact.avatarUrl} className="w-full h-full object-cover" />
+                    <img src={activeContact.avatarUrl} className="w-full h-full object-cover" alt={`${activeContact.displayName}'s avatar`} />
                   ) : (
                     activeContact?.displayName.charAt(0)
                   )}
@@ -423,7 +423,7 @@ const Chat: React.FC<ChatProps> = ({
             {/* Options Menu */}
             < div className="flex items-center space-x-3 text-slate-400 relative" >
               <ShieldCheck size={20} className={isEphemeralMode ? "text-amber-500" : "text-emerald-500"} />
-              <button onClick={() => setShowMenu(!showMenu)} className="p-1 hover:text-white transition-colors focus:outline-none"><MoreVertical size={20} /></button>
+              <button onClick={() => setShowMenu(!showMenu)} className="p-1 hover:text-white transition-colors focus:outline-none" aria-label="Chat options"><MoreVertical size={20} /></button>
               {
                 showMenu && (
                   <div className="absolute top-full right-0 mt-2 w-64 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 z-50">
@@ -434,7 +434,7 @@ const Chat: React.FC<ChatProps> = ({
                 )
               }
             </div >
-            {showMenu && <div className="fixed inset-0 z-[-1]" onClick={() => setShowMenu(false)} />}
+            {showMenu && <div className="fixed inset-0 z-[-1]" role="button" tabIndex={-1} aria-label="Close menu" onClick={() => setShowMenu(false)} />}
           </div >
 
           {/* Messages Area */}
@@ -460,9 +460,9 @@ const Chat: React.FC<ChatProps> = ({
                   <div id={`msg-${msg.id}`} key={msg.id} className={`flex ${msg.isMine ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300 group`}>
                     <div className="flex items-end gap-2 max-w-[85%] md:max-w-md">
                       {!msg.isMine && (
-                        <div onClick={() => openUserInfo(msg.senderId)} className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-300 shrink-0 cursor-pointer hover:bg-slate-700 transition-colors mb-1 overflow-hidden border border-slate-700">
+                        <div onClick={() => openUserInfo(msg.senderId)} role="button" tabIndex={0} aria-label="View sender info" className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-300 shrink-0 cursor-pointer hover:bg-slate-700 transition-colors mb-1 overflow-hidden border border-slate-700">
                           {msgContact?.avatarUrl ? (
-                            <img src={msgContact.avatarUrl} className="w-full h-full object-cover" />
+                            <img src={msgContact.avatarUrl} className="w-full h-full object-cover" alt={`${msgContact.displayName}'s avatar`} />
                           ) : (
                             msgContact ? msgContact.displayName.charAt(0) : '?'
                           )}
@@ -591,10 +591,10 @@ const Chat: React.FC<ChatProps> = ({
                 <MediaRecorder type={recordingMode} maxDuration={MAX_CHAT_MEDIA_DURATION} onCapture={handleMediaCapture} onCancel={() => setRecordingMode(null)} />
               ) : (
                 <>
-                  {attachment && (<div className="flex items-center space-x-2 bg-slate-800 p-2 rounded-lg w-fit"><div className="w-10 h-10 rounded bg-slate-700 overflow-hidden"><img src={attachment} className="w-full h-full object-cover" alt="preview" /></div><span className="text-xs text-slate-300">Image attached</span><button onClick={() => setAttachment(null)} className="text-slate-500 hover:text-white"><X size={14} /></button></div>)}
-                  {replyingToMessage && (<div className="flex items-center justify-between bg-slate-800/50 border-l-4 border-onion-500 rounded p-2 text-xs text-slate-300"><div className="flex flex-col"><span className="font-bold text-onion-400">Replying to {getFormattedName(replyingToMessage.senderId).handle}</span><span className="truncate opacity-70 max-w-[200px]">{replyingToMessage.content || 'Media attachment'}</span></div><button onClick={() => setReplyingToMessage(null)} className="text-slate-500 hover:text-white"><X size={16} /></button></div>)}
+                  {attachment && (<div className="flex items-center space-x-2 bg-slate-800 p-2 rounded-lg w-fit"><div className="w-10 h-10 rounded bg-slate-700 overflow-hidden"><img src={attachment} className="w-full h-full object-cover" alt="preview" /></div><span className="text-xs text-slate-300">Image attached</span><button onClick={() => setAttachment(null)} className="text-slate-500 hover:text-white" aria-label="Remove attachment"><X size={14} /></button></div>)}
+                  {replyingToMessage && (<div className="flex items-center justify-between bg-slate-800/50 border-l-4 border-onion-500 rounded p-2 text-xs text-slate-300"><div className="flex flex-col"><span className="font-bold text-onion-400">Replying to {getFormattedName(replyingToMessage.senderId).handle}</span><span className="truncate opacity-70 max-w-[200px]">{replyingToMessage.content || 'Media attachment'}</span></div><button onClick={() => setReplyingToMessage(null)} className="text-slate-500 hover:text-white" aria-label="Cancel reply"><X size={16} /></button></div>)}
                   <div className="relative w-full">
-                    <textarea value={inputText} onChange={handleInputChange} onKeyDown={handleKeyPress} placeholder={isEphemeralMode ? "Send disappearing message..." : "Type a secure message..."} rows={1} className={`w-full bg-slate-950 border ${isEphemeralMode ? 'border-amber-900 focus:border-amber-500' : 'border-slate-800 focus:border-onion-500'} rounded-xl px-4 py-3 text-slate-200 focus:outline-none transition-colors min-h-[50px] max-h-[120px] resize-none pr-10`} style={{ minHeight: '50px', height: 'auto' }} />
+                    <textarea value={inputText} onChange={handleInputChange} onKeyDown={handleKeyPress} placeholder={isEphemeralMode ? "Send disappearing message..." : "Type a secure message..."} rows={1} className={`w-full bg-slate-950 border ${isEphemeralMode ? 'border-amber-900 focus:border-amber-500' : 'border-slate-800 focus:border-onion-500'} rounded-xl px-4 py-3 text-slate-200 focus:outline-none transition-colors min-h-[50px] max-h-[120px] resize-none pr-10 h-auto`} />
                     {isEphemeralMode && <Bomb size={16} className="absolute right-3 top-4 text-amber-500" />}
                   </div>
                   <div className="flex justify-between items-center">
@@ -627,7 +627,7 @@ const Chat: React.FC<ChatProps> = ({
         showGroupModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl m-4">
-              <div className="p-4 border-b border-slate-800 flex justify-between items-center"><h3 className="font-bold text-white">New Encrypted Group</h3><button onClick={() => setShowGroupModal(false)}><X className="text-slate-400 hover:text-white" /></button></div>
+              <div className="p-4 border-b border-slate-800 flex justify-between items-center"><h3 className="font-bold text-white">New Encrypted Group</h3><button onClick={() => setShowGroupModal(false)} aria-label="Close"><X className="text-slate-400 hover:text-white" /></button></div>
               <div className="p-6 space-y-4">
                 <div><label className="text-xs font-bold text-slate-500 uppercase">Group Name</label><input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 mt-1 text-white focus:border-onion-500 focus:outline-none" placeholder="e.g. Project Alpha" /></div>
                 <div><label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Select Members</label><div className="max-h-48 overflow-y-auto bg-slate-950 border border-slate-800 rounded-lg divide-y divide-slate-800">{contacts.map(contact => (<div key={contact.id} onClick={() => toggleMemberSelection(contact.id)} className="p-3 flex items-center justify-between hover:bg-slate-900 cursor-pointer"><div className="flex items-center space-x-3"><div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-300">{contact.displayName.charAt(0)}</div><span className="text-sm text-slate-300">{contact.displayName}</span></div>{selectedMembers.has(contact.id) ? (<CheckSquare size={18} className="text-onion-500" />) : (<div className="w-4 h-4 border border-slate-600 rounded" />)}</div>))}{contacts.length === 0 && (<div className="p-4 text-center text-xs text-slate-500">No contacts available.</div>)}</div></div>
