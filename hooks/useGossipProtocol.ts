@@ -12,13 +12,14 @@ export const useGossipProtocol = (state: any, currentUser: any, addNotification:
 
     const broadcastPostState = useCallback((post: Post) => {
         if (post.privacy !== 'public') return;
-        const hash = calculatePostHash(post);
+
+        // Use POST packet (Push Model) for immediate propagation
         const packet: NetworkPacket = {
             id: crypto.randomUUID(),
-            type: 'INVENTORY_ANNOUNCE',
+            type: 'POST',
             hops: MAX_GOSSIP_HOPS,
             senderId: state.userRef.current.homeNodeOnion,
-            payload: { postId: post.id, contentHash: hash, authorId: post.authorId, timestamp: post.timestamp }
+            payload: post
         };
         networkService.broadcast(packet, state.peersRef.current.map((p: any) => p.onionAddress));
     }, [state.userRef, state.peersRef]);
