@@ -6,6 +6,9 @@ console.log('gChat Universal Launcher (Robust Mode)');
 console.log(`Platform: ${process.platform} | Mode: Browser`);
 console.log('--------------------------------------------------');
 
+// Check for Force Flag
+const FORCE_KILL = process.argv.includes('--force');
+
 // --- HELPER: KILL PORT HOGS ---
 const killPort = (port) => {
     try {
@@ -16,19 +19,32 @@ const killPort = (port) => {
                 const parts = line.trim().split(/\s+/);
                 const pid = parts[parts.length - 1];
                 if (pid && pid !== '0') {
-                    try { 
-                        execSync(`taskkill /PID ${pid} /F`); 
-                        console.log(`[Cleaner] Killed PID ${pid} on port ${port}`);
-                    } catch(e) {}
+                    if (FORCE_KILL) {
+                        try {
+                            execSync(`taskkill /PID ${pid} /F`);
+                            console.log(`[Cleaner] Killed PID ${pid} on port ${port}`);
+                        } catch (e) { }
+                    } else {
+                        console.warn(`[WARNING] Port ${port} is occupied by PID ${pid}. Use --force to auto-kill.`);
+                    }
                 }
             });
         } else {
-            // Linux/Mac: Use fuser or lsof
+            // Linux/Mac: Use lsof or fuser to check
             try {
-                execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore' });
-                console.log(`[Cleaner] Cleared port ${port}`);
-            } catch(e) {
-                // fuser returns non-zero if no process found, which is fine
+                // Check if port is open
+                execSync(`lsof -i :${port}`, { stdio: 'ignore' });
+
+                if (FORCE_KILL) {
+                    try {
+                        execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore' });
+                        console.log(`[Cleaner] Cleared port ${port}`);
+                    } catch (e) { }
+                } else {
+                    console.warn(`[WARNING] Port ${port} is in use. Run with --force to auto-kill, or free it manually.`);
+                }
+            } catch (e) {
+                // lsof returns 1 if no process found, which is good
             }
         }
     } catch (e) {
@@ -37,8 +53,7 @@ const killPort = (port) => {
 };
 
 // 1. PRE-FLIGHT CLEANUP
-// Aggressively kill anything on our ports to prevent "Port 3004" issues
-console.log('[Launcher] Cleaning ports 3000, 3001, 3002...');
+console.log('[Launcher] Checking ports 3000, 3001, 3002...');
 killPort(3000); // Vite
 killPort(3001); // Backend Socket
 killPort(3002); // Alternative Vite
@@ -56,9 +71,9 @@ process.stdin.on('error', (err) => {
 });
 
 // 2. Start Backend
-const server = spawn('node', ['server.js'], { 
+const server = spawn('node', ['server.js'], {
     stdio: 'inherit',
-    env: process.env 
+    env: process.env
 });
 
 server.on('close', (code) => {
@@ -70,8 +85,8 @@ server.on('close', (code) => {
 // 3. Start Vite
 // FIX [DEP0190]: Combine command and args into a single string when using shell: true
 // We enable 'detached' on non-Windows to create a new Process Group.
-const vite = spawn('npm run web', { 
-    stdio: ['ignore', 'inherit', 'inherit'], 
+const vite = spawn('npm run web', {
+    stdio: ['ignore', 'inherit', 'inherit'],
     shell: true,
     detached: process.platform !== 'win32'
 });
@@ -85,7 +100,7 @@ if (process.platform === 'android' || process.env.PREFIX?.includes('com.termux')
             const cmd = 'am start -a android.intent.action.VIEW -d http://localhost:3000';
             const child = spawn(cmd, { shell: true, stdio: 'ignore' });
             child.unref();
-        } catch(e) {
+        } catch (e) {
             console.log('⚠️ Could not auto-launch browser. Please manually open http://localhost:3000');
         }
     }, 4000); // Wait longer for Vite to boot on mobile
@@ -94,7 +109,7 @@ if (process.platform === 'android' || process.env.PREFIX?.includes('com.termux')
 // CLEANUP FUNCTION
 const cleanup = () => {
     console.log('[Launcher] Cleaning up processes...');
-    
+
     // Kill Backend
     if (server && !server.killed) {
         server.kill('SIGINT');
@@ -103,12 +118,12 @@ const cleanup = () => {
     // Kill Vite Process Tree
     if (vite && !vite.killed) {
         if (process.platform === 'win32') {
-            try { execSync(`taskkill /pid ${vite.pid} /T /F`); } catch(e) {}
+            try { execSync(`taskkill /pid ${vite.pid} /T /F`); } catch (e) { }
         } else {
             // Kill process group (-pid)
-            try { process.kill(-vite.pid, 'SIGKILL'); } catch(e) {
+            try { process.kill(-vite.pid, 'SIGKILL'); } catch (e) {
                 // Fallback if detached failed
-                try { vite.kill('SIGKILL'); } catch(e2) {}
+                try { vite.kill('SIGKILL'); } catch (e2) { }
             }
         }
     }
