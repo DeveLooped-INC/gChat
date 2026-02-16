@@ -313,7 +313,7 @@ export class NetworkService {
 
     // --- MEDIA METHODS ---
 
-    private async handleMediaRequest(senderId: string, payload: { mediaId: string; chunkIndex: number; chunkSize: number; accessKey?: string }) {
+    public async handleMediaRequest(senderId: string, payload: { mediaId: string; chunkIndex: number; chunkSize: number; accessKey?: string }) {
         if (this._isShuttingDown) return;
 
         const { mediaId, chunkIndex, chunkSize, accessKey } = payload;
@@ -392,7 +392,7 @@ export class NetworkService {
         }, `media_stream_${mediaId}`);
     }
 
-    private handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: string | ArrayBuffer }) {
+    public handleMediaChunk(senderId: string, payload: { mediaId: string; chunkIndex: number; totalChunks: number; data: string | ArrayBuffer }) {
         if (this._isShuttingDown) return;
 
         const { mediaId, chunkIndex, totalChunks, data } = payload;
@@ -483,7 +483,7 @@ export class NetworkService {
         this.broadcast(packet, recipients, 0);
     }
 
-    private async handleRelayRequest(senderId: string, payload: { mediaId: string; originNode?: string; ownerId?: string; accessKey?: string; metadata?: MediaMetadata }) {
+    public async handleRelayRequest(senderId: string, payload: { mediaId: string; originNode?: string; ownerId?: string; accessKey?: string; metadata?: MediaMetadata }) {
         const { mediaId, originNode, ownerId, accessKey, metadata } = payload;
 
         // 1. Do we have it locally?
@@ -627,7 +627,7 @@ export class NetworkService {
         }
     }
 
-    private handleRecoveryFound(senderId: string, payload: { mediaId: string }) {
+    public handleRecoveryFound(senderId: string, payload: { mediaId: string }) {
         const { mediaId } = payload;
 
         // 1. My Download?
@@ -675,7 +675,7 @@ export class NetworkService {
         }
     }
 
-    private handleMediaTransferAck(senderId: string, payload: { mediaId: string }) {
+    public handleMediaTransferAck(senderId: string, payload: { mediaId: string }) {
         const { mediaId } = payload;
         const download = this._activeDownloads.get(mediaId);
 
