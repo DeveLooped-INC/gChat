@@ -322,7 +322,7 @@ function getControlAgent() {
         _controlAgent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`, {
             keepAlive: true,
             keepAliveMsecs: 1000,
-            timeout: 30000 // 30s socket timeout
+            timeout: 60000 // 60s socket timeout (Increased from 30s)
         });
     }
     return _controlAgent;
@@ -353,8 +353,8 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
         const agent = isStream ? getDataAgent() : getControlAgent();
 
         const controller = new AbortController();
-        // Use global timeout for data, shorter for control
-        const timeoutDuration = isStream ? CONNECTION_TIMEOUT_MS : 30000;
+        // Use global timeout for data, shorter for control (but robust enough for Tor)
+        const timeoutDuration = isStream ? CONNECTION_TIMEOUT_MS : 60000; // Increased from 30s
         const timeout = setTimeout(() => controller.abort(), timeoutDuration);
 
         try {
