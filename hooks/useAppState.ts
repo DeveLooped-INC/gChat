@@ -265,7 +265,7 @@ export const useAppState = (user: UserProfile) => {
         if (isLoaded) kvService.set('gchat_content_settings', contentSettings);
     }, [contentSettings, isLoaded]);
 
-    return {
+    return useMemo(() => ({
         contacts, setContacts,
         posts, setPosts,
         groups, setGroups,
@@ -294,5 +294,10 @@ export const useAppState = (user: UserProfile) => {
         notificationSettings,
         toggleMuteCategory,
         setNotificationMaxCount
-    };
+    }), [
+        contacts, posts, groups, messages, notifications, peers,
+        nodeConfig, mediaSettings, contentSettings, connectionRequests,
+        typingContactId, isLoaded, chatUnread, contactsUnread,
+        feedUnread, settingsUnread, userStats, notificationSettings
+    ]);
 };
