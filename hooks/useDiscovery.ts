@@ -14,10 +14,18 @@ export const useDiscovery = ({ user, state, addNotification, onUpdateUser }: Use
     const [pendingNodeRequests, setPendingNodeRequests] = useState<string[]>([]);
 
     // Sync Trusted Peers
+    const lastSyncedIdsRef = useRef<string>('');
+
+    // Sync Trusted Peers (Deduplicated)
     useEffect(() => {
         if (!state.isLoaded) return;
-        const trustedIds = state.contacts.flatMap((c: any) => c.homeNodes || []).filter((addr: string) => addr.endsWith('.onion'));
-        networkService.syncTrustedPeers(trustedIds);
+        const trustedIds = state.contacts.flatMap((c: any) => c.homeNodes || []).filter((addr: string) => addr.endsWith('.onion')).sort();
+        const idsString = JSON.stringify(trustedIds);
+
+        if (lastSyncedIdsRef.current !== idsString) {
+            networkService.syncTrustedPeers(trustedIds);
+            lastSyncedIdsRef.current = idsString;
+        }
     }, [state.contacts, state.isLoaded]);
 
     const handleDiscoveryPacket = useCallback((packet: NetworkPacket, senderNodeId: string, isReplay: boolean, daisyChain: (p: NetworkPacket, s?: string) => void) => {
