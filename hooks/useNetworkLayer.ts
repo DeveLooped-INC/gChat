@@ -423,16 +423,35 @@ export const useNetworkLayer = ({
                 if (senderNodeId && !postData.originNode) postData.originNode = senderNodeId;
 
                 if (verifySignature(createPostPayload(postData), postData.truthHash, postData.authorPublicKey)) {
+                    // Check if this is a genuinely new post BEFORE the state update
+                    const isNewPost = !state.postsRef.current.some((p: Post) => p.id === postData.id);
+
                     state.setPosts(prev => {
-                        if (prev.some(p => p.id === postData.id)) return prev;
+                        const idx = prev.findIndex(p => p.id === postData.id);
+                        if (idx === -1) {
+                            // Genuinely new post
+                            storageService.saveItem('posts', postData, currentUser.id).catch(e => secureLog('ERROR', 'Failed to save friend post', e));
+                            return [postData, ...prev];
+                        } else {
+                            // Existing post — merge social interaction state (votes, reactions, comments)
+                            const existing = prev[idx];
+                            const merged = mergePosts(existing, postData);
+                            merged.contentHash = calculatePostHash(merged);
+                            const existingHash = calculatePostHash(existing);
+                            if (existingHash === merged.contentHash) return prev; // No actual change
+                            storageService.saveItem('posts', merged, currentUser.id).catch(e => secureLog('ERROR', 'Failed to save merged post', e));
+                            const next = [...prev];
+                            next[idx] = merged;
+                            return next;
+                        }
+                    });
+
+                    // Notify only for genuinely new posts (not state updates)
+                    if (isNewPost && postData.authorId !== currentUser.id) {
                         const { handle } = formatUserIdentity(postData.authorName);
                         addNotificationRef.current('Friend Post', `${handle} shared a secure broadcast.`, 'info', 'social', AppRoute.FEED, postData.id);
-
                         if (postData.imageUrl || postData.media) checkAndAutoDownload(postData.imageUrl, postData.media, 'friends', postData.authorId, senderNodeId);
-
-                        storageService.saveItem('posts', postData, currentUser.id).catch(e => secureLog('ERROR', 'Failed to save friend post', e));
-                        return [postData, ...prev];
-                    });
+                    }
 
                     // CRITICAL: Propagate public posts to the mesh (Only if verified)
                     if (!isReplay && postData.privacy === 'public') {
@@ -750,10 +769,17 @@ export const useNetworkLayer = ({
                 }));
 
                 const postForComment = state.postsRef.current.find((p: Post) => p.id === postId);
-                if (postForComment) {
+                if (postForComment && newComment.authorId !== currentUser.id) {
                     const { handle } = formatUserIdentity(newComment.authorName || 'Someone');
-                    if (postForComment.authorId === currentUser.id && newComment.authorId !== currentUser.id) {
+                    if (postForComment.authorId === currentUser.id) {
+                        // Notify the post author about a new comment
                         addNotificationRef.current('New Comment', `${handle} commented on your broadcast`, 'info', 'social', AppRoute.FEED, postId);
+                    } else if (parentCommentId) {
+                        // Notify if someone replied to the current user's comment
+                        const parentComment = findCommentInTree(postForComment.commentsList, parentCommentId);
+                        if (parentComment && parentComment.authorId === currentUser.id) {
+                            addNotificationRef.current('Comment Reply', `${handle} replied to your comment`, 'info', 'social', AppRoute.FEED, postId);
+                        }
                     }
                 }
                 if (postAfterComment) broadcastPostState(postAfterComment);
@@ -775,6 +801,17 @@ export const useNetworkLayer = ({
                     storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
+
+                // Notify comment author about the vote on their comment
+                if (cvUserId !== currentUser.id) {
+                    const postForCV = state.postsRef.current.find((p: Post) => p.id === cvPostId);
+                    if (postForCV) {
+                        const targetComment = findCommentInTree(postForCV.commentsList, cvCommentId);
+                        if (targetComment && targetComment.authorId === currentUser.id) {
+                            addNotificationRef.current('Comment Vote', `Someone voted on your comment`, 'info', 'social', AppRoute.FEED, cvPostId);
+                        }
+                    }
+                }
                 if (postAfterCV) broadcastPostState(postAfterCV);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
@@ -804,6 +841,17 @@ export const useNetworkLayer = ({
                     storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
+
+                // Notify comment author about the reaction on their comment
+                if (action !== 'remove' && userId !== currentUser.id) {
+                    const postForCR = state.postsRef.current.find((p: Post) => p.id === postId);
+                    if (postForCR) {
+                        const targetComment = findCommentInTree(postForCR.commentsList, commentId);
+                        if (targetComment && targetComment.authorId === currentUser.id) {
+                            addNotificationRef.current('Comment Reaction', `Someone reacted ${emoji} to your comment`, 'info', 'social', AppRoute.FEED, postId);
+                        }
+                    }
+                }
                 if (postAfterCR) broadcastPostState(postAfterCR);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
@@ -820,6 +868,15 @@ export const useNetworkLayer = ({
                     storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
+
+                // Notify post author about the vote
+                if (userId !== currentUser.id) {
+                    const postForVote = state.postsRef.current.find((p: Post) => p.id === postId);
+                    if (postForVote && postForVote.authorId === currentUser.id) {
+                        const voteLabel = type === 'up' ? 'upvoted' : 'downvoted';
+                        addNotificationRef.current('New Vote', `Someone ${voteLabel} your broadcast`, 'info', 'social', AppRoute.FEED, postId);
+                    }
+                }
                 if (postAfterVote) broadcastPostState(postAfterVote);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
@@ -844,6 +901,14 @@ export const useNetworkLayer = ({
                     storageService.saveItem('posts', updatedPost, currentUser.id);
                     return updatedPost;
                 }));
+
+                // Notify post author about the reaction
+                if (action !== 'remove' && userId !== currentUser.id) {
+                    const postForReact = state.postsRef.current.find((p: Post) => p.id === postId);
+                    if (postForReact && postForReact.authorId === currentUser.id) {
+                        addNotificationRef.current('New Reaction', `Someone reacted ${emoji} to your broadcast`, 'info', 'social', AppRoute.FEED, postId);
+                    }
+                }
                 if (postAfterReact) broadcastPostState(postAfterReact);
                 if (!isReplay) daisyChainPacket(packet, senderNodeId);
                 break;
