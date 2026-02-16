@@ -1,7 +1,8 @@
 import jsSha3 from 'js-sha3';
+import { Post } from './types';
 
-// @ts-ignore
-const sha3_256 = jsSha3.sha3_256 || jsSha3.default?.sha3_256 || jsSha3;
+// Use cast instead of @ts-ignore for better type safety
+const sha3_256 = (jsSha3 as any).sha3_256 || (jsSha3 as any).default?.sha3_256 || jsSha3;
 
 export const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -99,8 +100,20 @@ export const SOCIAL_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '🔥
 export const DM_REACTIONS = ['👍', '👎', '❤️', '😂', '😮', '😢', '😡', '🔥', '🎉', '👀', '✅'];
 
 // Simple generator for random user names
-const ADJECTIVES = ['Cyber', 'Neon', 'Quantum', 'Dark', 'Hidden', 'Crypto', 'Silent', 'Rapid', 'Null', 'Void', 'Solar'];
-const NOUNS = ['Ninja', 'Signal', 'Node', 'Drifter', 'Punk', 'Ghost', 'Surfer', 'Coder', 'Relay', 'Daemon', 'Glitch'];
+const ADJECTIVES = [
+  'Cyber', 'Neon', 'Quantum', 'Dark', 'Hidden', 'Crypto', 'Silent', 'Rapid', 'Null', 'Void', 'Solar',
+  'Lunar', 'Cosmic', 'Digital', 'Binary', 'Ghost', 'Shadow', 'Electric', 'Magnetic', 'Plasma',
+  'Astral', 'Hyper', 'Sonic', 'Vapor', 'Glitch', 'Static', 'Holo', 'Neural', 'Synthetic',
+  'Cobalt', 'Crimson', 'Emerald', 'Azure', 'Violet', 'Obsidian', 'Ivory', 'Chrome', 'Iron',
+  'Rusty', 'Ancient', 'Future', 'Lost', 'Found', 'Broken', 'Rogue', 'Prime', 'Alpha', 'Omega'
+];
+const NOUNS = [
+  'Ninja', 'Signal', 'Node', 'Drifter', 'Punk', 'Ghost', 'Surfer', 'Coder', 'Relay', 'Daemon', 'Glitch',
+  'Runner', 'Walker', 'Stalker', 'Spector', 'Phantom', 'Wraith', 'Spirit', 'Soul', 'Mind',
+  'Brain', 'Core', 'Shell', 'Husk', 'Byte', 'Bit', 'Pixel', 'Voxel', 'Vector', 'Scalar',
+  'Matrix', 'Grid', 'Net', 'Web', 'Link', 'Chain', 'Block', 'Hash', 'Key', 'Token',
+  'Cipher', 'Code', 'Script', 'Bot', 'Droid', 'Mecha', 'Titan', 'Giant', 'Dwarf', 'Elf'
+];
 
 export const generateRandomProfile = () => {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
@@ -112,12 +125,12 @@ export const generateRandomProfile = () => {
   return { displayName, username };
 };
 
-export const calculateObjectSize = (obj: any): number => {
+export const calculateObjectSize = (obj: unknown): number => {
   const str = JSON.stringify(obj);
   return new TextEncoder().encode(str).length;
 };
 
-export const calculatePostHash = (post: any): string => {
+export const calculatePostHash = (post: Post): string => {
   // IMPORTANT: This payload must include mutable fields (comments/votes) 
   // so that the hash changes when activity happens.
   // This allows the Inventory Sync protocol to detect outdated posts.
@@ -129,7 +142,7 @@ export const calculatePostHash = (post: any): string => {
   }, {});
 
   const sortedReactions = Object.keys(post.reactions || {}).sort().reduce((acc: any, key) => {
-    acc[key] = (post.reactions[key] || []).sort();
+    acc[key] = (post.reactions![key] || []).sort();
     return acc;
   }, {});
 
