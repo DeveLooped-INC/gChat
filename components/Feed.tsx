@@ -254,7 +254,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
             const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
             await saveMedia(mediaId, blob, accessKey);
 
-            const type = isVideo ? 'video' : (isAudio ? 'audio' : 'file');
+            const type = isVideo ? 'video' : (isAudio ? 'audio' : (isImage ? 'image' : 'file'));
 
             setAttachedMedia({
                 id: mediaId,
