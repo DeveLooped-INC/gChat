@@ -29,6 +29,7 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
     const nativeInputRef = useRef<HTMLInputElement>(null);
     const timerRef = useRef<number | undefined>(undefined);
     const streamRef = useRef<MediaStream | null>(null);
+    const durationRef = useRef(0);
 
     const cleanup = () => {
         if (streamRef.current) {
@@ -95,6 +96,8 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
     const startRecording = () => {
         if (!stream) return;
         chunksRef.current = [];
+        durationRef.current = 0;
+        setDuration(0);
 
         // Improved MIME type selection for Android compatibility
         let mimeType = 'video/webm';
@@ -120,7 +123,7 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
             recorder.onstop = () => {
                 const blob = new Blob(chunksRef.current, { type: mimeType });
                 const url = URL.createObjectURL(blob);
-                onCapture(blob, url, duration);
+                onCapture(blob, url, durationRef.current);
             };
 
             mediaRecorderRef.current = recorder;
@@ -129,11 +132,13 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
 
             timerRef.current = window.setInterval(() => {
                 setDuration(prev => {
-                    if (prev >= maxDuration) {
+                    const next = prev + 1;
+                    durationRef.current = next;
+                    if (next >= maxDuration) {
                         stopRecording();
-                        return prev;
+                        return next;
                     }
-                    return prev + 1;
+                    return next;
                 });
             }, 1000);
         } catch (e: any) {
@@ -155,11 +160,13 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
             setIsPaused(false);
             timerRef.current = window.setInterval(() => {
                 setDuration(prev => {
-                    if (prev >= maxDuration) {
+                    const next = prev + 1;
+                    durationRef.current = next;
+                    if (next >= maxDuration) {
                         stopRecording();
-                        return prev;
+                        return next;
                     }
-                    return prev + 1;
+                    return next;
                 });
             }, 1000);
         }
@@ -497,6 +504,10 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
                         <FileVideo size={48} className="text-slate-600" />
                     </div>
                 )
+            ) : media.type === 'image' ? (
+                <div className="w-full h-full flex items-center justify-center bg-black">
+                    <ImageIcon size={48} className="text-slate-600" />
+                </div>
             ) : media.type === 'audio' ? (
                 <div className="flex items-center gap-3 h-full">
                     <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center">
