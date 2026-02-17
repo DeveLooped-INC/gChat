@@ -186,6 +186,17 @@ export const useNetworkLayer = ({
 
         // --- DELEGATE TO SUB-HOOKS ---
         if (packet.type === 'ANNOUNCE_PEER') {
+            // FIX: ANNOUNCE FLOOD PREVENTION
+            // If we received an announce from this peer in the last 15 minutes, ignore it.
+            // This stops echo chambers where nodes keep telling each other they exist.
+            const lastAnnounce = packetRateLimit.current.get(`ANNOUNCE_${senderNodeId}`);
+            const now = Date.now();
+            if (lastAnnounce && (now - lastAnnounce.start) < 1000 * 60 * 15) {
+                // Silent drop
+                return;
+            }
+            packetRateLimit.current.set(`ANNOUNCE_${senderNodeId}`, { count: 1, start: now });
+
             handleDiscoveryPacket(packet, senderNodeId, isReplay, daisyChainPacket);
             return;
         }
