@@ -271,7 +271,8 @@ export class NetworkService {
                     this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt) / 1000)}s). Retrying...`);
 
                     // CONGESTION CONTROL: Multiplicative Decrease
-                    dl.concurrency = 1;
+                    dl.concurrency = Math.max(1, dl.concurrency * 0.5);
+                    this.log('WARN', 'NETWORK', `Congestion Detected! Reducing concurrency to ${dl.concurrency.toFixed(1)}`);
 
                     // Move failed chunk back to front of queue
                     dl.inflight.delete(key);
