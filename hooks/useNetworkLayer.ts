@@ -73,7 +73,11 @@ export const useNetworkLayer = ({
     const packetQueue = useRef<{ packet: NetworkPacket, senderNodeId: string }[]>([]);
 
     // Flood Prevention: Rate Limit Per Sender
+    // Flood Prevention: Rate Limit Per Sender
     const packetRateLimit = useRef<Map<string, { count: number, start: number }>>(new Map());
+
+    // Peer Sync Throttling
+    const lastPeerSync = useRef<Map<string, number>>(new Map());
 
     // --- SECURE LOGGING HELPER ---
     // Only log to console if explicitly enabled or in dev mode.
@@ -1003,6 +1007,18 @@ export const useNetworkLayer = ({
                     const existing = prev.find(p => p.onionAddress === sender);
                     if (existing) {
                         if (existing.status !== 'online' || (Date.now() - existing.lastSeen) > 10000) {
+                            // SYNC TRIGGER: Peer came online
+                            if (existing.status !== 'online') {
+                                const lastSync = lastPeerSync.current.get(sender) || 0;
+                                if (Date.now() - lastSync > 5 * 60 * 1000) { // 5 min throttle
+                                    lastPeerSync.current.set(sender, Date.now());
+                                    // Trigger sync logic (see below)
+                                    // We can't call performSync() because it syncs everyone.
+                                    // We need a targeted sync.
+                                    // Hack: We'll do it in a timeout to break the render cycle or use a separate function.
+                                    setTimeout(() => syncWithPeer(sender), 1000);
+                                }
+                            }
                             return prev.map(p => p.onionAddress === sender ? { ...p, status: 'online', lastSeen: Date.now() } : p);
                         }
                         return prev;
@@ -1050,37 +1066,56 @@ export const useNetworkLayer = ({
     }, [state.mediaSettings]);
 
     // --- PERIODIC INVENTORY SYNC ---
+    // --- SYNC LOGIC ---
+
+    const sendInventorySyncRequest = useCallback((recipients: string[]) => {
+        if (recipients.length === 0) return;
+        const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
+        networkService.log('INFO', 'NETWORK', `Sending Inventory Sync Request to ${recipients.length} peers`);
+
+        const packet: NetworkPacket = {
+            id: crypto.randomUUID(), type: 'INVENTORY_SYNC_REQUEST', senderId: user.homeNodeOnion,
+            payload: {
+                since,
+                inventory: state.postsRef.current.filter((p: Post) => p.timestamp > since && p.privacy === 'public').map((p: Post) => ({ id: p.id, hash: calculatePostHash(p) })),
+                requestDiscoveredPeers: true,
+                senderIdentity: { username: user.username, displayName: user.displayName, avatarUrl: user.avatarUrl, bio: user.bio }
+            }
+        };
+        networkService.broadcast(packet, recipients).catch(console.error);
+
+        // Also sync groups
+        const groupPacket: NetworkPacket = { id: crypto.randomUUID(), type: 'GROUP_QUERY', senderId: user.homeNodeOnion, payload: { requesterId: user.id } };
+        networkService.broadcast(groupPacket, recipients).catch(console.error);
+
+    }, [user, state.postsRef, maxSyncAgeHours]);
+
+    const syncWithPeer = useCallback((peerOnion: string) => {
+        sendInventorySyncRequest([peerOnion]);
+    }, [sendInventorySyncRequest]);
+
+    const performFullSync = useCallback(() => {
+        if (!state.isLoaded) return;
+        const contactNodes = state.contactsRef.current.flatMap((c: any) => c.homeNodes || []).filter((addr: string) => addr.endsWith('.onion'));
+        const peerAddrs = state.peersRef.current.map((p: any) => p.onionAddress);
+        const allRecipients = Array.from(new Set([...contactNodes, ...peerAddrs])).filter(addr => addr !== user.homeNodeOnion);
+
+        if (allRecipients.length > 0) {
+            sendInventorySyncRequest(allRecipients as string[]);
+        }
+    }, [state.isLoaded, state.contactsRef, state.peersRef, user, sendInventorySyncRequest]);
+
+
+    // --- PERIODIC INVENTORY SYNC ---
     useEffect(() => {
-        const interval = setInterval(() => {
-            if (!state.isLoaded) return;
-            // Sync with all peers (trusted contacts + direct peers)
-            const contactNodes = state.contactsRef.current.flatMap((c: any) => c.homeNodes || []).filter((addr: string) => addr.endsWith('.onion'));
-            const peerAddrs = state.peersRef.current.map((p: any) => p.onionAddress);
-            const allRecipients = Array.from(new Set([...contactNodes, ...peerAddrs])).filter(addr => addr !== user.homeNodeOnion);
+        if (state.isLoaded) {
+            // Initial Sync on Load (with slight delay to let peers connect)
+            setTimeout(performFullSync, 2000);
+        }
 
-            if (allRecipients.length === 0) return;
-
-            const since = Date.now() - (maxSyncAgeHours * 60 * 60 * 1000);
-            networkService.log('INFO', 'NETWORK', `Periodic Inventory Sync with ${allRecipients.length} peers`);
-
-            const packet: NetworkPacket = {
-                id: crypto.randomUUID(), type: 'INVENTORY_SYNC_REQUEST', senderId: user.homeNodeOnion,
-                payload: {
-                    since,
-                    inventory: state.postsRef.current.filter((p: Post) => p.timestamp > since && p.privacy === 'public').map((p: Post) => ({ id: p.id, hash: calculatePostHash(p) })),
-                    requestDiscoveredPeers: true,
-                    senderIdentity: { username: user.username, displayName: user.displayName, avatarUrl: user.avatarUrl, bio: user.bio }
-                }
-            };
-            networkService.broadcast(packet, allRecipients as string[]).catch(console.error);
-
-            // group sync
-            const groupPacket: NetworkPacket = { id: crypto.randomUUID(), type: 'GROUP_QUERY', senderId: user.homeNodeOnion, payload: { requesterId: user.id } };
-            networkService.broadcast(groupPacket, allRecipients as string[]).catch(console.error);
-
-        }, 3600000); // Every 1 Hour
+        const interval = setInterval(performFullSync, 3600000); // Every 1 Hour
         return () => clearInterval(interval);
-    }, [state.isLoaded, state.contactsRef, state.peersRef, state.postsRef, user, maxSyncAgeHours]);
+    }, [state.isLoaded, performFullSync]);
 
     // --- SMART SYNC TRIGGERS ---
     const prevOnlinePeerIds = useRef<Set<string>>(new Set());
