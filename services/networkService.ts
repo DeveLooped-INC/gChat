@@ -28,6 +28,13 @@ interface ChunkRequest {
     retries: number;
 }
 
+interface MediaReadSession {
+    mediaId: string;
+    blob: Blob;
+    accessKey?: string;
+    lastAccessed: number;
+}
+
 interface ActiveDownload {
     id: string;
     peerOnion: string;
@@ -98,9 +105,11 @@ export class NetworkService {
     private _knownPeers: Set<string> = new Set();
     private _trustedPeers: Set<string> = new Set(); // Explicitly connected/added peers
     private _activeDownloads: Map<string, ActiveDownload> = new Map();
+    private _mediaSessions: Map<string, MediaReadSession> = new Map(); // Read Cache for serving media
     // Daisy Chain Relay State
     private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata }> = new Map(); // MediaID -> { Listeners, Metadata }
     private _relayHistory: Map<string, number> = new Map(); // RequestSignature -> Timestamp
+    private _relayResponseCache: Map<string, number> = new Map(); // "mediaId_senderId" -> Timestamp (tracks already-sent MEDIA_RECOVERY_FOUND)
     private _processedPacketIds: Set<string> = new Set(); // Protocol-level deduplication (short term)
     private _contactDirectory: Map<string, string> = new Map(); // OwnerID -> HomeNodeOnion
     private _mediaSettings: MediaSettings = { enabled: true, maxFileSizeMB: 10, autoDownloadFriends: true, autoDownloadPrivate: true, cacheRelayedMedia: false };
@@ -112,6 +121,18 @@ export class NetworkService {
             if (this._isShuttingDown) return;
             this.maintainDownloads();
         }, 1000);
+
+        // Session Cache Cleanup (Every 30s)
+        setInterval(() => {
+            if (this._isShuttingDown) return;
+            const now = Date.now();
+            this._mediaSessions.forEach((session, key) => {
+                if (now - session.lastAccessed > 120000) { // 2 Minutes TTL
+                    this.log('DEBUG', 'NETWORK', `Cleaning up expired read session for ${key}`);
+                    this._mediaSessions.delete(key);
+                }
+            });
+        }, 30000);
     }
 
     // --- LOGGING & STATUS HELPERS ---
@@ -336,15 +357,26 @@ export class NetworkService {
                 this.log('WARN', 'NETWORK', `Relay Access Key Mismatch for ${mediaId}. Expected: ${dl.metadata.accessKey}, Received: ${accessKey}`);
             }
         } else {
-            if (!dl) this.log('DEBUG', 'NETWORK', `Relay: Media ${mediaId} not found in active downloads.`);
-            else this.log('DEBUG', 'NETWORK', `Relay: Media ${mediaId} found but status is ${dl.status}.`);
+            // Check Session Cache
+            const session = this._mediaSessions.get(mediaId);
+            if (session) {
+                if (session.accessKey === accessKey) {
+                    canAccess = true;
+                    // Touch session
+                    session.lastAccessed = Date.now();
+                } else {
+                    this.log('WARN', 'NETWORK', `Session Access Key Mismatch for ${mediaId}.`);
+                }
+            }
         }
 
         if (!canAccess) {
-            // Fallback to DB check
-            this.log('DEBUG', 'NETWORK', `Relay: Checking DB for ${mediaId} (AccessKey: ${accessKey || 'None'})...`);
-            canAccess = await verifyMediaAccess(mediaId, accessKey);
-            this.log('DEBUG', 'NETWORK', `Relay: DB Access Result for ${mediaId}: ${canAccess}`);
+            if (!dl && !this._mediaSessions.has(mediaId)) {
+                // Fallback to DB check
+                this.log('DEBUG', 'NETWORK', `Relay: Checking DB for ${mediaId} (AccessKey: ${accessKey || 'None'})...`);
+                canAccess = await verifyMediaAccess(mediaId, accessKey);
+                this.log('DEBUG', 'NETWORK', `Relay: DB Access Result for ${mediaId}: ${canAccess}`);
+            }
         }
 
         if (!canAccess) {
@@ -359,6 +391,7 @@ export class NetworkService {
         // Check if we have this chunk in active download memory (High Speed Relay)
         // dl is already defined above
         if (dl && (dl.status === 'active' || dl.status === 'completed_serving') && dl.chunks[chunkIndex]) {
+            // PATH 1: Chunk is in RAM — serve directly (fastest)
             const memChunk = dl.chunks[chunkIndex] as ArrayBuffer;
             const base64Data = arrayBufferToBase64(memChunk);
             this.log('DEBUG', 'NETWORK', `Relay: Serving Chunk ${chunkIndex} for ${mediaId} from RAM to ${senderId}`);
@@ -369,10 +402,14 @@ export class NetworkService {
                 payload: { mediaId, chunkIndex, totalChunks: dl.totalChunks, data: base64Data }
             }, `media_stream_${mediaId}`);
             return;
-        } else {
-            // BUFFER THE REQUEST (Fix for Race Condition)
-            // The chunk is being downloaded but hasn't arrived yet.
+        } else if (dl && (dl.status === 'active' || dl.status === 'completed_serving')) {
+            // PATH 2: Active download exists but chunk hasn't arrived yet — buffer the request
             this.log('INFO', 'NETWORK', `Relay: Chunk ${chunkIndex} pending. Buffering request from ${senderId}.`);
+
+            // Ensure the pending list for this chunk index exists
+            if (!dl.pendingRequests.has(chunkIndex)) {
+                dl.pendingRequests.set(chunkIndex, []);
+            }
             dl.pendingRequests.get(chunkIndex)!.push({ senderId, streamId: `media_stream_${mediaId}` });
 
             // TIMEOUT FIX: Notify requester we are working on it
@@ -386,9 +423,30 @@ export class NetworkService {
         }
         // --------------------------------
 
-        const blob = await getMedia(mediaId);
+        // PATH 3: No active download — serve from disk / session cache
+        let blob: Blob | null = null;
+        const session = this._mediaSessions.get(mediaId);
+
+        if (session) {
+            this.log('DEBUG', 'NETWORK', `Relay: Serving Chunk ${chunkIndex} for ${mediaId} from Session Cache`);
+            blob = session.blob;
+            session.lastAccessed = Date.now();
+        } else {
+            // Load from DB and Create Session
+            this.log('DEBUG', 'NETWORK', `Relay: Loading ${mediaId} from storage for session...`);
+            blob = await getMedia(mediaId);
+            if (blob) {
+                this._mediaSessions.set(mediaId, {
+                    mediaId,
+                    blob,
+                    accessKey,
+                    lastAccessed: Date.now()
+                });
+            }
+        }
+
         if (!blob) {
-            this.log('WARN', 'NETWORK', `Relay: Media ${mediaId} authorized but blob NOT FOUND in storage/cache.`);
+            this.log('WARN', 'NETWORK', `Media ${mediaId} authorized but blob NOT FOUND in storage.`);
             return;
         }
 
@@ -595,10 +653,28 @@ export class NetworkService {
 
         // Re-check (Standard Check)
         hasIt = await hasMedia(mediaId);
+        const now = Date.now();
 
         if (hasIt) {
+            // DEDUP: Skip if we already told this sender we have it (5 min window)
+            const responseCacheKey = `${mediaId}_${senderId}`;
+            const lastResponse = this._relayResponseCache.get(responseCacheKey) || 0;
+            if (now - lastResponse < 300000) {
+                this.log('DEBUG', 'NETWORK', `Relay DEDUP: Already responded to ${senderId} for ${mediaId}. Skipping.`);
+                return;
+            }
+
             // Are we allowed to share it?
-            const canAccess = await verifyMediaAccess(mediaId, accessKey);
+            // Optimization: If we have a session, we implicitly have access with that key
+            let canAccess = false;
+            const session = this._mediaSessions.get(mediaId);
+            if (session && session.accessKey === accessKey) {
+                canAccess = true;
+                session.lastAccessed = Date.now(); // touch
+            } else {
+                canAccess = await verifyMediaAccess(mediaId, accessKey);
+            }
+
             if (!canAccess) return;
 
             this.log('INFO', 'NETWORK', `Found requested media ${mediaId}. Offering to ${senderId} (Relay/Cache)`);
@@ -609,6 +685,7 @@ export class NetworkService {
                 payload: { mediaId }
             });
 
+            this._relayResponseCache.set(responseCacheKey, now);
             return;
         }
 
@@ -617,7 +694,6 @@ export class NetworkService {
         // 3. DAISY CHAIN RELAY LOGIC (New)
 
         const historyKey = `${mediaId}_${senderId}`;
-        const now = Date.now();
         const lastSeen = this._relayHistory.get(historyKey) || 0;
 
         if (now - lastSeen < 10000) return;
