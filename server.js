@@ -845,7 +845,37 @@ io.on('connection', (socket) => {
             callback({ success: false, error: e.message });
         }
     });
-    socket.on('send-packet', async ({ targetOnion, payload, streamId }, callback) => {
+    // --- RATE LIMITER (Token Bucket) ---
+    // Prevents overwhelming the local Tor SOCKS proxy with too many concurrent requests.
+    const RATE_LIMIT = 20; // Max packets per second
+    const BURST_LIMIT = 40;
+    let tokens = BURST_LIMIT;
+    let lastRefill = Date.now();
+    const requestQueue = [];
+
+    function getToken() {
+        const now = Date.now();
+        const elapsed = now - lastRefill;
+        if (elapsed > 100) {
+            tokens = Math.min(BURST_LIMIT, tokens + (elapsed * (RATE_LIMIT / 1000)));
+            lastRefill = now;
+        }
+        if (tokens >= 1) {
+            tokens -= 1;
+            return true;
+        }
+        return false;
+    }
+
+    // Process Queue Loop
+    setInterval(() => {
+        while (requestQueue.length > 0 && getToken()) {
+            const { targetOnion, payload, streamId, callback } = requestQueue.shift();
+            performRequest(targetOnion, payload, streamId, callback);
+        }
+    }, 20); // Check frequently (50Hz)
+
+    async function performRequest(targetOnion, payload, streamId, callback) {
         try {
             const response = await fetchWithRetry(`http://${targetOnion}/gchat/packet`, {
                 method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' }
@@ -854,6 +884,11 @@ io.on('connection', (socket) => {
         } catch (e) {
             callback({ success: false, error: e.message });
         }
+    }
+
+    socket.on('send-packet', ({ targetOnion, payload, streamId }, callback) => {
+        // Enqueue request
+        requestQueue.push({ targetOnion, payload, streamId, callback });
     });
 });
 
