@@ -373,8 +373,15 @@ export class NetworkService {
             // BUFFER THE REQUEST (Fix for Race Condition)
             // The chunk is being downloaded but hasn't arrived yet.
             this.log('INFO', 'NETWORK', `Relay: Chunk ${chunkIndex} pending. Buffering request from ${senderId}.`);
-            if (!dl.pendingRequests.has(chunkIndex)) dl.pendingRequests.set(chunkIndex, []);
             dl.pendingRequests.get(chunkIndex)!.push({ senderId, streamId: `media_stream_${mediaId}` });
+
+            // TIMEOUT FIX: Notify requester we are working on it
+            this.sendMessage(senderId, {
+                type: 'MEDIA_PENDING',
+                senderId: this._myOnionAddress || 'system',
+                payload: { mediaId, chunkIndex }
+            }, `media_stream_${mediaId}`);
+
             return;
         }
         // --------------------------------
@@ -601,8 +608,11 @@ export class NetworkService {
                 senderId: this._myOnionAddress || 'unknown',
                 payload: { mediaId }
             });
+
             return;
         }
+
+
 
         // 3. DAISY CHAIN RELAY LOGIC (New)
 
@@ -699,6 +709,17 @@ export class NetworkService {
                     });
                 });
             }
+        }
+    }
+
+    public handleMediaPending(senderId: string, payload: { mediaId: string, chunkIndex: number }) {
+        const dl = this._activeDownloads.get(payload.mediaId);
+        if (!dl) return;
+
+        const req = dl.inflight.get(payload.chunkIndex);
+        if (req) {
+            this.log('INFO', 'NETWORK', `Received PENDING for chunk ${payload.chunkIndex}. Resetting timeout.`);
+            req.sentAt = Date.now(); // Reset timeout clock
         }
     }
 
