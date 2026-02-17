@@ -11,18 +11,35 @@ const MAX_GOSSIP_HOPS = 6;
 export const useGossipProtocol = (state: any, currentUser: any, addNotification: any) => {
 
     const broadcastPostState = useCallback((post: Post) => {
-        if (post.privacy !== 'public') return;
+        if (post.privacy === 'public') {
+            // Use POST packet (Push Model) for immediate propagation
+            const packet: NetworkPacket = {
+                id: crypto.randomUUID(),
+                type: 'POST',
+                hops: MAX_GOSSIP_HOPS,
+                senderId: state.userRef.current.homeNodeOnion,
+                payload: post
+            };
+            networkService.broadcast(packet, state.peersRef.current.map((p: any) => p.onionAddress));
+        } else if (post.privacy === 'friends') {
+            // Send to confirmed friends only
+            const friends = state.contactsRef.current
+                .filter((c: any) => c.isFriend && c.homeNodes && c.homeNodes.length > 0)
+                .map((c: any) => c.homeNodes[0]);
 
-        // Use POST packet (Push Model) for immediate propagation
-        const packet: NetworkPacket = {
-            id: crypto.randomUUID(),
-            type: 'POST',
-            hops: MAX_GOSSIP_HOPS,
-            senderId: state.userRef.current.homeNodeOnion,
-            payload: post
-        };
-        networkService.broadcast(packet, state.peersRef.current.map((p: any) => p.onionAddress));
-    }, [state.userRef, state.peersRef]);
+            if (friends.length > 0) {
+                const packet: NetworkPacket = {
+                    id: crypto.randomUUID(),
+                    type: 'POST',
+                    hops: 0, // Direct send only, do not gossip
+                    senderId: state.userRef.current.homeNodeOnion,
+                    payload: post
+                };
+                networkService.log('INFO', 'NETWORK', `Broadcasting Friends-Only Post to ${friends.length} friends.`);
+                networkService.broadcast(packet, friends);
+            }
+        }
+    }, [state.userRef, state.peersRef, state.contactsRef]);
 
     const daisyChainPacket = useCallback(async (packet: NetworkPacket, sourceNodeId?: string) => {
         const currentHops = packet.hops || 0;
