@@ -265,6 +265,10 @@ const PacketTypes = {
         type: z.literal('MEDIA_TRANSFER_ACK'),
         payload: z.object({ mediaId: z.string() })
     }),
+    MEDIA_PENDING: BasePacket.extend({
+        type: z.literal('MEDIA_PENDING'),
+        payload: z.object({ mediaId: z.string(), chunkIndex: z.number() })
+    }),
 
     // 8. SHUTDOWN / EXIT
     USER_EXIT: BasePacket.extend({
@@ -312,6 +316,7 @@ export const NetworkPacketSchema = z.discriminatedUnion('type', [
     PacketTypes.MEDIA_CHUNK,
     PacketTypes.MEDIA_RECOVERY_FOUND,
     PacketTypes.MEDIA_TRANSFER_ACK,
+    PacketTypes.MEDIA_PENDING,
     PacketTypes.USER_EXIT,
     PacketTypes.NODE_SHUTDOWN
 ]);
