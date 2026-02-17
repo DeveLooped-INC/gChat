@@ -63,6 +63,9 @@ interface ActiveDownload {
 
     // Request Buffering (Fix for Race Condition)
     pendingRequests: Map<number, { senderId: string, streamId: string }[]>;
+
+    // Retry Backoff
+    pendingRetries: Map<number, number>; // ChunkIndex -> EligibleAt (Timestamp)
 }
 
 type StatusListener = (isOnline: boolean, nodeId?: string) => void;
@@ -246,6 +249,17 @@ export class NetworkService {
         this._activeDownloads.forEach((dl) => {
             if (dl.status === 'error' || dl.status === 'completed' || dl.status === 'paused' || dl.status === 'completed_serving') return;
 
+            // BACKOFF: Check Pending Retries
+            if (dl.pendingRetries && dl.pendingRetries.size > 0) {
+                dl.pendingRetries.forEach((eligibleAt, index) => {
+                    if (now >= eligibleAt) {
+                        dl.pendingRetries.delete(index);
+                        dl.queue.unshift(index);
+                        this.log('DEBUG', 'NETWORK', `Backoff complete for Chunk ${index}. Re-queuing.`);
+                    }
+                });
+            }
+
             if (dl.status === 'recovering') {
                 const now = Date.now();
                 if (!dl.recoveryStartedAt) dl.recoveryStartedAt = now;
@@ -289,15 +303,15 @@ export class NetworkService {
                         return;
                     }
 
-                    this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt) / 1000)}s). Retrying...`);
+                    this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt) / 1000)}s). Retrying in 5s...`);
 
                     // CONGESTION CONTROL: Multiplicative Decrease
                     dl.concurrency = Math.max(1, dl.concurrency * 0.5);
-                    this.log('WARN', 'NETWORK', `Congestion Detected! Reducing concurrency to ${dl.concurrency.toFixed(1)}`);
+                    this.log('DEBUG', 'NETWORK', `Congestion Detected! Reducing concurrency to ${dl.concurrency.toFixed(1)}`);
 
-                    // Move failed chunk back to front of queue
+                    // Move failed chunk back to RETRY WAIT LIST (Backoff)
                     dl.inflight.delete(key);
-                    dl.queue.unshift(req.index);
+                    dl.pendingRetries.set(req.index, Date.now() + 5000); // 5s Penalty Box
                     req.retries++;
                 }
             });
@@ -936,7 +950,8 @@ export class NetworkService {
                 avgRtt: 5000,
                 listeners: [{ onProgress, onComplete: resolve, onError: reject }],
                 isRelayOnly: isRelay,
-                pendingRequests: new Map()
+                pendingRequests: new Map(),
+                pendingRetries: new Map()
             });
 
             const dl = this._activeDownloads.get(metadata.id)!;
