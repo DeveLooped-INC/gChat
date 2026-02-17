@@ -946,6 +946,11 @@ export const useNetworkLayer = ({
             // --- MEDIA TRANSFER HANDLERS ---
             // These delegate to networkService which manages the download state machine
 
+            case 'MEDIA_PENDING': {
+                if (senderNodeId) networkService.handleMediaPending(senderNodeId, packet.payload as { mediaId: string, chunkIndex: number });
+                break;
+            }
+
             case 'MEDIA_REQUEST': {
                 networkService.handleMediaRequest(senderNodeId, packet.payload);
                 break;
@@ -1197,7 +1202,7 @@ export const useNetworkLayer = ({
                 const packet = buildAnnouncePacket(true);
                 networkService.broadcast(packet, recipients as string[]);
             }
-        }, 1000 * 60 * 2);
+        }, 1000 * 60 * 60); // 1 Hour (Reduced from 2 mins)
 
         return () => {
             clearTimeout(initialDelay);
