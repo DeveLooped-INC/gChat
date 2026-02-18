@@ -582,8 +582,8 @@ export class NetworkService {
             }
         };
 
-        // Broadcast ONLY to Trusted Peers
-        const recipients = Array.from(this._trustedPeers).filter(p => p !== dl.peerOnion);
+        // Broadcast to ALL Trusted Peers (including the one who failed, as they might need to Proxy/Relay it)
+        const recipients = Array.from(this._trustedPeers);
         this.log('INFO', 'NETWORK', `Broadcasting RELAY Request for ${mediaId} to ${recipients.length} TRUSTED peers`);
         // Use 0 retries to prevent retry avalanche. The download loop handles reattempts.
         this.broadcast(packet, recipients, 0);
@@ -607,61 +607,67 @@ export class NetworkService {
         }
 
         if (!hasIt && targetNode && metadata) {
-            this.log('INFO', 'NETWORK', `Proxy: Fetching ${mediaId} from ${targetNode} for ${senderId}`);
+            // Prevent self-proxying
+            if (targetNode === this._myOnionAddress) {
+                this.log('WARN', 'NETWORK', `Relay: I am the Origin (${targetNode}) but I don't have the media. Cannot proxy.`);
+                // Fall through to Relay Forwarding (maybe someone else has a copy?)
+            } else {
+                this.log('INFO', 'NETWORK', `Proxy: Fetching ${mediaId} from ${targetNode} for ${senderId}`);
 
-            // We launch a download. We can use our own downloadMedia.
-            // We set allowUntrusted = true (if needed) but Origin should be trusted?
-            // Actually, if we are B, and A is origin. We have A in our contacts? 
-            // If yes, strict works. If no, we might need allowUntrusted if we are just a random bridge?
-            // For V1, we assume B knows A.
+                // We launch a download. We can use our own downloadMedia.
+                // We set allowUntrusted = true (if needed) but Origin should be trusted?
+                // Actually, if we are B, and A is origin. We have A in our contacts? 
+                // If yes, strict works. If no, we might need allowUntrusted if we are just a random bridge?
+                // For V1, we assume B knows A.
 
-            try {
-                // WARMUP: Verify connection to Origin first.
-                // This ensures A is online and creates a Tor circuit before triggering the download logic.
-                const ping = await this.connect(targetNode);
-                if (!ping.success) {
-                    this.log('WARN', 'NETWORK', `Proxy: Target ${targetNode} unreachable. Attempting Mesh Relay instead.`);
-                    // Fall through to Relay Logic
-                } else {
-                    // Trigger download in background
-                    const safeMetadata: MediaMetadata = metadata ? { ...metadata } : {
-                        id: mediaId,
-                        mimeType: 'application/octet-stream',
-                        size: 0,
-                        filename: `${mediaId}.bin`,
-                        ownerId: ownerId || 'unknown',
-                        type: 'file',       // Required
-                        duration: 0,        // Required
-                        chunkCount: 0       // Required
-                    };
+                try {
+                    // WARMUP: Verify connection to Origin first.
+                    // This ensures A is online and creates a Tor circuit before triggering the download logic.
+                    const ping = await this.connect(targetNode);
+                    if (!ping.success) {
+                        this.log('WARN', 'NETWORK', `Proxy: Target ${targetNode} unreachable. Attempting Mesh Relay instead.`);
+                        // Fall through to Relay Logic
+                    } else {
+                        // Trigger download in background
+                        const safeMetadata: MediaMetadata = metadata ? { ...metadata } : {
+                            id: mediaId,
+                            mimeType: 'application/octet-stream',
+                            size: 0,
+                            filename: `${mediaId}.bin`,
+                            ownerId: ownerId || 'unknown',
+                            type: 'file',       // Required
+                            duration: 0,        // Required
+                            chunkCount: 0       // Required
+                        };
 
-                    // PROXY-FIX: Ensure Access Key is present in the metadata for the active download
-                    if (accessKey) safeMetadata.accessKey = accessKey;
+                        // PROXY-FIX: Ensure Access Key is present in the metadata for the active download
+                        if (accessKey) safeMetadata.accessKey = accessKey;
 
-                    this.downloadMedia(targetNode, safeMetadata, (p) => {
-                        // Monitor progress? 
-                    }, true, true).then(async () => {
-                        // ON SUCCESS: Notify requester we have it now!
-                        this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
+                        this.downloadMedia(targetNode, safeMetadata, (p) => {
+                            // Monitor progress? 
+                        }, true, true).then(async () => {
+                            // ON SUCCESS: Notify requester we have it now!
+                            this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
 
-                        // We verify access just in case (though we just downloaded it)
-                        if (await hasMedia(mediaId)) {
-                            this.sendMessage(senderId, {
-                                id: crypto.randomUUID(),
-                                type: 'MEDIA_RECOVERY_FOUND',
-                                senderId: this._myOnionAddress || 'unknown',
-                                payload: { mediaId }
-                            });
-                        }
-                    }).catch(e => {
-                        this.log('WARN', 'NETWORK', `Proxy Download Failed: ${e}`);
-                    });
+                            // We verify access just in case (though we just downloaded it)
+                            if (await hasMedia(mediaId)) {
+                                this.sendMessage(senderId, {
+                                    id: crypto.randomUUID(),
+                                    type: 'MEDIA_RECOVERY_FOUND',
+                                    senderId: this._myOnionAddress || 'unknown',
+                                    payload: { mediaId }
+                                });
+                            }
+                        }).catch(e => {
+                            this.log('WARN', 'NETWORK', `Proxy Download Failed: ${e}`);
+                        });
 
-                    // We return immediately if we successfully started the proxy download.
-                    return;
+                        // We return immediately if we successfully started the proxy download.
+                        return;
+                    }
+                } catch (e) {
+                    this.log('WARN', 'NETWORK', `Proxy Logic Error: ${e}`);
                 }
-            } catch (e) {
-                this.log('WARN', 'NETWORK', `Proxy Logic Error: ${e}`);
             }
         }
 
