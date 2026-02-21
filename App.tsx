@@ -33,7 +33,15 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
     const [shutdownStep, setShutdownStep] = useState('');
 
     // Sync Settings
-    const [maxSyncAgeHours, setMaxSyncAgeHours] = useState(24);
+    const [maxSyncAgeHours, setMaxSyncAgeHours] = useState(() => {
+        const stored = localStorage.getItem('gchat_sync_age');
+        return stored ? parseInt(stored, 10) || 148 : 148;
+    });
+
+    const handleSetSyncAge = useCallback((hours: number) => {
+        setMaxSyncAgeHours(hours);
+        localStorage.setItem('gchat_sync_age', hours.toString());
+    }, []);
 
     // Navigation State
     const [feedInitialState, setFeedInitialState] = useState<{ filter: 'public' | 'friends'; authorId?: string; postId?: string } | null>(null);
@@ -377,8 +385,8 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
                     onUpdateNodeConfig={actions.handleUpdateNodeConfig}
                     onExportKeys={actions.handleExportKeys}
                     addToast={(title, message, type, category) => addNotification(title, message, type, category || 'admin', AppRoute.NODE_SETTINGS)}
-                    onSetSyncAge={(hours) => console.log("Set Sync Age", hours)}
-                    currentSyncAge={24}
+                    onSetSyncAge={handleSetSyncAge}
+                    currentSyncAge={maxSyncAgeHours}
                     data={{
                         posts: state.posts,
                         messages: state.messages,
