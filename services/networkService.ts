@@ -110,7 +110,8 @@ export class NetworkService {
     private _activeDownloads: Map<string, ActiveDownload> = new Map();
     private _mediaSessions: Map<string, MediaReadSession> = new Map(); // Read Cache for serving media
     // Daisy Chain Relay State
-    private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata }> = new Map(); // MediaID -> { Listeners, Metadata }
+    private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata; sourceNode?: string }> = new Map(); // MediaID -> { Listeners, Metadata, SourceNode }
+    private _proxyPending: Map<string, Set<string>> = new Map(); // `${mediaId}_${chunkIndex}` -> Set of Downstream Peers
     private _relayHistory: Map<string, number> = new Map(); // RequestSignature -> Timestamp
     private _relayResponseCache: Map<string, number> = new Map(); // "mediaId_senderId" -> Timestamp (tracks already-sent MEDIA_RECOVERY_FOUND)
     private _processedPacketIds: Set<string> = new Set(); // Protocol-level deduplication (short term)
@@ -384,6 +385,16 @@ export class NetworkService {
             }
         }
 
+        // --- NEW: Check Relay State ---
+        const relayState = this._relayState.get(mediaId);
+        if (!canAccess && relayState && relayState.sourceNode) {
+            if (relayState.metadata.accessKey === accessKey || !relayState.metadata.accessKey) {
+                canAccess = true;
+            } else {
+                this.log('WARN', 'NETWORK', `Stateless Relay Access Key Mismatch for ${mediaId}.`);
+            }
+        }
+
         if (!canAccess) {
             if (!dl && !this._mediaSessions.has(mediaId)) {
                 // Fallback to DB check
@@ -434,6 +445,34 @@ export class NetworkService {
             }, `media_stream_${mediaId}`);
 
             return;
+        }
+
+        // --- NEW: STATELESS PROXY PASS-THROUGH LOGIC ---
+        if (relayState && relayState.sourceNode && !dl) {
+            const proxyKey = `${mediaId}_${chunkIndex}`;
+            let pending = this._proxyPending.get(proxyKey);
+
+            if (!pending) {
+                pending = new Set();
+                this._proxyPending.set(proxyKey, pending);
+
+                this.log('DEBUG', 'NETWORK', `Proxy Pass-Through: Forwarding request for ${mediaId} chunk ${chunkIndex} to upstream ${relayState.sourceNode}`);
+                this.sendMessage(relayState.sourceNode, {
+                    type: 'MEDIA_REQUEST',
+                    senderId: this._myOnionAddress || 'unknown',
+                    payload: { mediaId, chunkIndex, chunkSize, accessKey }
+                }, `media_stream_${mediaId}`);
+            }
+
+            pending.add(senderId);
+
+            this.sendMessage(senderId, {
+                type: 'MEDIA_PENDING',
+                senderId: this._myOnionAddress || 'system',
+                payload: { mediaId, chunkIndex }
+            }, `media_stream_${mediaId}`);
+
+            return; // We are done here.
         }
         // --------------------------------
 
@@ -486,6 +525,29 @@ export class NetworkService {
         if (this._isShuttingDown) return;
 
         const { mediaId, chunkIndex, totalChunks, data } = payload;
+
+        // --- NEW: STATELESS PROXY RECEIVE LOGIC ---
+        const proxyKey = `${mediaId}_${chunkIndex}`;
+        const pendingProxy = this._proxyPending.get(proxyKey);
+        if (pendingProxy && pendingProxy.size > 0) {
+            this.log('DEBUG', 'NETWORK', `Proxy Pass-Through: Forwarding received chunk ${chunkIndex} for ${mediaId} to ${pendingProxy.size} downstream peers.`);
+
+            let outData = data;
+            if (typeof data !== 'string') {
+                const buffer = data instanceof ArrayBuffer ? data : new Uint8Array(data).buffer;
+                outData = arrayBufferToBase64(buffer);
+            }
+
+            pendingProxy.forEach(downstreamPeer => {
+                this.sendMessage(downstreamPeer, {
+                    type: 'MEDIA_CHUNK',
+                    senderId: this._myOnionAddress || 'system',
+                    payload: { mediaId, chunkIndex, totalChunks, data: outData }
+                }, `media_stream_${mediaId}`);
+            });
+            this._proxyPending.delete(proxyKey);
+        }
+
         const download = this._activeDownloads.get(mediaId);
         if (!download) return;
 
@@ -781,17 +843,10 @@ export class NetworkService {
             const state = this._relayState.get(mediaId)!;
 
             // We found a source (senderId)!
-            // We must now act as the Proxy.
-            // A. Start downloading from senderId (if we aren't already)
-            // B. Notify all listeners that WE have it.
+            // We must now act as a Stateless Pass-Through Proxy.
+            state.sourceNode = senderId;
 
-            this.log('INFO', 'NETWORK', `Relay: Found source ${senderId} for ${mediaId}. Starting Proxy buffer...`);
-
-            this.downloadMedia(senderId, state.metadata, (p) => {
-                // Monitor
-            }, true, true).catch(err => {
-                this.log('WARN', 'NETWORK', `Relay Buffer Failed: ${err}`);
-            });
+            this.log('INFO', 'NETWORK', `Relay: Found upstream source ${senderId} for ${mediaId}. Ready to pass-through chunks.`);
 
             // Notify Listeners
             if (state.listeners.size > 0) {
@@ -826,7 +881,27 @@ export class NetworkService {
         if (download && download.status === 'completed_serving') {
             this.log('INFO', 'NETWORK', `Received ACK from ${senderId} for ${mediaId}. Cleaning up RAM.`);
             this._activeDownloads.delete(mediaId);
-            this._relayState.delete(mediaId);
+            // Don't fully delete relay state if others still need it
+            if (this._relayState.has(mediaId)) {
+                const state = this._relayState.get(mediaId)!;
+                state.listeners.delete(senderId);
+                if (state.listeners.size === 0) this._relayState.delete(mediaId);
+            }
+        } else if (this._relayState.has(mediaId)) {
+            const state = this._relayState.get(mediaId)!;
+            state.listeners.delete(senderId);
+
+            if (state.listeners.size === 0) {
+                this.log('INFO', 'NETWORK', `Proxy Pass-Through: All peers ACK'd for ${mediaId}. Cleaning up Relay State.`);
+                if (state.sourceNode) {
+                    this.sendMessage(state.sourceNode, {
+                        type: 'MEDIA_TRANSFER_ACK',
+                        senderId: this._myOnionAddress || 'unknown',
+                        payload: { mediaId }
+                    });
+                }
+                this._relayState.delete(mediaId);
+            }
         }
     }
 
