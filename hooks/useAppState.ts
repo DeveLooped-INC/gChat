@@ -153,8 +153,16 @@ export const useAppState = (user: UserProfile) => {
         if (isLoaded) {
             kvService.set(PEERS_KEY, peers);
             networkService.updateKnownPeers(peers.map(p => p.onionAddress));
+            networkService.syncTrustedPeers(peers.map(p => p.onionAddress));
         }
     }, [peers, isLoaded]);
+
+    // Sync contacts to networkService so relay routing can resolve ownerIds to home nodes
+    useEffect(() => {
+        if (isLoaded && contacts.length > 0) {
+            networkService.syncContacts(contacts);
+        }
+    }, [contacts, isLoaded]);
 
     // --- GARBAGE COLLECTION ---
     const pruneMessages = async () => {
