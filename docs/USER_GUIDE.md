@@ -1,3 +1,4 @@
+
 # gChat User Guide
 
 ## 1. Prerequisites
@@ -43,7 +44,7 @@ The feed is where you see updates from the mesh network.
 Navigate to the **Chat** tab to send private messages.
 *   **Encryption**: All messages are E2E encrypted (ChaCha20-Poly1305) before leaving your device.
 *   **Media Recording**: You can record Audio and Video messages directly. These are chunked and sent over Tor.
-*   **Mesh Recovery**: If you try to view a video from a user who has gone offline, gChat will ask your *other* peers if they have a copy of the file. If found, it will seamlessly download it from them.
+*   **Mesh Recovery**: If you try to view a video from an unknown or offline user, gChat will ask your peers to form a daisy chain proxy. If the author is found, the media will seamlessly stream to you through your trusted friends without revealing your IP.
 
 ## 6. Group Chats
 gChat supports encrypted group conversations.
