@@ -6,7 +6,8 @@ import { getTransferConfig, arrayBufferToBase64, base64ToArrayBuffer } from '../
 import { kvService } from './kv'; // Import KV Service
 import { NetworkPacketSchema } from './packetSchema';
 
-const BACKEND_URL = 'http://127.0.0.1:3001';
+const MASTER_IP = (import.meta as any).env?.VITE_MASTER_IP || '127.0.0.1';
+const BACKEND_URL = `http://${MASTER_IP}:3001`;
 
 export interface PingResult {
     success: boolean;
