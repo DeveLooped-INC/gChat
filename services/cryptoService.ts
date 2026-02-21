@@ -2,19 +2,15 @@ import nacl from 'tweetnacl';
 import jsSha3 from 'js-sha3';
 import { toBase32 } from '../utils';
 
-// @ts-ignore
-const sha3_256 = jsSha3.sha3_256 || jsSha3.default?.sha3_256 || jsSha3;
+// Use cast instead of @ts-ignore for better type safety
+const sha3_256 = (jsSha3 as any).sha3_256 || (jsSha3 as any).default?.sha3_256 || jsSha3;
 
 const encodeUTF8 = (str: string): Uint8Array => new TextEncoder().encode(str);
 const decodeUTF8 = (arr: Uint8Array): string => new TextDecoder().decode(arr);
 
 const encodeBase64 = (arr: Uint8Array): string => {
-  let binary = '';
-  const len = arr.length;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(arr[i]);
-  }
-  return btoa(binary);
+  // Use a more efficient mapping than manual loop
+  return btoa(Array.from(arr, byte => String.fromCharCode(byte)).join(''));
 };
 
 const decodeBase64 = (str: string): Uint8Array => {
@@ -114,16 +110,16 @@ export const deriveOnionAddress = (publicKeyBase64: string): string => {
   return address.toLowerCase();
 };
 
-export const signData = (data: any, secretKey: string): string => {
+export const signData = (data: unknown, secretKey: string): string => {
   const msg = encodeUTF8(deterministicStringify(data));
-  const sig = nacl.sign.detached(msg, decodeBase64(secretKey));
+  const sig = nacl.sign.detached(new Uint8Array(msg), new Uint8Array(decodeBase64(secretKey)));
   return encodeBase64(sig);
 };
 
-export const verifySignature = (data: any, signature: string, publicKey: string): boolean => {
+export const verifySignature = (data: unknown, signature: string, publicKey: string): boolean => {
   try {
     const msg = encodeUTF8(deterministicStringify(data));
-    return nacl.sign.detached.verify(msg, decodeBase64(signature), decodeBase64(publicKey));
+    return nacl.sign.detached.verify(new Uint8Array(msg), new Uint8Array(decodeBase64(signature)), new Uint8Array(decodeBase64(publicKey)));
   } catch (e) {
     return false;
   }
@@ -173,7 +169,7 @@ export const decryptMessage = (
 
 // --- SYMMETRIC ENCRYPTION FOR BACKUPS (AES-GCM via WebCrypto) ---
 
-export const deriveKeyFromPassword = async (password: string, salt: Uint8Array): Promise<CryptoKey> => {
+export const deriveKeyFromPassword = async (password: string, salt: Uint8Array, iterations: number = 100000): Promise<CryptoKey> => {
   const enc = new TextEncoder();
   const keyMaterial = await window.crypto.subtle.importKey(
     "raw",
@@ -186,7 +182,7 @@ export const deriveKeyFromPassword = async (password: string, salt: Uint8Array):
     {
       name: "PBKDF2",
       salt: salt as any,
-      iterations: 100000,
+      iterations: iterations, // Parametrized
       hash: "SHA-256"
     },
     keyMaterial,
@@ -196,10 +192,11 @@ export const deriveKeyFromPassword = async (password: string, salt: Uint8Array):
   );
 };
 
-export const encryptWithPassword = async (data: string, password: string): Promise<{ encrypted: string; salt: string; iv: string }> => {
+export const encryptWithPassword = async (data: string, password: string): Promise<{ encrypted: string; salt: string; iv: string; iterations: number }> => {
   const salt = window.crypto.getRandomValues(new Uint8Array(16));
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKeyFromPassword(password, salt);
+  const iterations = 600000; // OWASP Recommendation for PBKDF2-HMAC-SHA256
+  const key = await deriveKeyFromPassword(password, salt, iterations);
 
   const enc = new TextEncoder();
   const encryptedContent = await window.crypto.subtle.encrypt(
@@ -211,14 +208,16 @@ export const encryptWithPassword = async (data: string, password: string): Promi
   return {
     encrypted: encodeBase64(new Uint8Array(encryptedContent)),
     salt: encodeBase64(salt),
-    iv: encodeBase64(iv)
+    iv: encodeBase64(iv),
+    iterations
   };
 };
 
-export const decryptWithPassword = async (encryptedData: string, password: string, saltBase64: string, ivBase64: string): Promise<string> => {
+export const decryptWithPassword = async (encryptedData: string, password: string, saltBase64: string, ivBase64: string, iterations: number = 100000): Promise<string> => {
   const salt = decodeBase64(saltBase64);
   const iv = decodeBase64(ivBase64);
-  const key = await deriveKeyFromPassword(password, salt);
+  // Use provided iterations or default to legacy 100k
+  const key = await deriveKeyFromPassword(password, salt, iterations);
 
   const decryptedContent = await window.crypto.subtle.decrypt(
     { name: "AES-GCM", iv: iv as any },

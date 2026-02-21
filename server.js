@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import helmet from 'helmet';
 import { spawn, exec, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -56,7 +57,10 @@ const httpServer = createServer(app);
 httpServer.setTimeout(CONNECTION_TIMEOUT_MS);
 
 const io = new Server(httpServer, {
-    cors: { origin: "*", methods: ["GET", "POST"] },
+    cors: {
+        origin: ["http://localhost:3000", "http://127.0.0.1:3000", "tauri://localhost"],
+        methods: ["GET", "POST"]
+    },
     pingTimeout: 60000,
     pingInterval: 25000
 });
@@ -174,7 +178,10 @@ process.stdin.on('keypress', (str, key) => {
 });
 
 // --- EXPRESS ---
-app.use(cors());
+app.use(helmet()); // Secure Headers
+app.use(cors({
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'tauri://localhost']
+}));
 app.use(express.json({ limit: '50mb' }));
 
 app.use((err, req, res, next) => {
@@ -196,7 +203,18 @@ app.get('/gchat/health', (req, res) => {
 });
 
 app.post('/gchat/packet', (req, res) => {
-    broadcastLog('INFO', 'NETWORK', `Packet received from ${req.ip}`, { type: req.body?.type, sender: req.body?.senderId });
+    // ECHO CANCELLATION: Drop packets from ourselves
+    if (myOnionAddress && req.body?.senderId === myOnionAddress) {
+        return res.status(200).send({ status: 'ignored_echo' });
+    }
+
+    // Rate Limit / Spam Protection (Basic)? 
+    // For now, just Log at DEBUG to reduce noise unless it's important
+    // broadcastLog('DEBUG', 'NETWORK', `Packet received from ${req.ip}`, { type: req.body?.type, sender: req.body?.senderId });
+
+    // Only log INFO for critical packet types or specific debug needs
+    // broadcastLog('INFO', 'NETWORK', `Packet received`, { type: req.body?.type });
+
     io.emit('tor-packet', req.body);
     res.status(200).send({ status: 'received' });
 });
@@ -304,7 +322,7 @@ function getControlAgent() {
         _controlAgent = new SocksProxyAgent(`socks5h://127.0.0.1:${TOR_SOCKS_PORT}`, {
             keepAlive: true,
             keepAliveMsecs: 1000,
-            timeout: 30000 // 30s socket timeout
+            timeout: 60000 // 60s socket timeout (Increased from 30s)
         });
     }
     return _controlAgent;
@@ -335,8 +353,8 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
         const agent = isStream ? getDataAgent() : getControlAgent();
 
         const controller = new AbortController();
-        // Use global timeout for data, shorter for control
-        const timeoutDuration = isStream ? CONNECTION_TIMEOUT_MS : 30000;
+        // Use global timeout for data, shorter for control (but robust enough for Tor)
+        const timeoutDuration = isStream ? CONNECTION_TIMEOUT_MS : 60000; // Increased from 30s
         const timeout = setTimeout(() => controller.abort(), timeoutDuration);
 
         try {
@@ -352,7 +370,7 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
                 httpAgent: agent,
                 httpsAgent: agent,
                 signal: controller.signal,
-                validateStatus: () => true,
+                validateStatus: (status) => status < 500, // Retry on Server Errors (5xx), accepts 4xx as terminal failure
                 data: options.body,
                 maxContentLength: Infinity,
                 maxBodyLength: Infinity,
@@ -362,9 +380,14 @@ async function fetchWithRetry(url, options, streamId = null, retries = 3) {
             const res = await axios(config);
             clearTimeout(timeout);
 
+            if (res.status < 200 || res.status >= 300) {
+                broadcastLog('WARN', 'NETWORK', `HTTP Error ${res.status} from ${url}`);
+            }
+
             return {
                 ok: res.status >= 200 && res.status < 300,
-                status: res.status
+                status: res.status,
+                data: res.data
             };
         } catch (err) {
             clearTimeout(timeout);
@@ -822,7 +845,37 @@ io.on('connection', (socket) => {
             callback({ success: false, error: e.message });
         }
     });
-    socket.on('send-packet', async ({ targetOnion, payload, streamId }, callback) => {
+    // --- RATE LIMITER (Token Bucket) ---
+    // Prevents overwhelming the local Tor SOCKS proxy with too many concurrent requests.
+    const RATE_LIMIT = 20; // Max packets per second
+    const BURST_LIMIT = 40;
+    let tokens = BURST_LIMIT;
+    let lastRefill = Date.now();
+    const requestQueue = [];
+
+    function getToken() {
+        const now = Date.now();
+        const elapsed = now - lastRefill;
+        if (elapsed > 100) {
+            tokens = Math.min(BURST_LIMIT, tokens + (elapsed * (RATE_LIMIT / 1000)));
+            lastRefill = now;
+        }
+        if (tokens >= 1) {
+            tokens -= 1;
+            return true;
+        }
+        return false;
+    }
+
+    // Process Queue Loop
+    setInterval(() => {
+        while (requestQueue.length > 0 && getToken()) {
+            const { targetOnion, payload, streamId, callback } = requestQueue.shift();
+            performRequest(targetOnion, payload, streamId, callback);
+        }
+    }, 20); // Check frequently (50Hz)
+
+    async function performRequest(targetOnion, payload, streamId, callback) {
         try {
             const response = await fetchWithRetry(`http://${targetOnion}/gchat/packet`, {
                 method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' }
@@ -831,6 +884,11 @@ io.on('connection', (socket) => {
         } catch (e) {
             callback({ success: false, error: e.message });
         }
+    }
+
+    socket.on('send-packet', ({ targetOnion, payload, streamId }, callback) => {
+        // Enqueue request
+        requestQueue.push({ targetOnion, payload, streamId, callback });
     });
 });
 

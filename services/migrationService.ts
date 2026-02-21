@@ -1,9 +1,9 @@
-
 import JSZip from 'jszip';
 import { encryptWithPassword, decryptWithPassword } from './cryptoService';
 import { networkService } from './networkService';
 import { storageService } from './storage';
-import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest } from '../types';
+import { kvService } from './kv'; // Added KV Service
+import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest, UserProfile } from '../types';
 
 export interface MigrationPackage {
     version: number;
@@ -11,9 +11,17 @@ export interface MigrationPackage {
     encryptedData: string;
     salt: string;
     iv: string;
+    iterations?: number;
 }
 
 interface DecryptedPayload {
+    kvData: {
+        userProfile: UserProfile | null;
+        profileRegistry: Record<string, any>;
+        nodeOwner: string | null;
+        nodeConfig: any;
+    };
+    // Legacy support for older migrations
     localStorage: Record<string, string>;
     torKeys: any;
     idbData: {
@@ -28,24 +36,40 @@ interface DecryptedPayload {
 }
 
 export const createMigrationPackage = async (): Promise<{ blob: Blob; password: string }> => {
-    // 1. Generate strong password
-    const password = Math.random().toString(36).slice(-10) + Math.random().toString(36).slice(-10);
+    // 1. Generate strong password (Cryptographically Secure)
+    const array = new Uint8Array(20);
+    window.crypto.getRandomValues(array);
+    const password = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
 
-    // 2. Identify Current User (Owner)
-    const ownerId = localStorage.getItem('gchat_node_owner');
-    if (!ownerId) throw new Error("No active node owner found.");
+    // 2. Identify Current User (Owner) - Fetch from KV, fallback to LocalStorage (Legacy)
+    let ownerId: string | null = await kvService.get<string>('gchat_node_owner');
+    if (!ownerId) {
+        ownerId = localStorage.getItem('gchat_node_owner');
+    }
 
-    // 3. Gather LocalStorage Data (Config, Peers, Registry)
+    if (!ownerId) throw new Error("No active node owner found. Cannot export.");
+
+    // 3. Gather KV Store Data (CRITICAL: Contains Encryption Keys)
+    const kvData = {
+        userProfile: await kvService.get<UserProfile>('gchat_user_profile'),
+        profileRegistry: await kvService.get<Record<string, any>>('gchat_profile_registry') || {},
+        nodeOwner: ownerId,
+        nodeConfig: await kvService.get<any>('gchat_node_config')
+    };
+
+    // 4. Gather LocalStorage Data (Legacy/Fallback)
+    const SENSITIVE_KEYS = ['gchat_user_profile', 'gchat_node_owner', 'gchat_node_config', 'gchat_profile_registry'];
     const storageDump: Record<string, string> = {};
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        // We only backup keys relevant to the system or specific user
         if (key && (key.startsWith('gchat_') || key.includes(ownerId))) {
+            // Skip sensitive keys - they are already handled by KV export
+            if (SENSITIVE_KEYS.includes(key)) continue;
             storageDump[key] = localStorage.getItem(key) || '';
         }
     }
 
-    // 4. Gather IndexedDB Data (The Big Stuff)
+    // 5. Gather IndexedDB Data (The Big Stuff)
     const idbData = {
         posts: await storageService.getItems<Post>('posts', ownerId),
         messages: await storageService.getItems<Message>('messages', ownerId),
@@ -55,7 +79,7 @@ export const createMigrationPackage = async (): Promise<{ blob: Blob; password: 
         requests: await storageService.getItems<ConnectionRequest>('requests', ownerId)
     };
 
-    // 5. Get Tor Keys from Backend
+    // 6. Get Tor Keys from Backend
     let torKeys = {};
     if (typeof networkService.getTorKeys === 'function') {
         try {
@@ -66,26 +90,28 @@ export const createMigrationPackage = async (): Promise<{ blob: Blob; password: 
     }
 
     const fullPayload: DecryptedPayload = {
+        kvData,
         localStorage: storageDump,
-        torKeys: torKeys,
-        idbData: idbData,
-        ownerId: ownerId
+        torKeys,
+        idbData,
+        ownerId
     };
 
-    // 6. Encrypt Payload
-    const { encrypted, salt, iv } = await encryptWithPassword(JSON.stringify(fullPayload), password);
+    // 7. Encrypt Payload
+    const { encrypted, salt, iv, iterations } = await encryptWithPassword(JSON.stringify(fullPayload), password);
 
     const migrationData: MigrationPackage = {
-        version: 2, // Version 2 supports IDB
+        version: 3, // Version 3 includes KV Data
         timestamp: Date.now(),
         encryptedData: encrypted,
         salt,
-        iv
+        iv,
+        iterations
     };
 
-    // 7. Create Zip
+    // 8. Create Zip
     const zip = new JSZip();
-    zip.file("gchat_migration_v2.json", JSON.stringify(migrationData, null, 2));
+    zip.file("gchat_migration_v3.json", JSON.stringify(migrationData, null, 2));
 
     const zipBlob = await zip.generateAsync({ type: "blob" });
 
@@ -97,10 +123,14 @@ export const restoreMigrationPackage = async (file: File, password: string): Pro
         const zip = new JSZip();
         const unzipped = await zip.loadAsync(file);
 
-        // Support v2 (IDB) and fallback for v1 (Legacy LS)
-        let migrationFile = unzipped.file("gchat_migration_v2.json");
-        let version = 2;
+        // Support v3 (KV), v2 (IDB), v1 (Legacy)
+        let migrationFile = unzipped.file("gchat_migration_v3.json");
+        let version = 3;
 
+        if (!migrationFile) {
+            migrationFile = unzipped.file("gchat_migration_v2.json");
+            version = 2;
+        }
         if (!migrationFile) {
             migrationFile = unzipped.file("gchat_migration.json");
             version = 1;
@@ -116,24 +146,47 @@ export const restoreMigrationPackage = async (file: File, password: string): Pro
             migrationData.encryptedData,
             password,
             migrationData.salt,
-            migrationData.iv
+            migrationData.iv,
+            migrationData.iterations
         );
 
-        const payload = JSON.parse(decryptedJson);
+        const payload: DecryptedPayload = JSON.parse(decryptedJson);
 
         // 2. Wipe Current State
         await storageService.deleteEverything();
         localStorage.clear();
+        await kvService.del('gchat_user_profile');
+        await kvService.del('gchat_node_owner');
+        await kvService.del('gchat_profile_registry');
+        await kvService.del('gchat_node_config');
 
-        // 3. Restore LocalStorage
-        if (payload.localStorage) {
-            Object.entries(payload.localStorage).forEach(([key, value]) => {
-                localStorage.setItem(key, value as string);
-            });
+        // 3. Restore KV Data (Version 3+)
+        if (version >= 3 && payload.kvData) {
+            if (payload.kvData.userProfile) await kvService.set('gchat_user_profile', payload.kvData.userProfile);
+            if (payload.kvData.nodeOwner) await kvService.set('gchat_node_owner', payload.kvData.nodeOwner);
+            if (payload.kvData.profileRegistry) await kvService.set('gchat_profile_registry', payload.kvData.profileRegistry);
+            if (payload.kvData.nodeConfig) await kvService.set('gchat_node_config', payload.kvData.nodeConfig);
         }
 
-        // 4. Restore IndexedDB (Version 2 Only)
-        if (version === 2 && payload.idbData && payload.ownerId) {
+        // 4. Restore LocalStorage (Legacy / Fallback)
+        // 4. Restore LocalStorage (Legacy / Fallback) -> WITH SECURITY FILTER
+        const SENSITIVE_KEYS = ['gchat_user_profile', 'gchat_node_owner', 'gchat_node_config', 'gchat_profile_registry'];
+        if (payload.localStorage) {
+            for (const [key, value] of Object.entries(payload.localStorage)) {
+                if (SENSITIVE_KEYS.includes(key)) {
+                    // MIGRATE LEGACY DATA TO KV
+                    if (key === 'gchat_user_profile') await kvService.set('gchat_user_profile', JSON.parse(value as string));
+                    else if (key === 'gchat_node_owner') await kvService.set('gchat_node_owner', value);
+                    else if (key === 'gchat_node_config') await kvService.set('gchat_node_config', JSON.parse(value as string));
+                    else if (key === 'gchat_profile_registry') await kvService.set('gchat_profile_registry', JSON.parse(value as string));
+                } else {
+                    localStorage.setItem(key, value as string);
+                }
+            }
+        }
+
+        // 5. Restore IndexedDB
+        if (version >= 2 && payload.idbData && payload.ownerId) {
             const ownerId = payload.ownerId;
             await storageService.syncState('posts', payload.idbData.posts || [], ownerId);
             await storageService.syncState('messages', payload.idbData.messages || [], ownerId);
@@ -143,7 +196,7 @@ export const restoreMigrationPackage = async (file: File, password: string): Pro
             await storageService.syncState('requests', payload.idbData.requests || [], ownerId);
         }
 
-        // 5. Restore Tor Keys
+        // 6. Restore Tor Keys
         if (payload.torKeys && Object.keys(payload.torKeys).length > 0) {
             if (typeof networkService.restoreTorKeys === 'function') {
                 await networkService.restoreTorKeys(payload.torKeys);

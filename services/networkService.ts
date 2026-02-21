@@ -63,6 +63,9 @@ interface ActiveDownload {
 
     // Request Buffering (Fix for Race Condition)
     pendingRequests: Map<number, { senderId: string, streamId: string }[]>;
+
+    // Retry Backoff
+    pendingRetries: Map<number, number>; // ChunkIndex -> EligibleAt (Timestamp)
 }
 
 type StatusListener = (isOnline: boolean, nodeId?: string) => void;
@@ -107,7 +110,7 @@ export class NetworkService {
     private _activeDownloads: Map<string, ActiveDownload> = new Map();
     private _mediaSessions: Map<string, MediaReadSession> = new Map(); // Read Cache for serving media
     // Daisy Chain Relay State
-    private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata }> = new Map(); // MediaID -> { Listeners, Metadata }
+    private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata; sourceNode?: string }> = new Map(); // MediaID -> { Listeners, Metadata, SourceNode }
     private _relayHistory: Map<string, number> = new Map(); // RequestSignature -> Timestamp
     private _relayResponseCache: Map<string, number> = new Map(); // "mediaId_senderId" -> Timestamp (tracks already-sent MEDIA_RECOVERY_FOUND)
     private _processedPacketIds: Set<string> = new Set(); // Protocol-level deduplication (short term)
@@ -246,6 +249,17 @@ export class NetworkService {
         this._activeDownloads.forEach((dl) => {
             if (dl.status === 'error' || dl.status === 'completed' || dl.status === 'paused' || dl.status === 'completed_serving') return;
 
+            // BACKOFF: Check Pending Retries
+            if (dl.pendingRetries && dl.pendingRetries.size > 0) {
+                dl.pendingRetries.forEach((eligibleAt, index) => {
+                    if (now >= eligibleAt) {
+                        dl.pendingRetries.delete(index);
+                        dl.queue.unshift(index);
+                        this.log('DEBUG', 'NETWORK', `Backoff complete for Chunk ${index}. Re-queuing.`);
+                    }
+                });
+            }
+
             if (dl.status === 'recovering') {
                 const now = Date.now();
                 if (!dl.recoveryStartedAt) dl.recoveryStartedAt = now;
@@ -264,7 +278,7 @@ export class NetworkService {
                     this.log('DEBUG', 'NETWORK', `Recovery Interval Check: ${now} - ${dl.lastRecoveryAttempt || 0} = ${now - (dl.lastRecoveryAttempt || 0)}ms`);
                     dl.lastRecoveryAttempt = now;
                     this.log('INFO', 'NETWORK', `Broadcasting Mesh Relay Retry for ${dl.id}...`);
-                    this.attemptMeshRecovery(dl.id, dl.metadata.originNode);
+                    this.attemptMeshRecovery(dl.id, dl.metadata.originNode, dl.metadata.ownerId);
                 }
                 return;
             }
@@ -283,21 +297,21 @@ export class NetworkService {
                         // FIX: Set lastRecoveryAttempt immediately to prevent "double tap" by the periodic check
                         dl.lastRecoveryAttempt = Date.now();
 
-                        this.attemptMeshRecovery(dl.id, dl.peerOnion); // Pass current peer as Origin Hint
+                        this.attemptMeshRecovery(dl.id, dl.peerOnion, dl.metadata.ownerId); // Pass current peer as Origin Hint
                         dl.status = 'recovering';
                         dl.listeners.forEach(l => l.onError("Source offline. Searching mesh..."));
                         return;
                     }
 
-                    this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt) / 1000)}s). Retrying...`);
+                    this.log('WARN', 'NETWORK', `Chunk ${req.index} timeout (${Math.round((now - req.sentAt) / 1000)}s). Retrying in 5s...`);
 
                     // CONGESTION CONTROL: Multiplicative Decrease
                     dl.concurrency = Math.max(1, dl.concurrency * 0.5);
-                    this.log('WARN', 'NETWORK', `Congestion Detected! Reducing concurrency to ${dl.concurrency.toFixed(1)}`);
+                    this.log('DEBUG', 'NETWORK', `Congestion Detected! Reducing concurrency to ${dl.concurrency.toFixed(1)}`);
 
-                    // Move failed chunk back to front of queue
+                    // Move failed chunk back to RETRY WAIT LIST (Backoff)
                     dl.inflight.delete(key);
-                    dl.queue.unshift(req.index);
+                    dl.pendingRetries.set(req.index, Date.now() + 5000); // 5s Penalty Box
                     req.retries++;
                 }
             });
@@ -367,6 +381,18 @@ export class NetworkService {
                 } else {
                     this.log('WARN', 'NETWORK', `Session Access Key Mismatch for ${mediaId}.`);
                 }
+            } else {
+                // Check Relay State for Daisy Chain Proxy
+                const relayState = this._relayState.get(mediaId);
+                // If we are proxying, we allow access if the key matches the relay state, 
+                // OR if the relayState doesn't define a key
+                if (relayState && relayState.sourceNode) {
+                    if (!relayState.metadata.accessKey || relayState.metadata.accessKey === accessKey) {
+                        canAccess = true;
+                    } else {
+                        this.log('WARN', 'NETWORK', `Relay State Access Key Mismatch for ${mediaId}. Expected: ${relayState.metadata.accessKey}, Received: ${accessKey}`);
+                    }
+                }
             }
         }
 
@@ -423,7 +449,34 @@ export class NetworkService {
         }
         // --------------------------------
 
-        // PATH 3: No active download — serve from disk / session cache
+        // PATH 3: Pure Relay (Daisy Chain Proxy)
+        const relayState = this._relayState.get(mediaId);
+        if (relayState && relayState.sourceNode) {
+            // CRITICAL: Register the requester as a listener so incoming MEDIA_CHUNK
+            // responses from upstream are forwarded back to them.
+            if (!relayState.listeners.has(senderId)) {
+                relayState.listeners.add(senderId);
+                this.log('INFO', 'NETWORK', `Relay: Registered ${senderId} as chunk listener for ${mediaId}`);
+            }
+
+            this.log('INFO', 'NETWORK', `Relay: Forwarding Chunk ${chunkIndex} request for ${mediaId} to ${relayState.sourceNode}`);
+
+            // Forward the exact request to the source node we found during RECOVERY_FOUND
+            this.sendMessage(relayState.sourceNode, {
+                type: 'MEDIA_REQUEST',
+                senderId: this._myOnionAddress || 'system',
+                payload: {
+                    mediaId,
+                    chunkIndex,
+                    chunkSize,
+                    accessKey: relayState.metadata.accessKey
+                }
+            }, `media_stream_${mediaId}`);
+            return;
+        }
+        // --------------------------------
+
+        // PATH 4: No active download — serve from disk / session cache
         let blob: Blob | null = null;
         const session = this._mediaSessions.get(mediaId);
 
@@ -473,6 +526,35 @@ export class NetworkService {
 
         const { mediaId, chunkIndex, totalChunks, data } = payload;
         const download = this._activeDownloads.get(mediaId);
+
+        // --- RELAY FORWARDING (Pure Proxy) ---
+        // We do this BEFORE returning if !download, so pure proxies can still work!
+        const relayState = this._relayState.get(mediaId);
+        if (relayState && relayState.listeners.size > 0 && relayState.sourceNode !== undefined) {
+            const isPureRelay = !download;
+            this.log('DEBUG', 'NETWORK', `Relay: Forwarding Chunk ${chunkIndex} to ${relayState.listeners.size} listeners! Pure Relay: ${isPureRelay}`);
+
+            let base64Data: string;
+            if (typeof data === 'string') {
+                base64Data = data;
+            } else if (data instanceof ArrayBuffer) {
+                base64Data = arrayBufferToBase64(data);
+            } else {
+                base64Data = arrayBufferToBase64(new Uint8Array(data).buffer as ArrayBuffer);
+            }
+
+            relayState.listeners.forEach(listener => {
+                this.sendMessage(listener, {
+                    type: 'MEDIA_CHUNK',
+                    senderId: this._myOnionAddress || 'system',
+                    payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
+                }, `media_stream_${mediaId}`);
+            });
+
+            // Note: Caching the chunk to disk while streaming could be added here in the future.
+            if (isPureRelay) return;
+        }
+
         if (!download) return;
 
         const requestInfo = download.inflight.get(chunkIndex);
@@ -500,7 +582,7 @@ export class NetworkService {
             chunkData = data;
         } else {
             // Fallback if Socket.IO did something magic, or it's a raw array
-            chunkData = new Uint8Array(data).buffer;
+            chunkData = new Uint8Array(data).buffer as ArrayBuffer;
         }
 
         // CRITICAL: Validate Chunk Data Size
@@ -518,8 +600,8 @@ export class NetworkService {
             // FULFILL BUFFERED REQUESTS
             const pending = download.pendingRequests.get(chunkIndex);
             if (pending && pending.length > 0) {
-                this.log('INFO', 'NETWORK', `Relay: Fulfilling buffered request for Chunk ${chunkIndex} to ${pending.length} peers.`);
-                const base64Data = arrayBufferToBase64(chunkData);
+                this.log('INFO', 'NETWORK', `Relay: Fulfilling local buffered request for Chunk ${chunkIndex} to ${pending.length} peers.`);
+                const base64Data = arrayBufferToBase64(chunkData as ArrayBuffer);
 
                 pending.forEach(req => {
                     this.sendMessage(req.senderId, {
@@ -540,13 +622,6 @@ export class NetworkService {
         } else {
             this.pumpDownloadQueue(download);
         }
-
-        // --- RELAY FORWARDING ---
-        // If we list this peer as a listener for this media, forward the chunk?
-        // NO. In the caching model, we pull the chunk for ourselves (dl.chunks),
-        // and handleMediaRequest (above) serves it from dl.chunks when the peer asks for it.
-        // So we do NOT need to push chunks here anymore. The "PULL" model is restored.
-        // We only clear the state if the download completes.
     }
 
     // --- RECOVERY LOGIC ---
@@ -568,8 +643,8 @@ export class NetworkService {
             }
         };
 
-        // Broadcast ONLY to Trusted Peers
-        const recipients = Array.from(this._trustedPeers).filter(p => p !== dl.peerOnion);
+        // Broadcast to ALL Trusted Peers (including the one who failed, as they might need to Proxy/Relay it)
+        const recipients = Array.from(this._trustedPeers);
         this.log('INFO', 'NETWORK', `Broadcasting RELAY Request for ${mediaId} to ${recipients.length} TRUSTED peers`);
         // Use 0 retries to prevent retry avalanche. The download loop handles reattempts.
         this.broadcast(packet, recipients, 0);
@@ -581,75 +656,10 @@ export class NetworkService {
         // 1. Do we have it locally?
         let hasIt = await hasMedia(mediaId);
 
-        // 2. Proxy Logic: Smart Routing
-        // We check if we have an explicit Origin Node OR if we know the Owner's Home Node from our Contacts.
-        let targetNode = originNode;
-
-        if (!targetNode && ownerId) {
-            targetNode = this._contactDirectory.get(ownerId);
-            if (targetNode) {
-                this.log('INFO', 'NETWORK', `Relay: Resolved Owner ${ownerId.substring(0, 8)}... to Node ${targetNode}`);
-            }
-        }
-
-        if (!hasIt && targetNode && metadata) {
-            this.log('INFO', 'NETWORK', `Proxy: Fetching ${mediaId} from ${targetNode} for ${senderId}`);
-
-            // We launch a download. We can use our own downloadMedia.
-            // We set allowUntrusted = true (if needed) but Origin should be trusted?
-            // Actually, if we are B, and A is origin. We have A in our contacts? 
-            // If yes, strict works. If no, we might need allowUntrusted if we are just a random bridge?
-            // For V1, we assume B knows A.
-
-            try {
-                // WARMUP: Verify connection to Origin first.
-                // This ensures A is online and creates a Tor circuit before triggering the download logic.
-                const ping = await this.connect(targetNode);
-                if (!ping.success) {
-                    this.log('WARN', 'NETWORK', `Proxy: Target ${targetNode} unreachable. Attempting Mesh Relay instead.`);
-                    // Fall through to Relay Logic
-                } else {
-                    // Trigger download in background
-                    const safeMetadata: MediaMetadata = metadata ? { ...metadata } : {
-                        id: mediaId,
-                        mimeType: 'application/octet-stream',
-                        size: 0,
-                        filename: `${mediaId}.bin`,
-                        ownerId: ownerId || 'unknown',
-                        type: 'file',       // Required
-                        duration: 0,        // Required
-                        chunkCount: 0       // Required
-                    };
-
-                    // PROXY-FIX: Ensure Access Key is present in the metadata for the active download
-                    if (accessKey) safeMetadata.accessKey = accessKey;
-
-                    this.downloadMedia(targetNode, safeMetadata, (p) => {
-                        // Monitor progress? 
-                    }, true, true).then(async () => {
-                        // ON SUCCESS: Notify requester we have it now!
-                        this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
-
-                        // We verify access just in case (though we just downloaded it)
-                        if (await hasMedia(mediaId)) {
-                            this.sendMessage(senderId, {
-                                id: crypto.randomUUID(),
-                                type: 'MEDIA_RECOVERY_FOUND',
-                                senderId: this._myOnionAddress || 'unknown',
-                                payload: { mediaId }
-                            });
-                        }
-                    }).catch(e => {
-                        this.log('WARN', 'NETWORK', `Proxy Download Failed: ${e}`);
-                    });
-
-                    // We return immediately if we successfully started the proxy download.
-                    return;
-                }
-            } catch (e) {
-                this.log('WARN', 'NETWORK', `Proxy Logic Error: ${e}`);
-            }
-        }
+        // NOTE: We rely purely on the Daisy Chain Relay (Section 3 below) to forward requests.
+        // The intermediary does NOT try to connect to the origin directly — this prevents
+        // Tor SOCKS congestion and keeps the relay lightweight.
+        // The node that actually HAS the media will respond with MEDIA_RECOVERY_FOUND.
 
         // Re-check (Standard Check)
         hasIt = await hasMedia(mediaId);
@@ -707,6 +717,9 @@ export class NetworkService {
             const storedMetadata = { ...metadata };
             if (accessKey) storedMetadata.accessKey = accessKey;
 
+            // PRIVACY FIX: Remove originNode from stored metadata so we don't leak it down the chain implicitly
+            delete storedMetadata.originNode;
+
             this._relayState.set(mediaId, { listeners: new Set(), metadata: storedMetadata });
             isNewRelay = true;
         }
@@ -733,7 +746,7 @@ export class NetworkService {
                     originNode: undefined, // PRIVACY FIX: Do not leak origin. Enforce Daisy Chain.
                     ownerId,
                     accessKey,
-                    metadata
+                    metadata: state.metadata // Use the scrubbed metadata
                 }
             };
             this.broadcast(forwardPacket, peersToForward, 0);
@@ -762,20 +775,17 @@ export class NetworkService {
 
             // We found a source (senderId)!
             // We must now act as the Proxy.
-            // A. Start downloading from senderId (if we aren't already)
+            // A. Record the source node so we know where to forward requests.
             // B. Notify all listeners that WE have it.
 
-            this.log('INFO', 'NETWORK', `Relay: Found source ${senderId} for ${mediaId}. Starting Proxy buffer...`);
+            this.log('INFO', 'NETWORK', `Relay: Found source ${senderId} for ${mediaId}. Establishing proxy chain...`);
 
-            this.downloadMedia(senderId, state.metadata, (p) => {
-                // Monitor
-            }, true, true).catch(err => {
-                this.log('WARN', 'NETWORK', `Relay Buffer Failed: ${err}`);
-            });
+            // PRIVACY FIX: Don't download the whole file to memory. Just record the source for streaming.
+            state.sourceNode = senderId;
 
             // Notify Listeners
             if (state.listeners.size > 0) {
-                this.log('INFO', 'NETWORK', `Relay: Notifying ${state.listeners.size} peers that media is ready.`);
+                this.log('INFO', 'NETWORK', `Relay: Notifying ${state.listeners.size} peers that media is ready via proxy.`);
                 state.listeners.forEach(peer => {
                     this.sendMessage(peer, {
                         id: crypto.randomUUID(),
@@ -789,13 +799,29 @@ export class NetworkService {
     }
 
     public handleMediaPending(senderId: string, payload: { mediaId: string, chunkIndex: number }) {
-        const dl = this._activeDownloads.get(payload.mediaId);
-        if (!dl) return;
+        const { mediaId, chunkIndex } = payload;
+        const dl = this._activeDownloads.get(mediaId);
 
-        const req = dl.inflight.get(payload.chunkIndex);
-        if (req) {
-            this.log('INFO', 'NETWORK', `Received PENDING for chunk ${payload.chunkIndex}. Resetting timeout.`);
-            req.sentAt = Date.now(); // Reset timeout clock
+        if (dl) {
+            const req = dl.inflight.get(chunkIndex);
+            if (req) {
+                this.log('INFO', 'NETWORK', `Received PENDING for chunk ${chunkIndex}. Resetting timeout.`);
+                req.sentAt = Date.now(); // Reset timeout clock
+            }
+        }
+
+        // --- PURE RELAY PROXY ---
+        // If we are a relay, also inform our listeners so they don't timeout
+        const relayState = this._relayState.get(mediaId);
+        if (relayState && relayState.listeners.size > 0) {
+            this.log('DEBUG', 'NETWORK', `Relay: Forwarding PENDING for chunk ${chunkIndex} to ${relayState.listeners.size} listeners.`);
+            relayState.listeners.forEach(listener => {
+                this.sendMessage(listener, {
+                    type: 'MEDIA_PENDING',
+                    senderId: this._myOnionAddress || 'system',
+                    payload: { mediaId, chunkIndex }
+                }, `media_stream_${mediaId}`);
+            });
         }
     }
 
@@ -936,7 +962,8 @@ export class NetworkService {
                 avgRtt: 5000,
                 listeners: [{ onProgress, onComplete: resolve, onError: reject }],
                 isRelayOnly: isRelay,
-                pendingRequests: new Map()
+                pendingRequests: new Map(),
+                pendingRetries: new Map()
             });
 
             const dl = this._activeDownloads.get(metadata.id)!;
@@ -949,7 +976,7 @@ export class NetworkService {
                 // Pass 'usePeer' as originNode hint if available
                 dl.recoveryStartedAt = Date.now();
                 dl.lastRecoveryAttempt = Date.now();
-                this.attemptMeshRecovery(metadata.id, usePeer || dl.metadata.originNode);
+                this.attemptMeshRecovery(metadata.id, usePeer || dl.metadata.originNode, dl.metadata.ownerId);
                 onProgress(-1);
             }
             requestWakeLock();

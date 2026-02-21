@@ -254,7 +254,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
             const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
             await saveMedia(mediaId, blob, accessKey);
 
-            const type = isVideo ? 'video' : (isAudio ? 'audio' : 'file');
+            const type = isVideo ? 'video' : (isAudio ? 'audio' : (isImage ? 'image' : 'file'));
 
             setAttachedMedia({
                 id: mediaId,
@@ -338,7 +338,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                         className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-300 shrink-0 cursor-pointer hover:opacity-80"
                     >
                         {comment.authorAvatar ? (
-                            <img src={comment.authorAvatar} className="w-full h-full rounded-full object-cover" />
+                            <img src={comment.authorAvatar} className="w-full h-full rounded-full object-cover" alt={`${comment.authorName}'s avatar`} />
                         ) : (
                             handle.charAt(0)
                         )}
@@ -464,7 +464,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
 
             {/* Flagged Explainer Modal */}
             {showFlaggedModalId && (
-                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowFlaggedModalId(null)}>
+                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" role="button" tabIndex={0} aria-label="Close modal" onClick={() => setShowFlaggedModalId(null)} onKeyDown={e => e.key === 'Escape' && setShowFlaggedModalId(null)}>
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl m-4 relative overflow-hidden" onClick={e => e.stopPropagation()}>
                         <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
                             <AlertTriangle size={100} className="text-amber-500" />
@@ -511,7 +511,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                             {/* User Info Preview */}
                             <div className="flex items-center gap-3 mb-2">
                                 {user.avatarUrl ? (
-                                    <img src={user.avatarUrl} className="w-10 h-10 rounded-full bg-slate-800 object-cover" />
+                                    <img src={user.avatarUrl} className="w-10 h-10 rounded-full bg-slate-800 object-cover" alt={`${user.displayName}'s avatar`} />
                                 ) : (
                                     <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center font-bold text-white">{user.displayName.charAt(0)}</div>
                                 )}
@@ -552,8 +552,8 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                             {/* Attachments Preview */}
                             {attachedImage && (
                                 <div className="relative rounded-xl overflow-hidden border border-slate-700 group bg-black/40">
-                                    <img src={attachedImage} className="w-full max-h-60 object-contain" />
-                                    <button onClick={() => setAttachedImage(null)} className="absolute top-2 right-2 bg-black/50 text-white p-1 rounded-full hover:bg-black/70"><X size={16} /></button>
+                                    <img src={attachedImage} className="w-full max-h-60 object-contain" alt="Post attachment preview" />
+                                    <button onClick={() => setAttachedImage(null)} className="absolute top-2 right-2 bg-black/50 text-white p-1 rounded-full hover:bg-black/70" aria-label="Remove attachment"><X size={16} /></button>
                                 </div>
                             )}
                             {attachedMedia && (
@@ -690,7 +690,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                         className={`w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-sm font-bold text-slate-300 ${!isHardBlocked ? 'cursor-pointer hover:opacity-80' : ''}`}
                                     >
                                         {post.authorAvatar ? (
-                                            <img src={post.authorAvatar} className="w-full h-full rounded-full object-cover" />
+                                            <img src={post.authorAvatar} className="w-full h-full rounded-full object-cover" alt={`${post.authorName || 'Author'}'s avatar`} />
                                         ) : (
                                             handle.charAt(0)
                                         )}
@@ -723,7 +723,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                 </div>
                                 <div className="relative">
                                     {!isHardBlocked && (
-                                        <button onClick={(e) => handleMenuClick(e, post.id)} className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors">
+                                        <button onClick={(e) => handleMenuClick(e, post.id)} className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors" aria-label="Post options">
                                             <MoreHorizontal size={20} />
                                         </button>
                                     )}
@@ -788,7 +788,7 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                             {/* Media Rendering */}
                                             {post.imageUrl && (
                                                 <div className="mt-3 rounded-xl overflow-hidden border border-slate-800 bg-black/20">
-                                                    <img src={post.imageUrl} className="w-full max-h-96 object-contain" onClick={() => handleViewSharedPost(post)} />
+                                                    <img src={post.imageUrl} className="w-full max-h-96 object-contain cursor-pointer" alt="Post image" onClick={() => handleViewSharedPost(post)} />
                                                 </div>
                                             )}
                                             {post.media && (

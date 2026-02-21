@@ -33,7 +33,11 @@ class SqliteDatabase {
             `CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)`,
             `CREATE TABLE IF NOT EXISTS store_items (id TEXT PRIMARY KEY, store_name TEXT NOT NULL, owner_id TEXT NOT NULL, data TEXT, created_at INTEGER)`,
             `CREATE INDEX IF NOT EXISTS idx_store_items_owner ON store_items (store_name, owner_id)`,
-            `CREATE TABLE IF NOT EXISTS media_files (id TEXT PRIMARY KEY, mime_type TEXT, size INTEGER, filename TEXT, access_key TEXT, owner_id TEXT, created_at INTEGER)`
+            `CREATE INDEX IF NOT EXISTS idx_store_items_name_id ON store_items (store_name, id)`,
+            `CREATE INDEX IF NOT EXISTS idx_store_items_created ON store_items (created_at)`,
+            `CREATE TABLE IF NOT EXISTS media_files (id TEXT PRIMARY KEY, mime_type TEXT, size INTEGER, filename TEXT, access_key TEXT, owner_id TEXT, created_at INTEGER)`,
+            `CREATE INDEX IF NOT EXISTS idx_media_owner ON media_files (owner_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_media_created ON media_files (created_at)`
         ];
         return new Promise((resolve, reject) => {
             this.db.serialize(() => {

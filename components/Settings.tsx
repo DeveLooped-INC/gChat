@@ -453,7 +453,7 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
               >
                 {systemLogs.length === 0 && <p className="text-slate-600 italic text-center pt-20">No logs captured yet.</p>}
                 {systemLogs.map((log, i) => (
-                  <div key={i} className="mb-1 border-b border-white/5 pb-1 last:border-0 last:pb-0 flex gap-2">
+                  <div key={`${log.timestamp}-${i}`} className="mb-1 border-b border-white/5 pb-1 last:border-0 last:pb-0 flex gap-2">
                     <span className="text-slate-500 whitespace-nowrap">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
                     <span className={`font-bold whitespace-nowrap w-16 ${log.level === 'ERROR' ? 'text-red-500' :
                       log.level === 'WARN' ? 'text-orange-400' :

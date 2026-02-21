@@ -1,51 +1,14 @@
 import { Post, Message, Contact, Group, NotificationItem, ConnectionRequest } from '../types';
-import { networkService } from './networkService';
+import { waitForSocket } from './socketHelper';
 
 type StoreName = 'posts' | 'messages' | 'contacts' | 'groups' | 'notifications' | 'requests' | 'offline_packets';
 
 class StorageService {
 
-  private async waitForSocket(): Promise<any> {
-    if (networkService.socket?.connected) {
-      return networkService.socket;
-    }
-
-    return new Promise((resolve) => {
-      let resolved = false;
-      let checkInterval: NodeJS.Timeout | null = null;
-      let timeoutId: NodeJS.Timeout | null = null;
-
-      const onConnect = () => {
-        if (resolved) return;
-        resolved = true;
-        if (checkInterval) clearInterval(checkInterval);
-        if (timeoutId) clearTimeout(timeoutId);
-        const s = networkService.socket;
-        if (s) resolve(s);
-      };
-
-      checkInterval = setInterval(() => {
-        const s = networkService.socket;
-        if (s && s.connected) {
-          onConnect();
-        }
-      }, 100);
-
-      timeoutId = setTimeout(() => {
-        if (!resolved) {
-          if (checkInterval) clearInterval(checkInterval);
-          const s = networkService.socket;
-          console.warn("StorageService: Socket wait timeout. Proceeding anyway (offline mode).");
-          resolve(s);
-        }
-      }, 5000);
-    });
-  }
-
   // --- GENERIC OPERATIONS ---
 
   public async saveItem<T extends { id: string }>(storeName: StoreName, item: T, ownerId: string): Promise<void> {
-    const socket = await this.waitForSocket();
+    const socket = await waitForSocket();
     return new Promise((resolve, reject) => {
       socket.emit('db:save', storeName, item, ownerId, (response: any) => {
         if (response.success) resolve();
@@ -55,7 +18,7 @@ class StorageService {
   }
 
   public async syncState<T extends { id: string }>(storeName: StoreName, items: T[], ownerId: string): Promise<void> {
-    const socket = await this.waitForSocket();
+    const socket = await waitForSocket();
     return new Promise((resolve, reject) => {
       // console.log(`[Storage] Syncing ${storeName}, Count: ${items.length}`);
       socket.emit('db:sync', storeName, items, ownerId, (response: any) => {
@@ -72,7 +35,7 @@ class StorageService {
   }
 
   public async getItems<T>(storeName: StoreName, ownerId: string): Promise<T[]> {
-    const socket = await this.waitForSocket();
+    const socket = await waitForSocket();
     return new Promise((resolve, reject) => {
       socket.emit('db:get-all', storeName, ownerId, (response: any) => {
         if (response.success) resolve(response.items);
@@ -82,7 +45,7 @@ class StorageService {
   }
 
   public async deleteItem(storeName: StoreName, id: string): Promise<void> {
-    const socket = await this.waitForSocket();
+    const socket = await waitForSocket();
     return new Promise((resolve, reject) => {
       socket.emit('db:delete', storeName, id, (response: any) => {
         if (response.success) resolve();
@@ -92,7 +55,7 @@ class StorageService {
   }
 
   public async clearStore(storeName: StoreName): Promise<void> {
-    const socket = await this.waitForSocket();
+    const socket = await waitForSocket();
     return new Promise((resolve, reject) => {
       socket.emit('db:clear', storeName, (response: any) => {
         if (response.success) resolve();
@@ -130,7 +93,7 @@ class StorageService {
     // We can just clear all stores.
     const stores: StoreName[] = ['posts', 'messages', 'contacts', 'groups', 'notifications', 'requests'];
     for (const s of stores) {
-      try { await this.clearStore(s); } catch (e) { }
+      try { await this.clearStore(s); } catch (e) { console.warn(`Failed to clear store ${s}:`, e); }
     }
   }
 }

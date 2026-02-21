@@ -7,6 +7,8 @@
     "start": "node scripts/start.js",
     "web": "vite",
     "build": "tsc && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "postinstall": "node scripts/download-tor.js"
   },
   "dependencies": {
@@ -14,6 +16,7 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "fs-extra": "^11.2.0",
+    "helmet": "^8.1.0",
     "js-sha3": "^0.9.3",
     "jsqr": "^1.4.0",
     "jszip": "^3.10.1",
@@ -26,12 +29,15 @@
     "socks-proxy-agent": "^8.0.3",
     "tar": "^7.5.7",
     "tweetnacl": "^1.0.3",
-    "tweetnacl-util": "^0.15.1"
+    "tweetnacl-util": "^0.15.1",
+    "zod": "^4.3.6"
   },
   "overrides": {
     "tar": "^7.5.7"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^20.19.31",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^18.3.1",
@@ -39,10 +45,12 @@
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.18",
     "concurrently": "^8.2.2",
+    "jsdom": "^28.1.0",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.2.2",
     "vite": "^7.3.1",
+    "vitest": "^4.0.18",
     "wait-on": "^7.2.0"
   }
 }

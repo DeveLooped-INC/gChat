@@ -1,32 +1,8 @@
-
-import { networkService } from './networkService';
+import { waitForSocket } from './socketHelper';
 
 class KVService {
-    private async waitForSocket(): Promise<any> {
-        // @ts-ignore
-        const socket = networkService.socket;
-        if (socket && socket.connected) return socket;
-
-        return new Promise((resolve) => {
-            const check = setInterval(() => {
-                // @ts-ignore
-                const s = networkService.socket;
-                if (s && s.connected) {
-                    clearInterval(check);
-                    resolve(s);
-                }
-            }, 100);
-
-            // Timeout after 5s
-            setTimeout(() => {
-                clearInterval(check);
-                resolve(null);
-            }, 5000);
-        });
-    }
-
     public async get<T>(key: string): Promise<T | null> {
-        const socket = await this.waitForSocket();
+        const socket = await waitForSocket();
         if (!socket) return null;
 
         return new Promise((resolve, reject) => {
@@ -38,8 +14,8 @@ class KVService {
     }
 
     public async set<T>(key: string, value: T): Promise<void> {
-        const socket = await this.waitForSocket();
-        if (!socket) return; // Fail silently or throw?
+        const socket = await waitForSocket();
+        if (!socket) return;
 
         return new Promise((resolve, reject) => {
             socket.emit('kv:set', key, value, (res: any) => {
@@ -50,7 +26,7 @@ class KVService {
     }
 
     public async del(key: string): Promise<void> {
-        const socket = await this.waitForSocket();
+        const socket = await waitForSocket();
         if (!socket) return;
 
         return new Promise((resolve, reject) => {
