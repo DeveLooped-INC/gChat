@@ -278,7 +278,7 @@ export class NetworkService {
                     this.log('DEBUG', 'NETWORK', `Recovery Interval Check: ${now} - ${dl.lastRecoveryAttempt || 0} = ${now - (dl.lastRecoveryAttempt || 0)}ms`);
                     dl.lastRecoveryAttempt = now;
                     this.log('INFO', 'NETWORK', `Broadcasting Mesh Relay Retry for ${dl.id}...`);
-                    this.attemptMeshRecovery(dl.id, dl.metadata.originNode);
+                    this.attemptMeshRecovery(dl.id, dl.metadata.originNode, dl.metadata.ownerId);
                 }
                 return;
             }
@@ -297,7 +297,7 @@ export class NetworkService {
                         // FIX: Set lastRecoveryAttempt immediately to prevent "double tap" by the periodic check
                         dl.lastRecoveryAttempt = Date.now();
 
-                        this.attemptMeshRecovery(dl.id, dl.peerOnion); // Pass current peer as Origin Hint
+                        this.attemptMeshRecovery(dl.id, dl.peerOnion, dl.metadata.ownerId); // Pass current peer as Origin Hint
                         dl.status = 'recovering';
                         dl.listeners.forEach(l => l.onError("Source offline. Searching mesh..."));
                         return;
@@ -673,61 +673,45 @@ export class NetworkService {
                 this.log('WARN', 'NETWORK', `Relay: I am the Origin (${targetNode}) but I don't have the media. Cannot proxy.`);
                 // Fall through to Relay Forwarding (maybe someone else has a copy?)
             } else {
-                this.log('INFO', 'NETWORK', `Proxy: Fetching ${mediaId} from ${targetNode} for ${senderId}`);
-
-                // We launch a download. We can use our own downloadMedia.
-                // We set allowUntrusted = true (if needed) but Origin should be trusted?
-                // Actually, if we are B, and A is origin. We have A in our contacts? 
-                // If yes, strict works. If no, we might need allowUntrusted if we are just a random bridge?
-                // For V1, we assume B knows A.
+                this.log('INFO', 'NETWORK', `Relay: Checking if source ${targetNode} is reachable for ${mediaId}...`);
 
                 try {
-                    // WARMUP: Verify connection to Origin first.
-                    // This ensures A is online and creates a Tor circuit before triggering the download logic.
                     const ping = await this.connect(targetNode);
-                    if (!ping.success) {
-                        this.log('WARN', 'NETWORK', `Proxy: Target ${targetNode} unreachable. Attempting Mesh Relay instead.`);
-                        // Fall through to Relay Logic
-                    } else {
-                        // Trigger download in background
-                        const safeMetadata: MediaMetadata = metadata ? { ...metadata } : {
-                            id: mediaId,
-                            mimeType: 'application/octet-stream',
-                            size: 0,
-                            filename: `${mediaId}.bin`,
-                            ownerId: ownerId || 'unknown',
-                            type: 'file',       // Required
-                            duration: 0,        // Required
-                            chunkCount: 0       // Required
-                        };
+                    if (ping.success) {
+                        // PURE RELAY: Don't download the whole file. Just record the source
+                        // and let chunks be forwarded on-demand via handleMediaRequest PATH 3.
+                        this.log('INFO', 'NETWORK', `Relay: Source ${targetNode} is reachable. Setting up pure relay for ${mediaId}`);
 
-                        // PROXY-FIX: Ensure Access Key is present in the metadata for the active download
-                        if (accessKey) safeMetadata.accessKey = accessKey;
+                        // Set up relay state
+                        const storedMetadata: MediaMetadata = { ...metadata };
+                        if (accessKey) storedMetadata.accessKey = accessKey;
+                        delete storedMetadata.originNode; // PRIVACY FIX
 
-                        this.downloadMedia(targetNode, safeMetadata, (p) => {
-                            // Monitor progress? 
-                        }, true, true).then(async () => {
-                            // ON SUCCESS: Notify requester we have it now!
-                            this.log('INFO', 'NETWORK', `Proxy: Download complete. Notifying ${senderId}`);
+                        if (!this._relayState.has(mediaId)) {
+                            this._relayState.set(mediaId, { listeners: new Set(), metadata: storedMetadata });
+                        }
 
-                            // We verify access just in case (though we just downloaded it)
-                            if (await hasMedia(mediaId)) {
-                                this.sendMessage(senderId, {
-                                    id: crypto.randomUUID(),
-                                    type: 'MEDIA_RECOVERY_FOUND',
-                                    senderId: this._myOnionAddress || 'unknown',
-                                    payload: { mediaId }
-                                });
-                            }
-                        }).catch(e => {
-                            this.log('WARN', 'NETWORK', `Proxy Download Failed: ${e}`);
+                        const relayState = this._relayState.get(mediaId)!;
+                        relayState.sourceNode = targetNode;
+
+                        // Register the requester as a listener
+                        relayState.listeners.add(senderId);
+
+                        // Notify the requester that we can serve the media (as a proxy)
+                        this.sendMessage(senderId, {
+                            id: crypto.randomUUID(),
+                            type: 'MEDIA_RECOVERY_FOUND',
+                            senderId: this._myOnionAddress || 'unknown',
+                            payload: { mediaId }
                         });
 
-                        // We return immediately if we successfully started the proxy download.
                         return;
+                    } else {
+                        this.log('WARN', 'NETWORK', `Relay: Source ${targetNode} unreachable. Falling through to mesh relay.`);
+                        // Fall through to Relay Logic below
                     }
                 } catch (e) {
-                    this.log('WARN', 'NETWORK', `Proxy Logic Error: ${e}`);
+                    this.log('WARN', 'NETWORK', `Relay: Error contacting source ${targetNode}: ${e}. Falling through.`);
                 }
             }
         }
@@ -1047,7 +1031,7 @@ export class NetworkService {
                 // Pass 'usePeer' as originNode hint if available
                 dl.recoveryStartedAt = Date.now();
                 dl.lastRecoveryAttempt = Date.now();
-                this.attemptMeshRecovery(metadata.id, usePeer || dl.metadata.originNode);
+                this.attemptMeshRecovery(metadata.id, usePeer || dl.metadata.originNode, dl.metadata.ownerId);
                 onProgress(-1);
             }
             requestWakeLock();
