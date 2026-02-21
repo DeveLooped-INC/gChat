@@ -22,6 +22,10 @@ To create a "Sovereign Social Node" that operates entirely peer-to-peer. Unlike 
 *   **Data Structure**: Posts are not just text; they are cryptographically signed payloads containing a `truthHash` (Integrity Check).
 *   **Propagation**: Uses a "Daisy-Chain" flooding protocol (`hops: 6`) to propagate content across the mesh without a central index.
 
+### D. The Master/Slave Topology
+*   **Concept**: Separate the heavy logic from the UI.
+*   **Execution**: Deploy headless `MASTER` routing nodes on always-on hardware, while users connect seamlessly via lightweight `SLAVE_FRONTEND` nodes on mobile or desktop browsers, authenticated via private Onion services or secure LAN APIs.
+
 ## 3. Architecture Specifications
 
 ### Module 1: The Universal Backend
