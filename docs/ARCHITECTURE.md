@@ -10,10 +10,13 @@ It separates the networking logic into a standalone Node.js server (`server.js`)
 ## System Components
 
 ### 1. The Backend (`server.js`)
-The nervous system of the node.
-*   **Tor Manager**: Spawns and monitors the `tor` binary.
+The nervous system of the node, now divided into distinct **Node Roles** (`MASTER`, `SLAVE_STORAGE`, `SLAVE_FRONTEND`, `MICRO_SITE`).
+*   **Tor Manager**: Spawns and monitors the `tor` binary (Master and Micro-site only).
 *   **SOCKS Proxy**: Configures Tor to listen on **Port 9990** (custom port to avoid conflicts with system Tor).
-*   **Hidden Service**: Maps port 80 of the onion address to local port **3456**.
+*   **Dual Hidden Services**: 
+    *   **Public Mesh**: Maps port 80 of the primary onion to local port **3456**.
+    *   **Private Mesh**: Maps port 80 of the private auth onion to local port **3001** for off-site Slave Frontends.
+*   **Plugin Loader** (`pluginLoader.js`): Dynamically imports custom extensions from the `plugins/` directory.
 *   **Dual-Agent Networking**:
     *   **Control Agent**: A dedicated `SocksProxyAgent` with short timeouts for low-latency, small packets (Messages, Handshakes, Gossip).
     *   **Data Agent**: A persistent `SocksProxyAgent` with `keepAlive: true` and long timeouts. This is used exclusively for media chunks to ensure large downloads do not block chat traffic or exhaust sockets.
@@ -21,8 +24,9 @@ The nervous system of the node.
 *   **Shutdown Handler**: Manages clean exit signals (SIGINT/SIGTERM) to kill child processes.
 
 ### 2. The Frontend (React + Vite)
-The visual interface and cryptographic engine.
-*   **Communication**: Connects to the backend via `socket.io-client`.
+The visual interface and cryptographic engine. Runs locally or on a dedicated `SLAVE_FRONTEND` node.
+*   **Communication**: Connects to the backend via `socket.io-client`. Can route over Tor (if remote) or standard LAN IP (if local to the Master).
+*   **Theme Engine** (`ThemeEngine.ts`): Asynchronously fetches and mounts CSS files from the `themes/` directory into the React DOM.
 *   **Cryptography**: All encryption happens here in the browser context. The backend only sees encrypted blobs.
 *   **Storage**: 
     *   `localStorage`: JSON state (Posts, Messages, Contacts).
