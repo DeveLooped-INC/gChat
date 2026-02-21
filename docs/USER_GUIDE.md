@@ -13,18 +13,23 @@
 ## 2. Getting Started
 
 ### Desktop Mode (Linux, Mac, Windows)
-1.  Run `npm start` in your terminal.
+#### Method 1: Single Desktop Node
+1.  Run `npm install` and then `npm start` in your terminal.
 2.  Your default web browser will automatically open to `http://localhost:3000`.
 3.  **Do not close the terminal window**, as this runs the Tor process.
 
+#### Method 2: Network / Multi-Device Deployment (Recommended)
+You can split gChat across multiple devices (e.g. running the Master Node on a Raspberry Pi, and the Frontend on your Laptop).
+1.  Run `npm install` and then `npm run deploy`.
+2.  The interactive deployment wizard will scan your local network for SSH-enabled devices.
+3.  Assign roles (e.g., Target 1 -> `MASTER`, Target 2 -> `SLAVE_FRONTEND`).
+4.  The system will automatically install gChat to those devices, generate `.env` configuration files, and setup `pm2` autostart routines.
+
 ### Mobile Mode (Android/Termux)
-1.  Run `npm start` in your Termux terminal.
+1.  Run `npm install` and then `npm start` in your Termux terminal.
 2.  The script will attempt to launch your Android browser automatically.
 3.  If it doesn't open, manually open Chrome or Firefox and go to `http://localhost:3000`.
 4.  **Do not close the Termux app**, as this runs the Tor process.
-
-### Mobile Mode (Apple)
-1.  Could be Coming Soon!
 
 ## 3. Initialization
 When you first launch gChat, you will see a terminal-like initialization screen.
