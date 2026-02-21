@@ -16,11 +16,13 @@ export interface UserTabProps {
     updatePrivacy: (key: keyof PrivacySettings, value: boolean) => void;
     onExportKeys?: () => void;
     currentSuffix: string;
+    themeName: string | null;
+    setThemeName: (v: string | null) => void;
 }
 
 const UserTab: React.FC<UserTabProps> = ({
     user, displayName, setDisplayName, bio, setBio, avatarUrl, handleAvatarUpload,
-    isDiscoverable, setIsDiscoverable, privacySettings, updatePrivacy, onExportKeys, currentSuffix
+    isDiscoverable, setIsDiscoverable, privacySettings, updatePrivacy, onExportKeys, currentSuffix, themeName, setThemeName
 }) => {
     return (
         <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
@@ -67,13 +69,29 @@ const UserTab: React.FC<UserTabProps> = ({
                                 Your globally unique ID is <strong>{displayName}{currentSuffix}</strong>
                             </p>
                         </div>
-                        <div>
-                            <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">Bio / Status</label>
-                            <textarea
-                                value={bio}
-                                onChange={(e) => setBio(e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-onion-500 transition-colors resize-none h-24"
-                            />
+                        <div className="flex gap-4">
+                            <div className="flex-1">
+                                <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">Bio / Status</label>
+                                <textarea
+                                    value={bio}
+                                    onChange={(e) => setBio(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-onion-500 transition-colors resize-none h-24"
+                                />
+                            </div>
+                            <div className="w-1/3">
+                                <label className="block text-xs font-medium text-slate-500 mb-1 uppercase">App Theme</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-onion-500 transition-colors h-[42px]"
+                                    value={themeName || 'default'}
+                                    onChange={(e) => {
+                                        const val = e.target.value === 'default' ? null : e.target.value;
+                                        setThemeName(val);
+                                    }}
+                                >
+                                    <option value="default">Default Dark</option>
+                                    <option value="dark-neon">Neon Dark</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
