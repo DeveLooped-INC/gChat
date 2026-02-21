@@ -8,16 +8,20 @@ import path from 'path';
 import fs from 'fs';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import axios from 'axios';
-import net from 'net';
-import { fileURLToPath } from 'url';
-import readline from 'readline';
 import https from 'https';
 import http from 'http';
+import dotenv from 'dotenv';
+import { loadPlugins, registerSocketHooks } from './pluginLoader.js';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- CONFIGURATION ---
+const NODE_ROLE = process.env.NODE_ROLE || 'MASTER'; // Roles: MASTER, SLAVE_STORAGE, SLAVE_FRONTEND, MICRO_SITE
+const MASTER_IP = process.env.MASTER_IP || '127.0.0.1'; // Target IP for slaves
+
 const PORT = 3001;
 const TOR_SOCKS_PORT = 9990;
 const TOR_CONTROL_PORT = 9991;
@@ -28,7 +32,8 @@ const CONNECTION_TIMEOUT_MS = 600000; // 10 Minutes
 const USER_DATA_DIR = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share");
 const APP_DATA_ROOT = path.join(USER_DATA_DIR, 'gchat');
 
-const HIDDEN_SERVICE_DIR = path.join(APP_DATA_ROOT, 'tor', 'service');
+const PUBLIC_HIDDEN_SERVICE_DIR = path.join(APP_DATA_ROOT, 'tor', 'service_public');
+const PRIVATE_HIDDEN_SERVICE_DIR = path.join(APP_DATA_ROOT, 'tor', 'service_private');
 const TOR_DATA_DIR = path.join(APP_DATA_ROOT, 'tor', 'data');
 
 console.log(`[Server] Data Directory: ${APP_DATA_ROOT}`);
@@ -129,6 +134,7 @@ else {
 
 let torProcess = null;
 let myOnionAddress = null;
+let myPrivateOnionAddress = null;
 let controlSocket = null;
 
 // --- EXIT HELPER ---
@@ -429,11 +435,13 @@ function connectToControlPort() {
 async function startTor() {
     await killGhostTor();
 
-    if (!fs.existsSync(HIDDEN_SERVICE_DIR)) fs.mkdirSync(HIDDEN_SERVICE_DIR, { recursive: true });
+    if (!fs.existsSync(PUBLIC_HIDDEN_SERVICE_DIR)) fs.mkdirSync(PUBLIC_HIDDEN_SERVICE_DIR, { recursive: true });
+    if (!fs.existsSync(PRIVATE_HIDDEN_SERVICE_DIR)) fs.mkdirSync(PRIVATE_HIDDEN_SERVICE_DIR, { recursive: true });
     if (!fs.existsSync(TOR_DATA_DIR)) fs.mkdirSync(TOR_DATA_DIR, { recursive: true });
     if (process.platform !== 'win32') {
         try { fs.chmodSync(TOR_DATA_DIR, 0o700); } catch (e) { }
-        try { fs.chmodSync(HIDDEN_SERVICE_DIR, 0o700); } catch (e) { }
+        try { fs.chmodSync(PUBLIC_HIDDEN_SERVICE_DIR, 0o700); } catch (e) { }
+        try { fs.chmodSync(PRIVATE_HIDDEN_SERVICE_DIR, 0o700); } catch (e) { }
     }
 
     // Define paths
@@ -455,8 +463,14 @@ SocksPort ${TOR_SOCKS_PORT}
 ControlPort ${TOR_CONTROL_PORT}
 CookieAuthentication 0
 DataDirectory ${TOR_DATA_DIR}
-HiddenServiceDir ${HIDDEN_SERVICE_DIR}
+
+# Public Mesh / API Service
+HiddenServiceDir ${PUBLIC_HIDDEN_SERVICE_DIR}
 HiddenServicePort 80 127.0.0.1:${INCOMING_PORT}
+
+# Private Auth / Master Admin Service (For off-site Frontend Slaves)
+HiddenServiceDir ${PRIVATE_HIDDEN_SERVICE_DIR}
+HiddenServicePort 80 127.0.0.1:${PORT}
 `;
 
     // Configure Bridges if available
@@ -523,17 +537,24 @@ HiddenServicePort 80 127.0.0.1:${INCOMING_PORT}
 }
 
 function readOnionAddress() {
-    const hostnamePath = path.join(HIDDEN_SERVICE_DIR, 'hostname');
+    const publicHostnamePath = path.join(PUBLIC_HIDDEN_SERVICE_DIR, 'hostname');
+    const privateHostnamePath = path.join(PRIVATE_HIDDEN_SERVICE_DIR, 'hostname');
     let attempts = 0;
     const check = setInterval(() => {
         attempts++;
-        if (fs.existsSync(hostnamePath)) {
+        if (fs.existsSync(publicHostnamePath) && fs.existsSync(privateHostnamePath)) {
             try {
-                const address = fs.readFileSync(hostnamePath, 'utf-8').trim();
-                if (address) {
-                    myOnionAddress = address;
-                    broadcastLog('INFO', 'TOR', `Service Address Created: ${myOnionAddress}`);
+                const pubAddr = fs.readFileSync(publicHostnamePath, 'utf-8').trim();
+                const privAddr = fs.readFileSync(privateHostnamePath, 'utf-8').trim();
+
+                if (pubAddr && privAddr && (!myOnionAddress || !myPrivateOnionAddress)) {
+                    myOnionAddress = pubAddr;
+                    myPrivateOnionAddress = privAddr;
+                    broadcastLog('INFO', 'TOR', `Public Mesh Address Created: ${myOnionAddress}`);
+                    broadcastLog('INFO', 'TOR', `Private Admin Address Created: ${myPrivateOnionAddress}`);
                     io.emit('onion-address', myOnionAddress);
+                    // Emit both to clients
+                    io.emit('dual-onion-addresses', { public: myOnionAddress, private: myPrivateOnionAddress });
                     clearInterval(check);
                 }
             } catch (e) { }
@@ -543,8 +564,12 @@ function readOnionAddress() {
 }
 
 io.on('connection', (socket) => {
+    // Inject Plugins
+    registerSocketHooks(socket, io);
+
     if (myOnionAddress) {
         socket.emit('onion-address', myOnionAddress);
+        socket.emit('dual-onion-addresses', { public: myOnionAddress, private: myPrivateOnionAddress });
         socket.emit('tor-status', 'connected');
     }
     socket.on('get-onion-address', (cb) => { if (cb) cb(myOnionAddress); });
@@ -552,7 +577,7 @@ io.on('connection', (socket) => {
         try {
             const keys = {};
             ['hostname', 'hs_ed25519_secret_key', 'hs_ed25519_public_key'].forEach(file => {
-                const filePath = path.join(HIDDEN_SERVICE_DIR, file);
+                const filePath = path.join(PUBLIC_HIDDEN_SERVICE_DIR, file);
                 if (fs.existsSync(filePath)) keys[file] = fs.readFileSync(filePath).toString('base64');
             });
             cb({ success: true, keys });
@@ -560,11 +585,11 @@ io.on('connection', (socket) => {
     });
     socket.on('restore-tor-keys', (keys, cb) => {
         try {
-            if (!fs.existsSync(HIDDEN_SERVICE_DIR)) fs.mkdirSync(HIDDEN_SERVICE_DIR, { recursive: true });
-            if (process.platform !== 'win32') fs.chmodSync(HIDDEN_SERVICE_DIR, 0o700);
+            if (!fs.existsSync(PUBLIC_HIDDEN_SERVICE_DIR)) fs.mkdirSync(PUBLIC_HIDDEN_SERVICE_DIR, { recursive: true });
+            if (process.platform !== 'win32') fs.chmodSync(PUBLIC_HIDDEN_SERVICE_DIR, 0o700);
             Object.entries(keys).forEach(([filename, contentBase64]) => {
                 const buffer = Buffer.from(contentBase64, 'base64');
-                const filePath = path.join(HIDDEN_SERVICE_DIR, filename);
+                const filePath = path.join(PUBLIC_HIDDEN_SERVICE_DIR, filename);
                 fs.writeFileSync(filePath, buffer);
                 if (process.platform !== 'win32') fs.chmodSync(filePath, 0o600);
             });
@@ -892,18 +917,56 @@ io.on('connection', (socket) => {
     });
 });
 
-db.init().then(() => {
-    console.log('[Server] Database initialized.');
-    httpServer.listen(PORT, '127.0.0.1', () => {
-        console.log(`[Server] Backend running on http://127.0.0.1:${PORT}`);
-        app.listen(INCOMING_PORT, '127.0.0.1', () => {
-            startTor();
+if (NODE_ROLE === 'SLAVE_FRONTEND') {
+    // Should not reach here via standard start.js, but gracefully exit if run manually
+    console.log('[Server] Running as Frontend Slave - Exiting backend process.');
+    process.exit(0);
+} else if (NODE_ROLE === 'SLAVE_STORAGE') {
+    db.init().then(() => {
+        console.log('[Server] Database initialized for Storage Slave.');
+        httpServer.listen(PORT, '0.0.0.0', () => {
+            console.log(`[Server] Storage Backend running locally on 0.0.0.0:${PORT}`);
         });
+    }).catch(err => {
+        console.error('[Server] Failed to initialize Database:', err);
+        process.exit(1);
     });
-}).catch(err => {
-    console.error('[Server] Failed to initialize Database:', err);
-    process.exit(1);
-});
+} else {
+    // Default MASTER or MICRO_SITE behavior
+    db.init().then(async () => {
+        console.log('[Server] Database initialized.');
+        await loadPlugins(app, io, db);
+
+        if (NODE_ROLE === 'MICRO_SITE') {
+            console.log('[Server] Configuring MICRO_SITE specific routes.');
+            app.use('/', express.static(path.join(__dirname, 'public', 'marketing-template')));
+            app.get('/api/node-info', (req, res) => res.json({ onion: myOnionAddress }));
+            app.get('/download', (req, res) => {
+                if (process.platform === 'win32') {
+                    res.status(500).send("ZIP creation not supported on Windows from this endpoint.");
+                    return;
+                }
+                res.setHeader('Content-Type', 'application/zip');
+                res.setHeader('Content-Disposition', 'attachment; filename="gChat.zip"');
+                const zip = spawn('zip', ['-r', '-q', '-', '.', '-x', 'node_modules/*', '.git/*', '.gemini/*'], { cwd: __dirname });
+                zip.stdout.pipe(res);
+                zip.stderr.on('data', d => console.error(`[ZIP] ${d}`));
+            });
+        }
+
+        httpServer.listen(PORT, '0.0.0.0', () => {
+            console.log(`[Server] Backend API listening on 0.0.0.0:${PORT}`);
+            app.listen(INCOMING_PORT, '127.0.0.1', () => {
+                if (NODE_ROLE === 'MASTER' || NODE_ROLE === 'MICRO_SITE') {
+                    startTor();
+                }
+            });
+        });
+    }).catch(err => {
+        console.error('[Server] Failed to initialize Database:', err);
+        process.exit(1);
+    });
+}
 
 process.on('SIGINT', () => {
     // Attempt Graceful Shutdown (Notify Client to broadcast Exit Packet)
