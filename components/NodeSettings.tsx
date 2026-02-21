@@ -9,6 +9,7 @@ import NodeInfoModal, { NodeInfoTarget } from './NodeInfoModal';
 import { formatUserIdentity, calculateObjectSize } from '../utils';
 import { storageService } from '../services/storage';
 import { clearMediaCache } from '../services/mediaStorage';
+import { ThemeEngine } from '../services/themeEngine';
 import DashboardTab from './settings/DashboardTab';
 import UserTab from './settings/UserTab';
 import NodeTab from './settings/NodeTab';
@@ -62,6 +63,7 @@ const NodeSettings: React.FC<NodeSettingsProps> = ({
     const [displayName, setDisplayName] = useState(user.displayName);
     const [bio, setBio] = useState(user.bio);
     const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl);
+    const [themeName, setThemeName] = useState<string | null>(ThemeEngine.getActiveTheme());
     const [isDiscoverable, setIsDiscoverable] = useState(user.isDiscoverable || false);
     const [isSaving, setIsSaving] = useState(false);
 
@@ -195,6 +197,9 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
             };
 
             onUpdateProfile(updatedUser);
+            if (themeName !== ThemeEngine.getActiveTheme()) {
+                await ThemeEngine.setTheme(themeName);
+            }
             if (onUpdateNodeConfig) onUpdateNodeConfig(nodeAlias, nodeDesc);
             if (onUpdateMediaSettings) onUpdateMediaSettings(currentMediaSettings);
             addToast('Settings Saved', 'Your profile and node configuration have been updated.', 'success');
@@ -370,6 +375,8 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
                         updatePrivacy={updatePrivacy}
                         onExportKeys={onExportKeys}
                         currentSuffix={currentSuffix}
+                        themeName={themeName}
+                        setThemeName={setThemeName}
                     />
                 )}
 
