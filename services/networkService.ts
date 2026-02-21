@@ -452,6 +452,13 @@ export class NetworkService {
         // PATH 3: Pure Relay (Daisy Chain Proxy)
         const relayState = this._relayState.get(mediaId);
         if (relayState && relayState.sourceNode) {
+            // CRITICAL: Register the requester as a listener so incoming MEDIA_CHUNK
+            // responses from upstream are forwarded back to them.
+            if (!relayState.listeners.has(senderId)) {
+                relayState.listeners.add(senderId);
+                this.log('INFO', 'NETWORK', `Relay: Registered ${senderId} as chunk listener for ${mediaId}`);
+            }
+
             this.log('INFO', 'NETWORK', `Relay: Forwarding Chunk ${chunkIndex} request for ${mediaId} to ${relayState.sourceNode}`);
 
             // Forward the exact request to the source node we found during RECOVERY_FOUND
