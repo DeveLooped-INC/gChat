@@ -7,6 +7,13 @@
 
 gChat has evolved into a robust decentralized platform. It now features a sophisticated **State Synchronization Engine** that ensures nodes stay in sync even after periods of disconnection, and a comprehensive **Social Layer** including threaded comments, reactions, and moderation.
 
+## ✅ Recent Changelog (v1.5.0 - The Global Mesh & Architecture Refactor)
+*   **Feature (Massive): Master/Slave Infrastructure**: Redesigned the backend to support discrete `NODE_ROLE` definitions (`MASTER`, `SLAVE_STORAGE`, `SLAVE_FRONTEND`, `MICRO_SITE`). Your UI can now run on your phone while the heavy Tor routing stays on your home server.
+*   **Feature: Automated Network Deployer**: Replaced the interactive installer with a fully automated `npm run deploy` script that maps the local LAN over SSH, benchmarks hardware, and installs Roles to distributed machines seamlessly.
+*   **Feature: Dual-Onion Services**: Master nodes now run two separate v3 hidden services: a public one for mesh routing, and a private authenticated one for remote Frontend administrative access.
+*   **Feature: Plugin & Theme Engine**: Achieved ultimate extensibility. Added `pluginLoader.js` to dynamically load backend extensions from `/plugins`, and a frontend `ThemeEngine` to swap `/themes` CSS files in real-time.
+*   **Feature: Micro-Site Mode**: Added a dedicated marketing node role that serves a public HTML page and recursively creates a `.ZIP` download of the framework on-the-fly (`/download`).
+
 ## ✅ Recent Changelog (v1.4.0 - The Privacy & Reliability Update)
 *   **Feature (Critical): Strict Firewall**: The node now drops ALL incoming packets from untrusted peers (strangers) unless it is a connection request.
 *   **Feature: Trusted Media Relay**: You can now stream media from unknown authors via your Trusted Friends. Your friends act as a **pure streaming proxy**, hiding your IP from the original author without downloading the media themselves.
