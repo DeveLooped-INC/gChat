@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>gChat - Decentralized Encrypted Mesh</title>
+    <style>
+        :root {
+            --onion: #8b5cf6;
+            --onion-dark: #6d28d9;
+            --bg: #0B1221;
+            --text: #e2e8f0;
+        }
+
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        h1 {
+            color: var(--onion);
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .tagline {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            color: #94a3b8;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 2rem;
+            margin: 3rem 0;
+            text-align: left;
+        }
+
+        .feature-box {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1.5rem;
+            border-radius: 8px;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+        }
+
+        .cta {
+            background-color: var(--onion);
+            color: white;
+            padding: 1rem 2rem;
+            text-decoration: none;
+            border-radius: 30px;
+            font-weight: bold;
+            font-size: 1.2rem;
+            display: inline-block;
+            transition: background 0.3s;
+            margin-top: 1rem;
+        }
+
+        .cta:hover {
+            background-color: var(--onion-dark);
+        }
+
+        .qr-code {
+            margin: 3rem auto;
+            background: white;
+            padding: 1rem;
+            display: inline-block;
+            border-radius: 8px;
+        }
+
+        .terminal {
+            background: #000;
+            color: #0f0;
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: left;
+            margin: 2rem 0;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>gChat</h1>
+        <div class="tagline">The Zero-Trust, Serverless, Tor-Routed Mesh Communicator</div>
+
+        <p>You have found a node on the gChat network. Welcome to true privacy.</p>
+
+        <a href="/download" class="cta">Download Framework (ZIP)</a>
+
+        <div class="terminal">
+            $ unzip gchat.zip<br>
+            $ cd gchat<br>
+            $ npm install<br>
+            $ npm run deploy
+        </div>
+
+        <div class="features">
+            <div class="feature-box">
+                <h3 style="color: var(--onion); margin-top:0;">E2E Encrypted</h3>
+                <p>All private messages are encrypted using X25519 and standard NaCl secret boxes.</p>
+            </div>
+            <div class="feature-box">
+                <h3 style="color: var(--onion); margin-top:0;">Tor V3 Onion</h3>
+                <p>Your IP is invisible. All traffic routes through the Tor network automatically.</p>
+            </div>
+            <div class="feature-box">
+                <h3 style="color: var(--onion); margin-top:0;">Mesh Gossip</h3>
+                <p>Censorship resistant broadcasts using decentralized peer-to-peer epidemic routing.</p>
+            </div>
+        </div>
+
+        <div>
+            <h3>Scan this code in your gChat app to add this node</h3>
+            <div class="qr-code" id="qr-container">
+                <!-- QR Code will be injected here -->
+            </div>
+            <p style="font-size: 0.9rem; color: #64748b;" id="onion-address">Waiting for initialization...</p>
+        </div>
+
+        <footer>
+            <p>&copy; DeveLooped-INC</p>
+        </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <script>
+        fetch('/api/node-info')
+            .then(r => r.json())
+            .then(data => {
+                const el = document.getElementById('onion-address');
+                if (data.onion) {
+                    el.innerText = data.onion;
+                    const typeNumber = 0;
+                    const errorCorrectionLevel = 'L';
+                    const qr = qrcode(typeNumber, errorCorrectionLevel);
+                    qr.addData('gchat://add-peer?address=' + data.onion);
+                    qr.make();
+                    document.getElementById('qr-container').innerHTML = qr.createImgTag(5, 10);
+                }
+            });
+    </script>
+</body>
+
+</html>
