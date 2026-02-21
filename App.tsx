@@ -454,6 +454,7 @@ const AuthenticatedApp = ({ user, onLogout, onUpdateUser }: { user: UserProfile,
 
 
 import { kvService } from './services/kv';
+import { ThemeEngine } from './services/themeEngine';
 
 const App: React.FC = () => {
     const [user, setUser] = useState<UserProfile | null>(null);
@@ -465,6 +466,7 @@ const App: React.FC = () => {
                 // Must init the socket BEFORE loading profile, otherwise
                 // kvService.get() returns null (socket not connected yet).
                 networkService.init();
+                await ThemeEngine.init();
                 const stored = await kvService.get<UserProfile>(USER_STORAGE_KEY);
                 if (stored) setUser(stored);
             } catch (e) {
