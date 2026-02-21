@@ -1,9 +1,13 @@
 import { spawn, execSync } from 'child_process';
 import path from 'path';
+import dotenv from 'dotenv';
+dotenv.config();
+
+const NODE_ROLE = process.env.NODE_ROLE || 'MASTER';
 
 console.log('--------------------------------------------------');
 console.log('gChat Universal Launcher (Robust Mode)');
-console.log(`Platform: ${process.platform} | Mode: Browser`);
+console.log(`Platform: ${process.platform} | Node Role: ${NODE_ROLE}`);
 console.log('--------------------------------------------------');
 
 // Check for Force Flag
@@ -71,25 +75,30 @@ process.stdin.on('error', (err) => {
 });
 
 // 2. Start Backend
-const server = spawn('node', ['server.js'], {
-    stdio: 'inherit',
-    env: process.env
-});
+let server = null;
+if (NODE_ROLE !== 'SLAVE_FRONTEND') {
+    server = spawn('node', ['server.js'], {
+        stdio: 'inherit',
+        env: process.env
+    });
 
-server.on('close', (code) => {
-    console.log(`[Launcher] Backend exited with code ${code}. Shutting down...`);
-    cleanup();
-    process.exit(code || 0);
-});
+    server.on('close', (code) => {
+        console.log(`[Launcher] Backend exited with code ${code}. Shutting down...`);
+        cleanup();
+        process.exit(code || 0);
+    });
+}
 
 // 3. Start Vite
-// FIX [DEP0190]: Combine command and args into a single string when using shell: true
-// We enable 'detached' on non-Windows to create a new Process Group.
-const vite = spawn('npm run web', {
-    stdio: ['ignore', 'inherit', 'inherit'],
-    shell: true,
-    detached: process.platform !== 'win32'
-});
+let vite = null;
+if (NODE_ROLE === 'SLAVE_FRONTEND' || process.env.FORCE_UI === 'true') {
+    // We enable 'detached' on non-Windows to create a new Process Group.
+    vite = spawn('npm run web', {
+        stdio: ['ignore', 'inherit', 'inherit'],
+        shell: true,
+        detached: process.platform !== 'win32'
+    });
+}
 
 // 4. Android / Termux Launch Logic
 if (process.platform === 'android' || process.env.PREFIX?.includes('com.termux')) {
