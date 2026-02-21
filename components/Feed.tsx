@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Post, Contact, UserProfile, ToastMessage, AppRoute, MediaMetadata, NotificationCategory, Comment } from '../types';
-import { Heart, MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban, Paperclip, CheckCircle, ShieldAlert, UserPlus, FileJson, Copy, UserMinus, UserX, ChevronUp, EyeOff } from 'lucide-react';
+import { Heart, MessageCircle, Share2, Shield, Wifi, Globe, MoreHorizontal, ShieldCheck, Loader2, Lock, Cpu, Send, WifiOff, Image as ImageIcon, X, Users, Repeat, User, ThumbsDown, Camera as CameraIcon, Eye, Trash2, Edit2, Save, XCircle, Mic, Video, FileText, Radio, MapPin, Filter, Search, TrendingUp, Hash, ChevronDown, Clock, Smile, ThumbsUp, CornerDownRight, AlertTriangle, Archive, FileArchive, Link2Off, Quote, RefreshCw, ArrowLeft, Play, ExternalLink, Ban, Paperclip, CheckCircle, ShieldAlert, UserPlus, FileJson, Copy, UserMinus, UserX, ChevronUp, EyeOff, HelpCircle } from 'lucide-react';
 import { fileToBase64, getTransferConfig, SOCIAL_REACTIONS, formatUserIdentity, formatBytes, base64ToArrayBuffer } from '../utils';
 import { MAX_ATTACHMENT_SIZE_BYTES, MAX_ATTACHMENT_SIZE_MB, MAX_POST_MEDIA_DURATION } from '../constants';
 import { signData, verifySignature } from '../services/cryptoService';
@@ -9,6 +9,9 @@ import CameraModal from './CameraModal';
 import { MediaRecorder, MediaPlayer } from './MediaComponents';
 import { saveMedia } from '../services/mediaStorage';
 import UserInfoModal, { UserInfoTarget } from './UserInfoModal';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import ExternalLinkWarningModal from './ExternalLinkWarningModal';
 
 interface FeedProps {
     contentSettings?: { showDownvotedPosts: boolean; downvoteThreshold: number };
@@ -58,6 +61,27 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
     const [attachedMedia, setAttachedMedia] = useState<MediaMetadata | null>(null);
     const [postLocation, setPostLocation] = useState('');
     const [showCamera, setShowCamera] = useState(false);
+    const [warningLink, setWarningLink] = useState<string | null>(null);
+    const [showMarkdownHelp, setShowMarkdownHelp] = useState(false);
+
+    const markdownComponents = useMemo(() => ({
+        a: ({ node, ...props }: any) => {
+            const href = props.href || '';
+            const isExternal = href.startsWith('http') || href.startsWith('ws');
+            return (
+                <a
+                    {...props}
+                    className="text-onion-400 hover:text-onion-300 hover:underline cursor-pointer break-all"
+                    onClick={(e) => {
+                        if (isExternal) {
+                            e.preventDefault();
+                            setWarningLink(href);
+                        }
+                    }}
+                />
+            );
+        }
+    }), []);
     const [recordingMode, setRecordingMode] = useState<'audio' | 'video' | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
@@ -352,7 +376,11 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                 </span>
                                 <span className="text-slate-500 text-[10px]">{new Date(comment.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                             </div>
-                            <p className="text-sm text-slate-200 whitespace-pre-wrap">{comment.content}</p>
+                            <div className="text-sm text-slate-200 break-words markdown-broadcast">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                                    {comment.content}
+                                </ReactMarkdown>
+                            </div>
 
                             <div className="flex items-center gap-3 mt-2">
                                 <div className="flex items-center gap-1 bg-slate-800 rounded-full px-2 py-0.5">
@@ -528,6 +556,39 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                         </select>
                                     </div>
                                 </div>
+                            </div>
+
+                            {/* Markdown Help Toggle & Popover */}
+                            <div className="relative flex justify-end">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowMarkdownHelp(!showMarkdownHelp)}
+                                    className="text-slate-500 hover:text-onion-400 flex items-center gap-1.5 text-xs font-medium transition-colors"
+                                >
+                                    <HelpCircle size={14} />
+                                    Formatting Help
+                                </button>
+
+                                {showMarkdownHelp && (
+                                    <div className="absolute top-6 right-0 w-72 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-20 p-4 text-sm text-slate-300 animate-in fade-in zoom-in-95 duration-100">
+                                        <h4 className="font-bold text-white mb-2 border-b border-slate-700 pb-1">Markdown Syntax</h4>
+                                        <ul className="space-y-2 font-mono text-xs">
+                                            <li><span className="text-onion-400">**bold text**</span> or <span className="text-onion-400">__bold__</span></li>
+                                            <li><span className="text-onion-400">*italic text*</span> or <span className="text-onion-400">_italic_</span></li>
+                                            <li><span className="text-onion-400">~~strikethrough~~</span></li>
+                                            <li><span className="text-onion-400">[Link text](https://...)</span></li>
+                                            <li><span className="text-onion-400">`inline code`</span></li>
+                                            <li>
+                                                <span className="text-onion-400">```</span><br />
+                                                <span className="pl-2">code block</span><br />
+                                                <span className="text-onion-400">```</span>
+                                            </li>
+                                            <li><span className="text-onion-400">&gt; Blockquote</span></li>
+                                            <li><span className="text-onion-400">- Bulleted list</span></li>
+                                            <li><span className="text-onion-400">1. Numbered list</span></li>
+                                        </ul>
+                                    </div>
+                                )}
                             </div>
 
                             <textarea
@@ -764,7 +825,11 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                     </div>
                                     <div className="opacity-10 blur-sm pointer-events-none" aria-hidden="true">
                                         {/* Ghost content for visual structure */}
-                                        <p className="text-slate-300 text-sm leading-relaxed line-clamp-3">{post.content}</p>
+                                        <div className="text-slate-300 text-sm leading-relaxed line-clamp-3 overflow-hidden text-left mb-2">
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                                                {post.content}
+                                            </ReactMarkdown>
+                                        </div>
                                     </div>
                                 </div>
                             ) : (
@@ -784,7 +849,11 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                         </div>
                                     ) : (
                                         <>
-                                            <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap linkify">{post.content}</p>
+                                            <div className="text-slate-300 text-sm leading-relaxed break-words markdown-broadcast mb-3">
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                                                    {post.content}
+                                                </ReactMarkdown>
+                                            </div>
                                             {/* Media Rendering */}
                                             {post.imageUrl && (
                                                 <div className="mt-3 rounded-xl overflow-hidden border border-slate-800 bg-black/20">
@@ -964,6 +1033,12 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                     posts={posts}
                 />
             )}
+
+            <ExternalLinkWarningModal
+                isOpen={warningLink !== null}
+                onClose={() => setWarningLink(null)}
+                link={warningLink || ''}
+            />
         </div>
     );
 };
