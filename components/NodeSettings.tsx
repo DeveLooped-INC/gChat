@@ -279,13 +279,14 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
     const TabButton = ({ id, label, icon: Icon }: { id: SettingsTab, label: string, icon: any }) => (
         <button
             onClick={() => setActiveTab(id)}
-            className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${activeTab === id
+            title={label}
+            className={`flex items-center gap-2 px-3 sm:px-4 py-3 border-b-2 transition-colors ${activeTab === id
                 ? 'border-onion-500 text-onion-400 font-medium'
                 : 'border-transparent text-slate-500 hover:text-slate-300'
                 }`}
         >
             <Icon size={16} />
-            <span>{label}</span>
+            <span className="hidden sm:inline">{label}</span>
         </button>
     );
 
