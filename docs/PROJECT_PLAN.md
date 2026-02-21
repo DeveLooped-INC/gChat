@@ -36,7 +36,7 @@ To create a "Sovereign Social Node" that operates entirely peer-to-peer. Unlike 
 
 ### Module 3: Resilience & Recovery
 *   **Inventory Sync**: Nodes actively compare content hashes (`INVENTORY_SYNC_REQUEST`) to identify missing posts.
-*   **Mesh Media Recovery**: If a node hosting a file goes offline, the network queries connected peers for cached copies using `accessKey` tokens (Self-Healing).
+*   **Mesh Media Recovery**: If you cannot connect to a node hosting a file, the network forms a daisy chain proxy to stream the media chunks on-demand from the author via your trusted peers (Anti-Censorship/Self-Healing).
 
 ### Module 4: Social Interactions
 *   **Rich Threading**: Infinite depth recursive comments.
