@@ -9,7 +9,7 @@ gChat has evolved into a robust decentralized platform. It now features a sophis
 
 ## ✅ Recent Changelog (v1.4.0 - The Privacy & Reliability Update)
 *   **Feature (Critical): Strict Firewall**: The node now drops ALL incoming packets from untrusted peers (strangers) unless it is a connection request.
-*   **Feature: Trusted Media Relay**: You can now download media from unknown authors via your Trusted Friends. Your friends act as a proxy, hiding your IP from the original author.
+*   **Feature: Trusted Media Relay**: You can now stream media from unknown authors via your Trusted Friends. Your friends act as a **pure streaming proxy**, hiding your IP from the original author without downloading the media themselves.
 *   **Feature: Shutdown Assurance**: The `USER_EXIT` protocol now requires an ACK from peers before the process terminates, ensuring offline status is correctly propagated even with Tor latency.
 *   **Feature: Live Contact Sync**: Contacts now instantly turn "Green" (Online) when their hosting node comes online.
 *   **Feature: Avatar Exchange**: User avatars and identities are now exchanged during Inventory/Mesh syncs.
@@ -58,7 +58,7 @@ gChat has evolved into a robust decentralized platform. It now features a sophis
 ## 🚧 Known Issues & Tech Debt
 
 ### 1. Missing Recovery Implementation (Resolved)
-*   **Status**: Fixed. Mesh recovery logic `attemptMeshRecovery` is implemented and broadcasting `MEDIA_RECOVERY_REQUEST` correctly. Basic auto-download logic now leverages `downloadMedia` which includes recovery paths.
+*   **Status**: Fixed. Mesh recovery logic `attemptMeshRecovery` is implemented and broadcasting `MEDIA_RELAY_REQUEST` correctly using pure daisy chain streaming. Basic auto-download logic now leverages `downloadMedia` which includes recovery paths.
 
 ### 2. LocalStorage Capacity Risk (Critical)
 *   **Issue**: All data (posts, messages, large base64 strings) is stored in `localStorage`.
