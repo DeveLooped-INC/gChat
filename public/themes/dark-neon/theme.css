@@ -1,0 +1,18 @@
+:root {
+  --text-primary: #0ff;
+  --text-secondary: #0aa;
+  --bg-primary: #010a15;
+  --bg-secondary: #021a30;
+  --bg-tertiary: #042a4a;
+  --bg-elevated: #032040;
+  --accent-primary: #f0f;
+  --accent-secondary: #a0a;
+  --accent-tertiary: #505;
+  --border-color: #0aa;
+  --error: #f05;
+  --success: #0f5;
+  --warning: #fa0;
+  --info: #0af;
+  
+  --font-family: 'Courier New', Courier, monospace;
+}
