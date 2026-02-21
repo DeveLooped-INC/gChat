@@ -235,7 +235,7 @@ async function start() {
             await runSSHCommand(client, 'git clone https://github.com/DeveLooped-INC/gChat.git || (cd gChat && git pull)');
 
             console.log(`[${task.ip}] Generating configuration...`);
-            const envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nFORCE_UI=${task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\n`;
+            const envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nVITE_MASTER_IP=${task.masterIp}\nFORCE_UI=${task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\n`;
             await runSSHCommand(client, `echo "${envVars}" > ~/gChat/.env`);
 
             console.log(`[${task.ip}] Installing dependencies (This may take a minute)...`);
