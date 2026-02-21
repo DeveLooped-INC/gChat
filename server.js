@@ -63,7 +63,7 @@ httpServer.setTimeout(CONNECTION_TIMEOUT_MS);
 
 const io = new Server(httpServer, {
     cors: {
-        origin: ["http://localhost:3000", "http://127.0.0.1:3000", "tauri://localhost"],
+        origin: "*",
         methods: ["GET", "POST"]
     },
     pingTimeout: 60000,
@@ -186,7 +186,7 @@ process.stdin.on('keypress', (str, key) => {
 // --- EXPRESS ---
 app.use(helmet()); // Secure Headers
 app.use(cors({
-    origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'tauri://localhost']
+    origin: '*'
 }));
 app.use(express.json({ limit: '50mb' }));
 
