@@ -1,3 +1,4 @@
+
 # gChat Architecture
 
 ## High-Level Overview
@@ -71,13 +72,13 @@ To protect user privacy and prevent IP leaks to unknown actors:
 When a user attempts to view an image/video from an author they do not know (e.g. a friend's friend):
 
 1.  **Direct Block**: The system forbids direct connection to the unknown author.
-2.  **Relay Request**: The node broadcasts a `MEDIA_RELAY_REQUEST` to Trusted Peers only.
-3.  **Proxy Logic**: 
+2.  **Relay Request**: The node broadcasts a `MEDIA_RELAY_REQUEST` to its Trusted Peers only.
+3.  **Proxy Logic (Pure Streaming)**: 
     *   Friend receives request for Media ID X.
-    *   Friend checks local cache.
-    *   **New**: If missing, Friend uses the author's address (which *they* know) to fetch the media into their cache.
-    *   Friend serves the file to the requester.
-4.  **Privacy**: The requester never touches the Author's node. The Friend acts as a VPN/Shield.
+    *   Friend checks local cache. If missing, they forward the request via the mesh DAISY CHAIN.
+    *   When the network locates the Author, the Author replies with `MEDIA_RECOVERY_FOUND`.
+    *   **New**: The Friend acts as a **Pure Streaming Proxy**. They do *not* download the full file into RAM or disk. They establish a link between the Requester and the Author, forwarding `MEDIA_CHUNK` packets on-demand.
+4.  **Privacy**: The requester never touches the Author's node and never learns their `.onion` address. The Friend acts as an opaque VPN/Shield, re-stamping all packets with their own address.
 
 ### 6. Shutdown Protocol
 To mitigate Tor latency causing "Ghost Peers":
