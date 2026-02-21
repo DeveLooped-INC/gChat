@@ -381,6 +381,18 @@ export class NetworkService {
                 } else {
                     this.log('WARN', 'NETWORK', `Session Access Key Mismatch for ${mediaId}.`);
                 }
+            } else {
+                // Check Relay State for Daisy Chain Proxy
+                const relayState = this._relayState.get(mediaId);
+                // If we are proxying, we allow access if the key matches the relay state, 
+                // OR if the relayState doesn't define a key
+                if (relayState && relayState.sourceNode) {
+                    if (!relayState.metadata.accessKey || relayState.metadata.accessKey === accessKey) {
+                        canAccess = true;
+                    } else {
+                        this.log('WARN', 'NETWORK', `Relay State Access Key Mismatch for ${mediaId}. Expected: ${relayState.metadata.accessKey}, Received: ${accessKey}`);
+                    }
+                }
             }
         }
 
@@ -507,6 +519,35 @@ export class NetworkService {
 
         const { mediaId, chunkIndex, totalChunks, data } = payload;
         const download = this._activeDownloads.get(mediaId);
+
+        // --- RELAY FORWARDING (Pure Proxy) ---
+        // We do this BEFORE returning if !download, so pure proxies can still work!
+        const relayState = this._relayState.get(mediaId);
+        if (relayState && relayState.listeners.size > 0 && relayState.sourceNode !== undefined) {
+            const isPureRelay = !download;
+            this.log('DEBUG', 'NETWORK', `Relay: Forwarding Chunk ${chunkIndex} to ${relayState.listeners.size} listeners! Pure Relay: ${isPureRelay}`);
+
+            let base64Data: string;
+            if (typeof data === 'string') {
+                base64Data = data;
+            } else if (data instanceof ArrayBuffer) {
+                base64Data = arrayBufferToBase64(data);
+            } else {
+                base64Data = arrayBufferToBase64(new Uint8Array(data).buffer as ArrayBuffer);
+            }
+
+            relayState.listeners.forEach(listener => {
+                this.sendMessage(listener, {
+                    type: 'MEDIA_CHUNK',
+                    senderId: this._myOnionAddress || 'system',
+                    payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
+                }, `media_stream_${mediaId}`);
+            });
+
+            // Note: Caching the chunk to disk while streaming could be added here in the future.
+            if (isPureRelay) return;
+        }
+
         if (!download) return;
 
         const requestInfo = download.inflight.get(chunkIndex);
@@ -534,7 +575,7 @@ export class NetworkService {
             chunkData = data;
         } else {
             // Fallback if Socket.IO did something magic, or it's a raw array
-            chunkData = new Uint8Array(data).buffer;
+            chunkData = new Uint8Array(data).buffer as ArrayBuffer;
         }
 
         // CRITICAL: Validate Chunk Data Size
@@ -552,8 +593,8 @@ export class NetworkService {
             // FULFILL BUFFERED REQUESTS
             const pending = download.pendingRequests.get(chunkIndex);
             if (pending && pending.length > 0) {
-                this.log('INFO', 'NETWORK', `Relay: Fulfilling buffered request for Chunk ${chunkIndex} to ${pending.length} peers.`);
-                const base64Data = arrayBufferToBase64(chunkData);
+                this.log('INFO', 'NETWORK', `Relay: Fulfilling local buffered request for Chunk ${chunkIndex} to ${pending.length} peers.`);
+                const base64Data = arrayBufferToBase64(chunkData as ArrayBuffer);
 
                 pending.forEach(req => {
                     this.sendMessage(req.senderId, {
@@ -573,29 +614,6 @@ export class NetworkService {
             this.finishDownload(mediaId);
         } else {
             this.pumpDownloadQueue(download);
-        }
-
-        // --- RELAY FORWARDING (Pure Proxy) ---
-        const relayState = this._relayState.get(mediaId);
-        if (relayState && relayState.listeners.size > 0 && relayState.sourceNode !== undefined) {
-            // We got a chunk. If we don't have an active download assembling it,
-            // we are just a pure relay. Send it to all listeners!
-            const isPureRelay = !download;
-
-            this.log('DEBUG', 'NETWORK', `Relay: Forwarding Chunk ${chunkIndex} to ${relayState.listeners.size} listeners! Pure Relay: ${isPureRelay}`);
-
-            const base64Data = typeof data === 'string' ? data : arrayBufferToBase64(chunkData as ArrayBuffer);
-
-            relayState.listeners.forEach(listener => {
-                this.sendMessage(listener, {
-                    type: 'MEDIA_CHUNK',
-                    senderId: this._myOnionAddress || 'system',
-                    payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
-                }, `media_stream_${mediaId}`);
-            });
-
-            // Note: Caching the chunk to disk while streaming could be added here in the future.
-            if (isPureRelay) return;
         }
     }
 
