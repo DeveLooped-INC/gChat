@@ -656,65 +656,10 @@ export class NetworkService {
         // 1. Do we have it locally?
         let hasIt = await hasMedia(mediaId);
 
-        // 2. Proxy Logic: Smart Routing
-        // We check if we have an explicit Origin Node OR if we know the Owner's Home Node from our Contacts.
-        let targetNode = originNode;
-
-        if (!targetNode && ownerId) {
-            targetNode = this._contactDirectory.get(ownerId);
-            if (targetNode) {
-                this.log('INFO', 'NETWORK', `Relay: Resolved Owner ${ownerId.substring(0, 8)}... to Node ${targetNode}`);
-            }
-        }
-
-        if (!hasIt && targetNode && metadata) {
-            // Prevent self-proxying
-            if (targetNode === this._myOnionAddress) {
-                this.log('WARN', 'NETWORK', `Relay: I am the Origin (${targetNode}) but I don't have the media. Cannot proxy.`);
-                // Fall through to Relay Forwarding (maybe someone else has a copy?)
-            } else {
-                this.log('INFO', 'NETWORK', `Relay: Checking if source ${targetNode} is reachable for ${mediaId}...`);
-
-                try {
-                    const ping = await this.connect(targetNode);
-                    if (ping.success) {
-                        // PURE RELAY: Don't download the whole file. Just record the source
-                        // and let chunks be forwarded on-demand via handleMediaRequest PATH 3.
-                        this.log('INFO', 'NETWORK', `Relay: Source ${targetNode} is reachable. Setting up pure relay for ${mediaId}`);
-
-                        // Set up relay state
-                        const storedMetadata: MediaMetadata = { ...metadata };
-                        if (accessKey) storedMetadata.accessKey = accessKey;
-                        delete storedMetadata.originNode; // PRIVACY FIX
-
-                        if (!this._relayState.has(mediaId)) {
-                            this._relayState.set(mediaId, { listeners: new Set(), metadata: storedMetadata });
-                        }
-
-                        const relayState = this._relayState.get(mediaId)!;
-                        relayState.sourceNode = targetNode;
-
-                        // Register the requester as a listener
-                        relayState.listeners.add(senderId);
-
-                        // Notify the requester that we can serve the media (as a proxy)
-                        this.sendMessage(senderId, {
-                            id: crypto.randomUUID(),
-                            type: 'MEDIA_RECOVERY_FOUND',
-                            senderId: this._myOnionAddress || 'unknown',
-                            payload: { mediaId }
-                        });
-
-                        return;
-                    } else {
-                        this.log('WARN', 'NETWORK', `Relay: Source ${targetNode} unreachable. Falling through to mesh relay.`);
-                        // Fall through to Relay Logic below
-                    }
-                } catch (e) {
-                    this.log('WARN', 'NETWORK', `Relay: Error contacting source ${targetNode}: ${e}. Falling through.`);
-                }
-            }
-        }
+        // NOTE: We rely purely on the Daisy Chain Relay (Section 3 below) to forward requests.
+        // The intermediary does NOT try to connect to the origin directly — this prevents
+        // Tor SOCKS congestion and keeps the relay lightweight.
+        // The node that actually HAS the media will respond with MEDIA_RECOVERY_FOUND.
 
         // Re-check (Standard Check)
         hasIt = await hasMedia(mediaId);
