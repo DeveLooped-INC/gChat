@@ -110,7 +110,7 @@ export class NetworkService {
     private _activeDownloads: Map<string, ActiveDownload> = new Map();
     private _mediaSessions: Map<string, MediaReadSession> = new Map(); // Read Cache for serving media
     // Daisy Chain Relay State
-    private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata }> = new Map(); // MediaID -> { Listeners, Metadata }
+    private _relayState: Map<string, { listeners: Set<string>; metadata: MediaMetadata; sourceNode?: string }> = new Map(); // MediaID -> { Listeners, Metadata, SourceNode }
     private _relayHistory: Map<string, number> = new Map(); // RequestSignature -> Timestamp
     private _relayResponseCache: Map<string, number> = new Map(); // "mediaId_senderId" -> Timestamp (tracks already-sent MEDIA_RECOVERY_FOUND)
     private _processedPacketIds: Set<string> = new Set(); // Protocol-level deduplication (short term)
@@ -437,7 +437,27 @@ export class NetworkService {
         }
         // --------------------------------
 
-        // PATH 3: No active download — serve from disk / session cache
+        // PATH 3: Pure Relay (Daisy Chain Proxy)
+        const relayState = this._relayState.get(mediaId);
+        if (relayState && relayState.sourceNode) {
+            this.log('INFO', 'NETWORK', `Relay: Forwarding Chunk ${chunkIndex} request for ${mediaId} to ${relayState.sourceNode}`);
+
+            // Forward the exact request to the source node we found during RECOVERY_FOUND
+            this.sendMessage(relayState.sourceNode, {
+                type: 'MEDIA_REQUEST',
+                senderId: this._myOnionAddress || 'system',
+                payload: {
+                    mediaId,
+                    chunkIndex,
+                    chunkSize,
+                    accessKey: relayState.metadata.accessKey
+                }
+            }, `media_stream_${mediaId}`);
+            return;
+        }
+        // --------------------------------
+
+        // PATH 4: No active download — serve from disk / session cache
         let blob: Blob | null = null;
         const session = this._mediaSessions.get(mediaId);
 
@@ -555,12 +575,28 @@ export class NetworkService {
             this.pumpDownloadQueue(download);
         }
 
-        // --- RELAY FORWARDING ---
-        // If we list this peer as a listener for this media, forward the chunk?
-        // NO. In the caching model, we pull the chunk for ourselves (dl.chunks),
-        // and handleMediaRequest (above) serves it from dl.chunks when the peer asks for it.
-        // So we do NOT need to push chunks here anymore. The "PULL" model is restored.
-        // We only clear the state if the download completes.
+        // --- RELAY FORWARDING (Pure Proxy) ---
+        const relayState = this._relayState.get(mediaId);
+        if (relayState && relayState.listeners.size > 0 && relayState.sourceNode !== undefined) {
+            // We got a chunk. If we don't have an active download assembling it,
+            // we are just a pure relay. Send it to all listeners!
+            const isPureRelay = !download;
+
+            this.log('DEBUG', 'NETWORK', `Relay: Forwarding Chunk ${chunkIndex} to ${relayState.listeners.size} listeners! Pure Relay: ${isPureRelay}`);
+
+            const base64Data = typeof data === 'string' ? data : arrayBufferToBase64(chunkData as ArrayBuffer);
+
+            relayState.listeners.forEach(listener => {
+                this.sendMessage(listener, {
+                    type: 'MEDIA_CHUNK',
+                    senderId: this._myOnionAddress || 'system',
+                    payload: { mediaId, chunkIndex, totalChunks, data: base64Data }
+                }, `media_stream_${mediaId}`);
+            });
+
+            // Note: Caching the chunk to disk while streaming could be added here in the future.
+            if (isPureRelay) return;
+        }
     }
 
     // --- RECOVERY LOGIC ---
@@ -727,6 +763,9 @@ export class NetworkService {
             const storedMetadata = { ...metadata };
             if (accessKey) storedMetadata.accessKey = accessKey;
 
+            // PRIVACY FIX: Remove originNode from stored metadata so we don't leak it down the chain implicitly
+            delete storedMetadata.originNode;
+
             this._relayState.set(mediaId, { listeners: new Set(), metadata: storedMetadata });
             isNewRelay = true;
         }
@@ -753,7 +792,7 @@ export class NetworkService {
                     originNode: undefined, // PRIVACY FIX: Do not leak origin. Enforce Daisy Chain.
                     ownerId,
                     accessKey,
-                    metadata
+                    metadata: state.metadata // Use the scrubbed metadata
                 }
             };
             this.broadcast(forwardPacket, peersToForward, 0);
@@ -782,20 +821,17 @@ export class NetworkService {
 
             // We found a source (senderId)!
             // We must now act as the Proxy.
-            // A. Start downloading from senderId (if we aren't already)
+            // A. Record the source node so we know where to forward requests.
             // B. Notify all listeners that WE have it.
 
-            this.log('INFO', 'NETWORK', `Relay: Found source ${senderId} for ${mediaId}. Starting Proxy buffer...`);
+            this.log('INFO', 'NETWORK', `Relay: Found source ${senderId} for ${mediaId}. Establishing proxy chain...`);
 
-            this.downloadMedia(senderId, state.metadata, (p) => {
-                // Monitor
-            }, true, true).catch(err => {
-                this.log('WARN', 'NETWORK', `Relay Buffer Failed: ${err}`);
-            });
+            // PRIVACY FIX: Don't download the whole file to memory. Just record the source for streaming.
+            state.sourceNode = senderId;
 
             // Notify Listeners
             if (state.listeners.size > 0) {
-                this.log('INFO', 'NETWORK', `Relay: Notifying ${state.listeners.size} peers that media is ready.`);
+                this.log('INFO', 'NETWORK', `Relay: Notifying ${state.listeners.size} peers that media is ready via proxy.`);
                 state.listeners.forEach(peer => {
                     this.sendMessage(peer, {
                         id: crypto.randomUUID(),
@@ -809,13 +845,29 @@ export class NetworkService {
     }
 
     public handleMediaPending(senderId: string, payload: { mediaId: string, chunkIndex: number }) {
-        const dl = this._activeDownloads.get(payload.mediaId);
-        if (!dl) return;
+        const { mediaId, chunkIndex } = payload;
+        const dl = this._activeDownloads.get(mediaId);
 
-        const req = dl.inflight.get(payload.chunkIndex);
-        if (req) {
-            this.log('INFO', 'NETWORK', `Received PENDING for chunk ${payload.chunkIndex}. Resetting timeout.`);
-            req.sentAt = Date.now(); // Reset timeout clock
+        if (dl) {
+            const req = dl.inflight.get(chunkIndex);
+            if (req) {
+                this.log('INFO', 'NETWORK', `Received PENDING for chunk ${chunkIndex}. Resetting timeout.`);
+                req.sentAt = Date.now(); // Reset timeout clock
+            }
+        }
+
+        // --- PURE RELAY PROXY ---
+        // If we are a relay, also inform our listeners so they don't timeout
+        const relayState = this._relayState.get(mediaId);
+        if (relayState && relayState.listeners.size > 0) {
+            this.log('DEBUG', 'NETWORK', `Relay: Forwarding PENDING for chunk ${chunkIndex} to ${relayState.listeners.size} listeners.`);
+            relayState.listeners.forEach(listener => {
+                this.sendMessage(listener, {
+                    type: 'MEDIA_PENDING',
+                    senderId: this._myOnionAddress || 'system',
+                    payload: { mediaId, chunkIndex }
+                }, `media_stream_${mediaId}`);
+            });
         }
     }
 
