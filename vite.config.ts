@@ -6,8 +6,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true, // Listen on all network interfaces for LAN accessibility
-    port: 3000,
-    strictPort: true, // Critical: Fail if port 3000 is taken. Do not auto-increment to 3001+. 
+    port: parseInt(process.env.FRONTEND_PORT || '3000', 10),
+    strictPort: true, // Critical: Fail if port is taken. Do not auto-increment
     // Auto-incrementing creates a new LocalStorage origin, causing "Data Loss" illusion.
     open: true // Automatically opens default browser
   },
