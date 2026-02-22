@@ -10,6 +10,13 @@
 ### Tor (Optional)
 1.  Install Tor Browser v13.0.9 or higher.
 
+### SSH (Required for Network Deployment)
+To use the automated `npm run deploy` wizard to deploy to multiple devices, all target devices must have an SSH server running:
+*   **Linux (Ubuntu/Debian)**: `sudo apt install openssh-server && sudo systemctl enable --now ssh`
+*   **Mac**: Go to *System Settings > General > Sharing*, and enable **Remote Login**.
+*   **Windows**: Go to *Settings > Apps > Optional Features* and add **OpenSSH Server**. Then open PowerShell as Administrator and run: `Start-Service sshd` and `Set-Service -Name sshd -StartupType 'Automatic'`.
+*   **Android (Termux)**: Run `pkg install openssh && sshd`. Set your SSH password using the `passwd` command.
+
 ## 2. Getting Started
 
 ### Desktop Mode (Linux, Mac, Windows)
@@ -20,10 +27,12 @@
 
 #### Method 2: Network / Multi-Device Deployment (Recommended)
 You can split gChat across multiple devices (e.g. running the Master Node on a Raspberry Pi, and the Frontend on your Laptop).
+*Note: Ensure SSH is enabled on all target devices (see Prerequisites).*
 1.  Run `npm install` and then `npm run deploy`.
 2.  The interactive deployment wizard will scan your local network for SSH-enabled devices.
 3.  Assign roles (e.g., Target 1 -> `MASTER`, Target 2 -> `SLAVE_FRONTEND`).
-4.  The system will automatically install gChat to those devices, generate `.env` configuration files, and setup `pm2` autostart routines.
+4.  The system will construct the Master-Slave IP links over the LAN automatically.
+5.  It will install gChat to those devices, generate `.env` configuration files, and setup `pm2` autostart system services so they reboot autonomously.
 
 ### Mobile Mode (Android/Termux)
 1.  Run `npm install` and then `npm start` in your Termux terminal.
