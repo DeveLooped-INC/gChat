@@ -126,26 +126,12 @@ async function start() {
     console.log("\n🔑 Please provide SSH credentials for the selected devices:");
 
     for (const ip of selectedIps) {
-        const { username, authType } = await inquirer.prompt([
-            { type: 'input', name: 'username', message: `Username for ${ip}:`, default: 'root' },
-            { type: 'list', name: 'authType', message: 'Authentication Method:', choices: ['Password', 'Private Key Path'] }
+        const { username, password } = await inquirer.prompt([
+            { type: 'input', name: 'username', message: `Username for ${ip}:`, default: process.env.USER || 'tomAnderson' },
+            { type: 'password', name: 'password', message: `SSH Password for ${ip}:` }
         ]);
 
-        let password = null;
         let privateKey = null;
-
-        if (authType === 'Password') {
-            const res = await inquirer.prompt([{ type: 'password', name: 'pwd', message: `Password:` }]);
-            password = res.pwd;
-        } else {
-            const res = await inquirer.prompt([{ type: 'input', name: 'keyPath', message: `Absolute path to private key:` }]);
-            try {
-                privateKey = fs.readFileSync(res.keyPath);
-            } catch (e) {
-                console.log(`❌ Failed to read key: ${e.message}`);
-                continue;
-            }
-        }
 
         const client = new Client();
 
@@ -157,12 +143,11 @@ async function start() {
                     port: DEFAULT_PORT,
                     username,
                     password,
-                    privateKey,
                     readyTimeout: 10000
                 });
             });
             console.log(`✅ Connected to ${ip}`);
-            sshClients[ip] = client;
+            sshClients[ip] = { client, password }; // Store password for later sudo commands
 
             const info = await getHardwareInfo(client, ip);
             deviceInfos.push({ ...info, username });
@@ -203,11 +188,15 @@ async function start() {
             let masterIp = '127.0.0.1';
             let forceUi = 'false';
             if (role !== 'MASTER') {
+                // Attempt to find a previously assigned master
+                const foundMaster = deploymentPlan.find(d => d.role === 'MASTER');
+                const suggestedMasterIp = foundMaster ? foundMaster.ip : (subnets[0] + 'x');
+
                 const res = await inquirer.prompt([{
                     type: 'input',
                     name: 'masterIp',
                     message: `Enter the Master Node Local IP for ${info.ip} to connect to:`,
-                    default: subnets[0] + 'x'
+                    default: suggestedMasterIp
                 }]);
                 masterIp = res.masterIp;
             }
@@ -228,7 +217,7 @@ async function start() {
 
     for (const task of deploymentPlan) {
         console.log(`\n🚀 Deploying ${task.role} to ${task.ip}...`);
-        const client = sshClients[task.ip];
+        const { client, password } = sshClients[task.ip];
 
         try {
             console.log(`[${task.ip}] Cloning repository...`);
@@ -238,12 +227,25 @@ async function start() {
             const envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nVITE_MASTER_IP=${task.masterIp}\nFORCE_UI=${task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\n`;
             await runSSHCommand(client, `echo "${envVars}" > ~/gChat/.env`);
 
-            console.log(`[${task.ip}] Installing dependencies (This may take a minute)...`);
+            console.log(`[${task.ip}] Installing dependencies (This may take a minute) & Node.js if missing...`);
+            // Quick check for node
+            await runSSHCommand(client, 'if ! command -v node &> /dev/null; then echo "${password}" | sudo -S apt-get update && echo "${password}" | sudo -S apt-get install -y nodejs npm; fi');
             await runSSHCommand(client, 'cd ~/gChat && npm install');
 
             console.log(`[${task.ip}] Setting up PM2 System Service...`);
-            await runSSHCommand(client, 'npm install -g pm2'); // ensure pm2 exists
-            await runSSHCommand(client, 'cd ~/gChat && pm2 start npm --name "gchat" -- start && pm2 save && pm2 startup | grep "sudo env" | bash');
+            await runSSHCommand(client, 'if ! command -v pm2 &> /dev/null; then echo "${password}" | sudo -S npm install -g pm2; fi');
+            // Check if gchat is already running in pm2 and delete it if so before restarting
+            await runSSHCommand(client, 'pm2 delete gchat 2>/dev/null || true');
+            await runSSHCommand(client, 'cd ~/gChat && pm2 start npm --name "gchat" -- start && pm2 save');
+
+            console.log(`[${task.ip}] Attempting to configure PM2 startup script...`);
+            const startupOutput = await runSSHCommand(client, 'pm2 startup | grep "sudo env"');
+            if (startupOutput && password) {
+                const sudoCmd = startupOutput.replace('sudo', `echo "${password}" | sudo -S`);
+                await runSSHCommand(client, sudoCmd);
+            } else if (startupOutput) {
+                console.log(`[${task.ip}] ⚠️ Could not configure auto-start. Please run manually: ${startupOutput}`);
+            }
 
             console.log(`✅ Deployment complete on ${task.ip}`);
             client.end();
@@ -254,7 +256,7 @@ async function start() {
     }
 
     // Clean remaining connections
-    Object.values(sshClients).forEach(c => c.end());
+    Object.values(sshClients).forEach(c => c.client.end());
     console.log("\n🎉 All deployments finished successfully!");
     process.exit(0);
 }
