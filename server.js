@@ -11,6 +11,7 @@ import axios from 'axios';
 import https from 'https';
 import http from 'http';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 import { loadPlugins, registerSocketHooks } from './pluginLoader.js';
 
 dotenv.config();
@@ -22,7 +23,7 @@ const __dirname = path.dirname(__filename);
 const NODE_ROLE = process.env.NODE_ROLE || 'MASTER'; // Roles: MASTER, SLAVE_STORAGE, SLAVE_FRONTEND, MICRO_SITE
 const MASTER_IP = process.env.MASTER_IP || '127.0.0.1'; // Target IP for slaves
 
-const PORT = 3001;
+const PORT = parseInt(process.env.API_PORT || '3001', 10);
 const TOR_SOCKS_PORT = 9990;
 const TOR_CONTROL_PORT = 9991;
 const INCOMING_PORT = 3456;
@@ -30,7 +31,7 @@ const CONNECTION_TIMEOUT_MS = 600000; // 10 Minutes
 
 // Determine Data Directory (Default to System AppData)
 const USER_DATA_DIR = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share");
-const APP_DATA_ROOT = path.join(USER_DATA_DIR, 'gchat');
+const APP_DATA_ROOT = process.env.APP_DATA_ROOT || path.join(USER_DATA_DIR, 'gchat');
 
 const PUBLIC_HIDDEN_SERVICE_DIR = path.join(APP_DATA_ROOT, 'tor', 'service_public');
 const PRIVATE_HIDDEN_SERVICE_DIR = path.join(APP_DATA_ROOT, 'tor', 'service_private');
