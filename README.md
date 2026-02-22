@@ -88,11 +88,12 @@ npm start
 ```
 
 #### Distributed Mesh Setup (Master/Slave)
+*Note: All target devices must have an SSH server enabled and running. See the User Guide for OS-specific instructions.*
 ```bash
 npm install
 npm run deploy
 ```
-*The `deploy` wizard will ping your local network, ask for SSH keys, and automatically install gChat to your other devices as Headless Masters, Storage Slaves, or Frontend interfaces.*
+*The `deploy` wizard will ping your local network, ask for SSH passwords, automatically detect the Master IP, and install gChat to your other devices as Headless Masters, Storage Slaves, or Frontend interfaces, fully configured as PM2 system services.*
 
 ### 📱 Mobile (Android via Termux)
 ```bash
