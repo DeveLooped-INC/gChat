@@ -1,6 +1,8 @@
 import path from 'path';
 import fs from 'fs';
 
+console.log("[DEBUG] Evaluating database.js imports...");
+
 const DB_FILE = 'gchat.db';
 const KV_FILE = 'gchat_kv.json';
 const STORE_FILE = 'gchat_store.json';
