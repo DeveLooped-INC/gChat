@@ -12,6 +12,8 @@ import https from 'https';
 import http from 'http';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import readline from 'readline';
+import net from 'net';
 import { loadPlugins, registerSocketHooks } from './pluginLoader.js';
 
 dotenv.config();
