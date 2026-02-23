@@ -5,6 +5,9 @@ import os from 'os';
 import inquirer from 'inquirer';
 import { Client } from 'ssh2';
 import { exec, spawn } from 'child_process';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const DEFAULT_PORT = 22;
 
@@ -390,6 +393,35 @@ async function start() {
         }
     }
 
+    const { configureGit } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'configureGit',
+        message: 'Do you want to specify a custom Git Repository URL or Branch? (Default is DeveLooped-INC/gChat, main)',
+        default: false
+    }]);
+
+    let gitRepoUrl = process.env.GIT_REPO_URL || 'https://github.com/DeveLooped-INC/gChat.git';
+    let gitBranch = process.env.GIT_BRANCH || 'main';
+
+    if (configureGit) {
+        const gitConfig = await inquirer.prompt([
+            {
+                type: 'input',
+                name: 'gitRepoUrl',
+                message: 'Git Repository URL:',
+                default: gitRepoUrl
+            },
+            {
+                type: 'input',
+                name: 'gitBranch',
+                message: 'Git Branch:',
+                default: gitBranch
+            }
+        ]);
+        gitRepoUrl = gitConfig.gitRepoUrl.trim() || gitRepoUrl;
+        gitBranch = gitConfig.gitBranch.trim() || gitBranch;
+    }
+
     const { confirm } = await inquirer.prompt([{ type: 'confirm', name: 'confirm', message: 'Proceed with installation? (Safely overwrites/restarts existing gChat services)', default: true }]);
     if (!confirm) process.exit(0);
 
@@ -428,7 +460,7 @@ async function start() {
             }
 
             console.log(`[${task.ip}] Cloning repository...`);
-            await runSSHCommand(client, 'git clone https://github.com/DeveLooped-INC/gChat.git || (cd gChat && git pull)');
+            await runSSHCommand(client, `git clone -b ${gitBranch} ${gitRepoUrl} gChat || (cd gChat && git remote set-url origin ${gitRepoUrl} && git fetch origin && git checkout ${gitBranch} && git pull origin ${gitBranch})`);
 
             console.log(`[${task.ip}] Generating configuration...`);
             let envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nVITE_MASTER_IP=${task.masterIp}\nFORCE_UI=${task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\nAPI_PORT=${task.apiPort}\nFRONTEND_PORT=${task.frontendPort}\n`;
