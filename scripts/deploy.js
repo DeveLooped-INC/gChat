@@ -437,6 +437,12 @@ async function start() {
             }
             await runSSHCommand(client, `echo "${envVars}" > ~/gChat/.env`);
 
+            console.log(`[${task.ip}] Syncing uncommitted local patches...`);
+            const serverJsContent = fs.readFileSync(path.join(process.cwd(), 'server.js'), 'utf8');
+            const viteConfigContent = fs.readFileSync(path.join(process.cwd(), 'vite.config.ts'), 'utf8');
+            await runSSHCommand(client, `echo "${Buffer.from(serverJsContent).toString('base64')}" | base64 -d > ~/gChat/server.js`);
+            await runSSHCommand(client, `echo "${Buffer.from(viteConfigContent).toString('base64')}" | base64 -d > ~/gChat/vite.config.ts`);
+
             console.log(`[${task.ip}] Installing dependencies (This may take a minute) & Node.js if missing...`);
             // Quick check for node
             await runSSHCommand(client, `if ! command -v node &> /dev/null; then echo "${password}" | sudo -S apt-get update && echo "${password}" | sudo -S apt-get install -y nodejs npm; fi`);
