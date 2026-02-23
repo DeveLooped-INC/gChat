@@ -73,7 +73,7 @@ async function scanNetwork(subnet) {
 function runSSHCommand(client, cmd) {
     return new Promise((resolve, reject) => {
         if (client === 'local') {
-            exec(cmd, { shell: '/bin/bash', cwd: os.homedir() }, (err, stdout, stderr) => {
+            exec(cmd, { shell: '/bin/bash', cwd: os.homedir(), timeout: 10000 }, (err, stdout, stderr) => {
                 if (err && (!stdout || stdout.trim() === '')) return reject(err);
                 resolve((stdout || '').trim());
             });
@@ -455,7 +455,6 @@ async function start() {
                 }
 
                 console.log(`✅ Deployment complete on ${task.ip}`);
-                delete sshClients[task.ip];
                 continue;
             }
 
@@ -470,10 +469,20 @@ async function start() {
             await runSSHCommand(client, `echo "${envVars}" > ~/gChat/.env`);
 
             console.log(`[${task.ip}] Syncing uncommitted local patches...`);
-            const serverJsContent = fs.readFileSync(path.join(process.cwd(), 'server.js'), 'utf8');
-            const viteConfigContent = fs.readFileSync(path.join(process.cwd(), 'vite.config.ts'), 'utf8');
-            await runSSHCommand(client, `echo "${Buffer.from(serverJsContent).toString('base64')}" | base64 -d > ~/gChat/server.js`);
-            await runSSHCommand(client, `echo "${Buffer.from(viteConfigContent).toString('base64')}" | base64 -d > ~/gChat/vite.config.ts`);
+            const filesToSync = ['server.js', 'database.js', 'pluginLoader.js', 'vite.config.ts'];
+            // Also sync start.js which contains the lsof fix
+            const startJsPath = path.join(process.cwd(), 'scripts', 'start.js');
+            if (fs.existsSync(startJsPath)) {
+                filesToSync.push('scripts/start.js');
+            }
+            for (const file of filesToSync) {
+                const filePath = path.join(process.cwd(), file);
+                if (fs.existsSync(filePath)) {
+                    const content = fs.readFileSync(filePath, 'utf8');
+                    const remoteDir = file.includes('/') ? `mkdir -p ~/gChat/${path.dirname(file)} && ` : '';
+                    await runSSHCommand(client, `${remoteDir}echo "${Buffer.from(content).toString('base64')}" | base64 -d > ~/gChat/${file}`);
+                }
+            }
 
             console.log(`[${task.ip}] Installing dependencies (This may take a minute) & Node.js if missing...`);
             // Quick check for node
@@ -497,8 +506,6 @@ async function start() {
             }
 
             console.log(`✅ Deployment complete on ${task.ip}`);
-            client.end();
-            delete sshClients[task.ip];
         } catch (e) {
             let errorMsg = e.message;
             if (password) {
@@ -517,8 +524,9 @@ async function start() {
         for (let i = 0; i < 15; i++) {
             await new Promise(r => setTimeout(r, 2000));
             try {
-                const client = sshClients[task.ip].client;
-                const pm2Status = await runSSHCommand(client, 'pm2 show gchat | grep "status" || echo "offline"');
+                const entry = sshClients[task.ip];
+                const c = entry ? entry.client : 'local';
+                const pm2Status = await runSSHCommand(c, 'pm2 show gchat | grep "status" || echo "offline"');
                 if (pm2Status.toLowerCase().includes('online')) {
                     isUp = true;
                     break;
