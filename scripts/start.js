@@ -17,7 +17,7 @@ const FORCE_KILL = process.argv.includes('--force');
 const killPort = (port) => {
     try {
         if (process.platform === 'win32') {
-            const output = execSync(`netstat -ano | findstr :${port}`).toString();
+            const output = execSync(`netstat -ano | findstr :${port}`, { timeout: 3000 }).toString();
             const lines = output.trim().split('\n');
             lines.forEach(line => {
                 const parts = line.trim().split(/\s+/);
@@ -25,7 +25,7 @@ const killPort = (port) => {
                 if (pid && pid !== '0') {
                     if (FORCE_KILL) {
                         try {
-                            execSync(`taskkill /PID ${pid} /F`);
+                            execSync(`taskkill /PID ${pid} /F`, { timeout: 3000 });
                             console.log(`[Cleaner] Killed PID ${pid} on port ${port}`);
                         } catch (e) { }
                     } else {
@@ -34,21 +34,23 @@ const killPort = (port) => {
                 }
             });
         } else {
-            // Linux/Mac: Use lsof or fuser to check
+            // Linux/Mac: Use ss (faster & more reliable than lsof) with a timeout
             try {
-                // Check if port is open
-                execSync(`lsof -i :${port}`, { stdio: 'ignore' });
+                const output = execSync(`ss -tlnp 'sport = :${port}'`, { timeout: 3000 }).toString();
+                const inUse = output.trim().split('\n').length > 1; // Header + at least 1 result
 
-                if (FORCE_KILL) {
-                    try {
-                        execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore' });
-                        console.log(`[Cleaner] Cleared port ${port}`);
-                    } catch (e) { }
-                } else {
-                    console.warn(`[WARNING] Port ${port} is in use. Run with --force to auto-kill, or free it manually.`);
+                if (inUse) {
+                    if (FORCE_KILL) {
+                        try {
+                            execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore', timeout: 3000 });
+                            console.log(`[Cleaner] Cleared port ${port}`);
+                        } catch (e) { }
+                    } else {
+                        console.warn(`[WARNING] Port ${port} is in use. Run with --force to auto-kill, or free it manually.`);
+                    }
                 }
             } catch (e) {
-                // lsof returns 1 if no process found, which is good
+                // ss/fuser not available or no process found - safe to continue
             }
         }
     } catch (e) {
