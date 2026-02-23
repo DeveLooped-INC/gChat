@@ -16,8 +16,6 @@ import readline from 'readline';
 import net from 'net';
 import { loadPlugins, registerSocketHooks } from './pluginLoader.js';
 
-console.log("[DEBUG] server.js entered.");
-
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -115,8 +113,6 @@ if (process.platform === 'android' || fs.existsSync(TERMUX_BIN)) {
 // --- BINARY DETECTION ---
 let TOR_CMD = 'tor';
 
-console.log("[DEBUG] Starting Binary Detection...");
-
 const localBinPath = path.join(__dirname, 'bin', process.platform === 'win32' ? 'tor.exe' : 'tor');
 const termuxTorPath = path.join(TERMUX_BIN, 'tor');
 
@@ -125,7 +121,6 @@ if (process.platform === 'android' || fs.existsSync(TERMUX_BIN)) {
         TOR_CMD = termuxTorPath;
     } else {
         try {
-            console.log("[DEBUG] Running pkg update...");
             execSync('pkg update -y && pkg install tor -y', { stdio: 'inherit' });
             if (fs.existsSync(termuxTorPath)) TOR_CMD = termuxTorPath;
         } catch (installErr) {
@@ -138,16 +133,12 @@ else if (fs.existsSync(localBinPath)) {
 }
 else {
     try {
-        console.log("[DEBUG] Running which tor...");
         const systemTor = execSync('which tor').toString().trim();
-        console.log(`[DEBUG] systemTor found: ${systemTor}`);
         if (systemTor && fs.existsSync(systemTor)) {
             TOR_CMD = systemTor;
         }
     } catch (e) { }
 }
-
-console.log(`[DEBUG] Selected TOR_CMD: ${TOR_CMD}`);
 
 let torProcess = null;
 let myOnionAddress = null;
