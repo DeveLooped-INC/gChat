@@ -461,16 +461,16 @@ async function start() {
                 fs.writeFileSync(path.join(process.cwd(), '.env'), envVars);
 
                 console.log(`[${task.ip}] Setting up local PM2 System Service...`);
-                await runSSHCommand('local', `if ! command -v pm2 &> /dev/null; then echo "${password}" | sudo -S env PATH=$PATH npm install -g pm2; fi`);
+                await runSSHCommand('local', `if ! command -v pm2 &> /dev/null; then echo "${password}" | sudo -S env PATH=$PATH npm install -g pm2; fi`, 300000);
                 await runSSHCommand('local', 'pm2 delete gchat 2>/dev/null || true');
                 const gchatDir = process.cwd();
-                await runSSHCommand('local', `cd ${gchatDir} && pm2 start npm --name "gchat" -- start && pm2 save`);
+                await runSSHCommand('local', `cd ${gchatDir} && pm2 start npm --name "gchat" -- start && pm2 save`, 60000);
 
                 console.log(`[${task.ip}] Attempting to configure PM2 startup script...`);
-                const startupOutput = await runSSHCommand('local', 'pm2 startup | grep "sudo env"');
+                const startupOutput = await runSSHCommand('local', 'pm2 startup | grep "sudo env"', 30000);
                 if (startupOutput && password) {
                     const sudoCmd = startupOutput.replace('sudo', `echo "${password}" | sudo -S env PATH=$PATH`);
-                    await runSSHCommand('local', sudoCmd);
+                    await runSSHCommand('local', sudoCmd, 60000);
                 } else if (startupOutput) {
                     console.log(`[${task.ip}] ⚠️ Could not configure auto-start. Please run manually: ${startupOutput}`);
                 }
@@ -511,17 +511,17 @@ async function start() {
             await runSSHCommand(client, 'cd ~/gChat && npm install', 300000);
 
             console.log(`[${task.ip}] Setting up PM2 System Service...`);
-            await runSSHCommand(client, `if ! command -v pm2 &> /dev/null; then echo "${password}" | sudo -S env PATH=$PATH npm install -g pm2; fi`);
+            await runSSHCommand(client, `if ! command -v pm2 &> /dev/null; then echo "${password}" | sudo -S env PATH=$PATH npm install -g pm2; fi`, 300000);
             // Check if gchat is already running in pm2 and delete it if so before restarting
             await runSSHCommand(client, 'pm2 delete gchat 2>/dev/null || true');
             const pm2StartOptions = task.role === 'SLAVE_FRONTEND' ? '--name "gchat" -- start' : `--name "gchat" -- start`;
-            await runSSHCommand(client, `cd ~/gChat && pm2 start npm ${pm2StartOptions} && pm2 save`);
+            await runSSHCommand(client, `cd ~/gChat && pm2 start npm ${pm2StartOptions} && pm2 save`, 60000);
 
             console.log(`[${task.ip}] Attempting to configure PM2 startup script...`);
-            const startupOutput = await runSSHCommand(client, 'pm2 startup | grep "sudo env"');
+            const startupOutput = await runSSHCommand(client, 'pm2 startup | grep "sudo env"', 30000);
             if (startupOutput && password) {
                 const sudoCmd = startupOutput.replace('sudo', `echo "${password}" | sudo -S env PATH=$PATH`);
-                await runSSHCommand(client, sudoCmd);
+                await runSSHCommand(client, sudoCmd, 60000);
             } else if (startupOutput) {
                 console.log(`[${task.ip}] ⚠️ Could not configure auto-start. Please run manually: ${startupOutput}`);
             }
