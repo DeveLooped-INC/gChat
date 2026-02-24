@@ -385,6 +385,16 @@ async function start() {
         process.exit(0);
     }
 
+    // AUTO-FRONTEND: If no SLAVE_FRONTEND in plan, force UI on the MASTER
+    const hasFrontend = deploymentPlan.some(t => t.role === 'SLAVE_FRONTEND');
+    if (!hasFrontend) {
+        const master = deploymentPlan.find(t => t.role === 'MASTER');
+        if (master) {
+            master.forceUi = true;
+            console.log("\n💡 No dedicated frontend node found. MASTER will also serve the UI.");
+        }
+    }
+
     console.log("\n📋 Final Deployment Plan:");
     console.table(deploymentPlan);
 
@@ -454,7 +464,7 @@ async function start() {
             if (client === 'local') {
                 console.log(`[${task.ip}] Generating local configuration...`);
                 // For local, we write direct relative to process.cwd since we expect the user to be running deploy.js from gChat directory
-                let envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nVITE_MASTER_IP=${task.masterIp}\nVITE_API_PORT=${task.apiPort}\nFORCE_UI=${task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\nAPI_PORT=${task.apiPort}\nFRONTEND_PORT=${task.frontendPort}\n`;
+                let envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nVITE_MASTER_IP=${task.masterIp}\nVITE_API_PORT=${task.apiPort}\nVITE_FRONTEND_PORT=${task.frontendPort}\nVITE_NODE_ROLE=${task.role}\nFORCE_UI=${task.forceUi || task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\nAPI_PORT=${task.apiPort}\nFRONTEND_PORT=${task.frontendPort}\n`;
                 if (task.appDataRoot) {
                     envVars += `APP_DATA_ROOT=${task.appDataRoot}\n`;
                 }
@@ -483,7 +493,7 @@ async function start() {
             await runSSHCommand(client, `git clone -b ${gitBranch} ${gitRepoUrl} gChat || (cd gChat && git remote set-url origin ${gitRepoUrl} && git fetch origin && git reset --hard origin/${gitBranch} && git checkout ${gitBranch} && git pull origin ${gitBranch})`);
 
             console.log(`[${task.ip}] Generating configuration...`);
-            let envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nVITE_MASTER_IP=${task.masterIp}\nVITE_API_PORT=${deploymentPlan.find(p => p.role === 'MASTER').apiPort}\nFORCE_UI=${task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\nAPI_PORT=${task.apiPort}\nFRONTEND_PORT=${task.frontendPort}\n`;
+            let envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nVITE_MASTER_IP=${task.masterIp}\nVITE_API_PORT=${deploymentPlan.find(p => p.role === 'MASTER').apiPort}\nVITE_FRONTEND_PORT=${task.frontendPort}\nVITE_NODE_ROLE=${task.role}\nFORCE_UI=${task.forceUi || task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\nAPI_PORT=${task.apiPort}\nFRONTEND_PORT=${task.frontendPort}\n`;
             if (task.appDataRoot) {
                 envVars += `APP_DATA_ROOT=${task.appDataRoot}\n`;
             }
