@@ -105,12 +105,13 @@ const TARGET_API_PORT = parseInt(process.env.API_PORT || '3001', 10);
 const TARGET_FRONTEND_PORT = parseInt(process.env.FRONTEND_PORT || '3000', 10);
 
 const safeApiPort = await findFreePort(TARGET_API_PORT);
-const safeFrontendPort = await findFreePort(Math.max(TARGET_FRONTEND_PORT, safeApiPort + 1));
+const safeFrontendPort = await findFreePort(TARGET_FRONTEND_PORT);
 
 // Inject into environment before spawning
 process.env.API_PORT = safeApiPort;
 process.env.VITE_API_PORT = safeApiPort;
 process.env.FRONTEND_PORT = safeFrontendPort;
+process.env.VITE_FRONTEND_PORT = safeFrontendPort;
 
 if (safeApiPort !== TARGET_API_PORT || safeFrontendPort !== TARGET_FRONTEND_PORT) {
     console.log(`[Launcher] Detected port collisions with non-gChat apps. Automatically shifted ports to: API=${safeApiPort}, UI=${safeFrontendPort}`);
