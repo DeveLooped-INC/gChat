@@ -1,4 +1,3 @@
-
 # gChat Architecture
 
 ## High-Level Overview
@@ -26,6 +25,13 @@ The nervous system of the node, now divided into distinct **Node Roles** (`MASTE
 ### 2. The Frontend (React + Vite)
 The visual interface and cryptographic engine. Runs locally or on a dedicated `SLAVE_FRONTEND` node.
 *   **Communication**: Connects to the backend via `socket.io-client`. Can route over Tor (if remote) or standard LAN IP (if local to the Master).
+*   **Frontend-Only Mode**: When `NODE_ROLE=SLAVE_FRONTEND`, the frontend skips Tor bootstrapping and connects directly to an existing Master's backend. Connection details (Master IP, API Port) can be configured via:
+    *   `.env` file (`VITE_MASTER_IP`, `VITE_API_PORT`)
+    *   QR-based onboarding (scans the Node QR from Settings, stores config in `localStorage`)
+    *   `localStorage` keys: `gchat_master_ip`, `gchat_api_port`, `gchat_private_onion`
+*   **Dual QR System**:
+    *   **Contact QR** (Contacts page): Encodes a deep link for adding friends via Tor. Contains user ID, node address, and display name.
+    *   **Node QR** (Settings page): Encodes `gchat://link-node` with LAN IP, API port, private admin onion, and owner name. Used for linking frontend-only mobile installs.
 *   **Theme Engine** (`ThemeEngine.ts`): Asynchronously fetches and mounts CSS files from the `themes/` directory into the React DOM.
 *   **Cryptography**: All encryption happens here in the browser context. The backend only sees encrypted blobs.
 *   **Storage**: 
