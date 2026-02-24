@@ -490,7 +490,7 @@ async function start() {
             await runSSHCommand(client, `cat << 'GCHAT_EOF' > ~/gChat/.env\n${envVars}\nGCHAT_EOF`);
 
             console.log(`[${task.ip}] Syncing uncommitted local patches...`);
-            const filesToSync = ['server.js', 'database.js', 'pluginLoader.js', 'vite.config.ts'];
+            const filesToSync = ['server.js', 'database.js', 'pluginLoader.js', 'vite.config.ts', 'package.json'];
             // Also sync start.js which contains the lsof fix
             const startJsPath = path.join(process.cwd(), 'scripts', 'start.js');
             if (fs.existsSync(startJsPath)) {
