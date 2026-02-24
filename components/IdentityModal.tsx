@@ -8,6 +8,9 @@ interface IdentityModalProps {
     id: string; // PubKey or Onion
     name: string;
     nodeAddress?: string; // Only for user
+    privateOnion?: string; // Only for node
+    masterIp?: string; // Only for node
+    apiPort?: string; // Only for node
   };
   onClose: () => void;
 }
@@ -18,9 +21,9 @@ const IdentityModal: React.FC<IdentityModalProps> = ({ type, data, onClose }) =>
 
   // CRITICAL: We MUST encodeURIComponent for IDs (Base64) because they contain '+' and '/' 
   // which are special characters in URLs.
-  const deepLink = type === 'user' 
+  const deepLink = type === 'user'
     ? `http://localhost:3000/?action=add-contact&id=${encodeURIComponent(data.id)}&node=${data.nodeAddress}&name=${encodeURIComponent(data.name)}`
-    : `http://localhost:3000/?action=add-peer&address=${data.id}`;
+    : `gchat://link-node?address=${data.id}&private=${data.privateOnion || ''}&masterIp=${data.masterIp || ''}&apiPort=${data.apiPort || ''}&name=${encodeURIComponent(data.name)}`;
 
   useEffect(() => {
     QRCode.toDataURL(deepLink, { width: 300, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
@@ -44,10 +47,10 @@ const IdentityModal: React.FC<IdentityModalProps> = ({ type, data, onClose }) =>
           </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={20} /></button>
         </div>
-        
+
         <div className="p-6 flex flex-col items-center space-y-6">
           <div className="bg-white p-2 rounded-xl shadow-lg">
-             {qrDataUrl ? <img src={qrDataUrl} alt="QR Code" className="w-48 h-48" /> : <div className="w-48 h-48 bg-slate-200 animate-pulse rounded" />}
+            {qrDataUrl ? <img src={qrDataUrl} alt="QR Code" className="w-48 h-48" /> : <div className="w-48 h-48 bg-slate-200 animate-pulse rounded" />}
           </div>
 
           <div className="text-center space-y-1">
@@ -56,16 +59,16 @@ const IdentityModal: React.FC<IdentityModalProps> = ({ type, data, onClose }) =>
           </div>
 
           <div className="w-full space-y-3">
-             <button 
-                onClick={handleCopy}
-                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
-             >
-                {copied ? <Check size={16} /> : <Copy size={16} />}
-                {copied ? 'Link Copied' : 'Copy Invite Link'}
-             </button>
-             <p className="text-[10px] text-slate-500 text-center">
-               Scan this with another gChat node to connect instantly.
-             </p>
+            <button
+              onClick={handleCopy}
+              className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+            >
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+              {copied ? 'Link Copied' : 'Copy Invite Link'}
+            </button>
+            <p className="text-[10px] text-slate-500 text-center">
+              Scan this with another gChat node to connect instantly.
+            </p>
           </div>
         </div>
       </div>
