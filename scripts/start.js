@@ -93,7 +93,9 @@ if (NODE_ROLE !== 'SLAVE_FRONTEND') {
 
 // 3. Start Vite
 let vite = null;
-if (NODE_ROLE === 'SLAVE_FRONTEND' || process.env.FORCE_UI === 'true') {
+const forceUi = process.env.FORCE_UI !== 'false'; // Default to true unless explicitly false
+
+if (NODE_ROLE === 'SLAVE_FRONTEND' || forceUi) {
     // We enable 'detached' on non-Windows to create a new Process Group.
     vite = spawn('npm run web', {
         stdio: ['ignore', 'inherit', 'inherit'],
