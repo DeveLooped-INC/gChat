@@ -1028,6 +1028,11 @@ export class NetworkService {
             releaseWakeLock();
         });
 
+        // Listen for internal backend logs
+        this.socket.on('debug-log', (entry: LogEntry) => {
+            this.addLogEntry(entry, true); // skipForward=true to prevent loop
+        });
+
         // GENERIC MESSAGE HANDLER
         this.socket.on('tor-packet', (packet: any) => {
             // 1. Zod Validation
