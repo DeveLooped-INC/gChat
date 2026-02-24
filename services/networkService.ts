@@ -7,7 +7,8 @@ import { kvService } from './kv'; // Import KV Service
 import { NetworkPacketSchema } from './packetSchema';
 
 const MASTER_IP = (import.meta as any).env?.VITE_MASTER_IP || '127.0.0.1';
-const BACKEND_URL = `http://${MASTER_IP}:3001`;
+const API_PORT = (import.meta as any).env?.VITE_API_PORT || '3001';
+const BACKEND_URL = `http://${MASTER_IP}:${API_PORT}`;
 
 export interface PingResult {
     success: boolean;
