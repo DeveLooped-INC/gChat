@@ -480,7 +480,7 @@ async function start() {
             }
 
             console.log(`[${task.ip}] Cloning repository...`);
-            await runSSHCommand(client, `git clone -b ${gitBranch} ${gitRepoUrl} gChat || (cd gChat && git remote set-url origin ${gitRepoUrl} && git fetch origin && git checkout ${gitBranch} && git pull origin ${gitBranch})`);
+            await runSSHCommand(client, `git clone -b ${gitBranch} ${gitRepoUrl} gChat || (cd gChat && git remote set-url origin ${gitRepoUrl} && git fetch origin && git reset --hard origin/${gitBranch} && git checkout ${gitBranch} && git pull origin ${gitBranch})`);
 
             console.log(`[${task.ip}] Generating configuration...`);
             let envVars = `NODE_ROLE=${task.role}\nMASTER_IP=${task.masterIp}\nVITE_MASTER_IP=${task.masterIp}\nFORCE_UI=${task.role === 'SLAVE_FRONTEND' ? 'true' : 'false'}\nAPI_PORT=${task.apiPort}\nFRONTEND_PORT=${task.frontendPort}\n`;
