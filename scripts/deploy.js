@@ -474,7 +474,7 @@ async function start() {
                 await runSSHCommand('local', `if ! command -v pm2 &> /dev/null; then echo "${password}" | sudo -S env PATH=$PATH npm install -g pm2; fi`, 300000);
                 await runSSHCommand('local', 'pm2 delete gchat 2>/dev/null || true');
                 const gchatDir = process.cwd();
-                await runSSHCommand('local', `cd ${gchatDir} && pm2 start npm --name "gchat" -- start && pm2 save`, 60000);
+                await runSSHCommand('local', `cd ${gchatDir} && pm2 start npm --name "gchat" -- start -- --force && pm2 save`, 60000);
 
                 console.log(`[${task.ip}] Attempting to configure PM2 startup script...`);
                 const startupOutput = await runSSHCommand('local', 'pm2 startup | grep "sudo env"', 30000);
@@ -510,7 +510,7 @@ async function start() {
             await runSSHCommand(client, `if ! command -v pm2 &> /dev/null; then echo "${password}" | sudo -S env PATH=$PATH npm install -g pm2; fi`, 300000);
             // Check if gchat is already running in pm2 and delete it if so before restarting
             await runSSHCommand(client, 'pm2 delete gchat 2>/dev/null || true');
-            const pm2StartOptions = task.role === 'SLAVE_FRONTEND' ? '--name "gchat" -- start' : `--name "gchat" -- start`;
+            const pm2StartOptions = '--name "gchat" -- start -- --force';
             await runSSHCommand(client, `cd ~/gChat && pm2 start npm ${pm2StartOptions} && pm2 save`, 60000);
 
             console.log(`[${task.ip}] Attempting to configure PM2 startup script...`);
