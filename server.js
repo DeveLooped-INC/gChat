@@ -28,8 +28,23 @@ const MASTER_IP = process.env.MASTER_IP || '127.0.0.1'; // Target IP for slaves
 const PORT = parseInt(process.env.API_PORT || '3001', 10);
 const TOR_SOCKS_PORT = 9990;
 const TOR_CONTROL_PORT = 9991;
-const INCOMING_PORT = 3456;
+let INCOMING_PORT = 3456; // Will be dynamically resolved at startup
 const CONNECTION_TIMEOUT_MS = 600000; // 10 Minutes
+
+// --- HELPER: FIND FREE PORT ---
+const findFreePort = (startPort) => {
+    return new Promise((resolve, reject) => {
+        const tryPort = (port) => {
+            if (port > 65535) return reject(new Error('No free ports available'));
+            const srv = net.createServer();
+            srv.listen(port, '127.0.0.1', () => {
+                srv.close(() => resolve(port));
+            });
+            srv.on('error', () => tryPort(port + 1));
+        };
+        tryPort(startPort);
+    });
+};
 
 // Determine Data Directory (Default to System AppData)
 const USER_DATA_DIR = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share");
@@ -1023,9 +1038,22 @@ if (NODE_ROLE === 'SLAVE_FRONTEND') {
             });
         }
 
-        httpServer.listen(PORT, '0.0.0.0', () => {
+        httpServer.listen(PORT, '0.0.0.0', async () => {
             console.log(`[Server] Backend API listening on 0.0.0.0:${PORT}`);
+
+            // Dynamically resolve the Tor incoming port
+            try {
+                INCOMING_PORT = await findFreePort(INCOMING_PORT);
+                if (INCOMING_PORT !== 3456) {
+                    console.log(`[Server] Default Tor mesh port 3456 was occupied. Using port ${INCOMING_PORT} instead.`);
+                }
+            } catch (e) {
+                console.error('[Server] FATAL: Could not find a free port for Tor mesh. Exiting.');
+                process.exit(1);
+            }
+
             app.listen(INCOMING_PORT, '127.0.0.1', () => {
+                console.log(`[Server] Tor Mesh listener on 127.0.0.1:${INCOMING_PORT}`);
                 if (NODE_ROLE === 'MASTER' || NODE_ROLE === 'MICRO_SITE') {
                     startTor();
                 }
