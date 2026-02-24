@@ -548,6 +548,7 @@ async function start() {
             console.log(" ✅ ONLINE");
         } else {
             console.log(" ❌ OFFLINE or UNREACHABLE");
+            hasFailures = true;
             console.log(`\n     ⚠️ TIP: You can manually check logs via SSH: pm2 logs gchat\n`);
             try {
                 const entry = sshClients[task.ip];
@@ -566,8 +567,21 @@ async function start() {
     Object.values(sshClients).forEach(c => {
         if (c.client !== 'local' && c.client.end) c.client.end();
     });
-    console.log("\n🎉 All deployments finished successfully!");
-    process.exit(0);
+
+    if (hasFailures) {
+        console.log("\n⚠️ Deployment finished with errors. Some nodes are offline.");
+        process.exit(1);
+    } else {
+        console.log("\n🎉 All deployments finished successfully!");
+        console.log("\n🖥️  You can access the gChat UI at:");
+        for (const task of deploymentTasks) {
+            if (task.role === 'SLAVE_FRONTEND' || task.role === 'MICRO_SITE' || (task.role === 'MASTER' && task.forceUi)) {
+                console.log(`    ➔ http://${task.ip}:${task.frontendPort}`);
+            }
+        }
+        console.log("\n💡 Note: It may take up to 2 minutes for Tor to fully bootstrap and connect to the mesh.\n");
+        process.exit(0);
+    }
 }
 
 start().catch(console.error);
