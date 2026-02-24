@@ -1,4 +1,3 @@
-
 # gChat User Guide
 
 ## 1. Prerequisites
@@ -34,18 +33,43 @@ You can split gChat across multiple devices (e.g. running the Master Node on a R
 4.  The system will construct the Master-Slave IP links over the LAN automatically.
 5.  It will install gChat to those devices, generate `.env` configuration files, and setup `pm2` autostart system services so they reboot autonomously.
 
-### Mobile Mode (Android/Termux)
-1.  Run `npm install` and then `npm start` in your Termux terminal.
-2.  The script will attempt to launch your Android browser automatically.
-3.  If it doesn't open, manually open Chrome or Firefox and go to `http://localhost:3000`.
-4.  **Do not close the Termux app**, as this runs the Tor process.
+### Mobile Mode — Standalone (Android/Termux)
+For running gChat as a full node on your phone:
+1.  In Termux: `pkg update && pkg install nodejs git tor`
+2.  `git clone ... && cd gChat && npm install && npm start`
+3.  The script will attempt to launch your Android browser automatically.
+4.  If it doesn't open, manually go to `http://localhost:3000`.
+5.  **Do not close the Termux app**, as this runs the Tor process.
+
+> **Note**: Native dependencies (`sqlite3`, `ssh2`) are optional and skipped on Termux. The database uses a pure-JS JSON fallback.
+
+### Mobile Mode — Frontend-Only (Link to Existing Node)
+If you have a gChat Master already running on your network (desktop, Pi, etc.), you can link your phone as a lightweight frontend:
+1.  In Termux: `pkg update && pkg install nodejs git`
+2.  `git clone ... && cd gChat && npm install`
+3.  Create `.env`: `echo "NODE_ROLE=SLAVE_FRONTEND" > .env`
+4.  Run `npm start` → open `http://localhost:3000`.
+5.  On the onboarding screen, tap **"Link to Existing Node"**.
+6.  On your Master node, go to **Settings → Node QR** and display the QR code.
+7.  Scan it with your phone, enter your **12-word secret phrase**, and connect.
+
+> Both devices must be on the **same WiFi** for LAN linking. The Node QR also includes the private admin onion address for future Tor-based connections.
 
 ## 3. Initialization
 When you first launch gChat, you will see a terminal-like initialization screen.
+
+### Full Node (Desktop / Standalone Mobile)
 1.  Click **"Initialize Node"**.
 2.  Wait for "Tor Bootstrapped 100%".
 3.  Enter a **Display Name** and a **Username**.
 4.  Click **"Launch gChat"**.
+
+### Frontend-Only (Linked Mobile)
+If you set `NODE_ROLE=SLAVE_FRONTEND`, the Tor bootstrap step is skipped:
+1.  Tap **"Link to Existing Node"** on the onboarding menu.
+2.  Scan the **Node QR** from your Master's Settings page.
+3.  Enter your **12-word seed phrase** to verify your identity.
+4.  The app connects to your Master over LAN and loads your profile.
 
 ## 4. The Feed & Gossip
 The feed is where you see updates from the mesh network.
@@ -71,15 +95,20 @@ gChat supports encrypted group conversations.
 
 ## 7. Managing Contacts
 
-### Your Identity
+### Your Identity (Contacts Page)
 Navigate to the **Contacts** tab. The card at the top is your identity.
-*   **QR Code**: This contains a "Deep Link" (`http://localhost:3000/?action=add...`).
+*   **QR Code**: Contains a deep link for adding you as a contact. This is for **external friends** connecting via Tor.
 *   **Invite Link**: Click "Copy Address" to copy the full invite link.
+
+### Node QR (Settings Page)
+*   The **Node QR** in Settings is different from your contact QR. It encodes your Master node's **LAN IP**, **API port**, **private admin onion**, and **owner name**.
+*   This QR is used for **linking frontend-only mobile installs** to your Master node.
+*   Only visible to the node admin.
 
 ### Adding Peers (Mobile)
 1.  Open your phone's Camera app.
-2.  Scan a friend's gChat QR code.
-3.  Tap the link. It will open your local gChat instance (`localhost:3000`) and automatically add the contact.
+2.  Scan a friend's gChat QR code (from their Contacts page).
+3.  Tap the link. It will open your local gChat instance and automatically add the contact.
 
 ### Adding Peers (Manual)
 1.  Click **"Add Contact"**.
