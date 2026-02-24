@@ -109,9 +109,15 @@ const safeFrontendPort = await findFreePort(TARGET_FRONTEND_PORT);
 
 // Inject into environment before spawning
 process.env.API_PORT = safeApiPort;
-process.env.VITE_API_PORT = safeApiPort;
 process.env.FRONTEND_PORT = safeFrontendPort;
 process.env.VITE_FRONTEND_PORT = safeFrontendPort;
+
+// Only update VITE_API_PORT if it was pointing to our LOCAL API port.
+// On SLAVE_FRONTEND, VITE_API_PORT points to the MASTER's port — don't clobber it.
+const originalViteApiPort = process.env.VITE_API_PORT;
+if (!originalViteApiPort || originalViteApiPort === String(TARGET_API_PORT)) {
+    process.env.VITE_API_PORT = safeApiPort;
+}
 
 if (safeApiPort !== TARGET_API_PORT || safeFrontendPort !== TARGET_FRONTEND_PORT) {
     console.log(`[Launcher] Detected port collisions with non-gChat apps. Automatically shifted ports to: API=${safeApiPort}, UI=${safeFrontendPort}`);
