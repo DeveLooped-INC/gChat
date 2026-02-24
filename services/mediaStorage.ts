@@ -12,11 +12,13 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCa
   try {
     // 1. Cache locally for performance (Split Cache)
     const cacheName = isCache ? 'gchat-media-cache-v1' : 'gchat-media-user-v1';
-    // console.debug(`[MediaStorage] Saving ${id} to ${cacheName}`);
-    const cache = await caches.open(cacheName);
-    await cache.put(new Request(`/media/${id}`), new Response(blob, {
-      headers: { 'Content-Type': blob.type }
-    }));
+    if (typeof caches !== 'undefined') {
+      const cache = await caches.open(cacheName);
+      await cache.put(new Request(`/media/${id}`), new Response(blob, {
+        headers: { 'Content-Type': blob.type }
+      }));
+    }
+
 
     // 2. Upload to Backend (Persistence)
     if (socket && socket.connected) {
@@ -58,20 +60,22 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCa
 
 export const getMedia = async (id: string): Promise<Blob | null> => {
   try {
-    // 1. Try User Cache (Permanent)
-    const userCache = await caches.open('gchat-media-user-v1');
-    const userResponse = await userCache.match(`/media/${id}`);
-    if (userResponse) {
-      console.debug(`[MediaStorage] Found ${id} in User Cache`);
-      return await userResponse.blob();
-    }
+    if (typeof caches !== 'undefined') {
+      // 1. Try User Cache (Permanent)
+      const userCache = await caches.open('gchat-media-user-v1');
+      const userResponse = await userCache.match(`/media/${id}`);
+      if (userResponse) {
+        console.debug(`[MediaStorage] Found ${id} in User Cache`);
+        return await userResponse.blob();
+      }
 
-    // 2. Try Temp Cache (Ephemeral)
-    const tempCache = await caches.open('gchat-media-cache-v1');
-    const tempResponse = await tempCache.match(`/media/${id}`);
-    if (tempResponse) {
-      console.debug(`[MediaStorage] Found ${id} in Temp Cache`);
-      return await tempResponse.blob();
+      // 2. Try Temp Cache (Ephemeral)
+      const tempCache = await caches.open('gchat-media-cache-v1');
+      const tempResponse = await tempCache.match(`/media/${id}`);
+      if (tempResponse) {
+        console.debug(`[MediaStorage] Found ${id} in Temp Cache`);
+        return await tempResponse.blob();
+      }
     }
 
     // 3. Try Backend
@@ -88,7 +92,10 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
             // We don't know if it's user or cache from download response alone easily w/o metadata context
             // But usually downloads are for viewing, so we put in temp cache UNLESS we specifically save it elsewhere.
             // However, to be safe and consistent with "downloaded = cache", we use temp cache.
-            tempCache.put(new Request(`/media/${id}`), new Response(blob, { headers: { 'Content-Type': mimeType } }));
+            if (typeof caches !== 'undefined') {
+              const tempCache = await caches.open('gchat-media-cache-v1');
+              tempCache.put(new Request(`/media/${id}`), new Response(blob, { headers: { 'Content-Type': mimeType } }));
+            }
             resolve(blob);
           } else {
             console.warn(`[MediaStorage] Backend download failed for ${id}:`, res?.error || 'Unknown Error');
@@ -109,12 +116,14 @@ export const getMedia = async (id: string): Promise<Blob | null> => {
 
 export const hasMedia = async (id: string): Promise<boolean> => {
   try {
-    // 1. Check Caches
-    const userCache = await caches.open('gchat-media-user-v1');
-    if (await userCache.match(`/media/${id}`)) return true;
+    if (typeof caches !== 'undefined') {
+      // 1. Check Caches
+      const userCache = await caches.open('gchat-media-user-v1');
+      if (await userCache.match(`/media/${id}`)) return true;
 
-    const tempCache = await caches.open('gchat-media-cache-v1');
-    if (await tempCache.match(`/media/${id}`)) return true;
+      const tempCache = await caches.open('gchat-media-cache-v1');
+      if (await tempCache.match(`/media/${id}`)) return true;
+    }
 
     // 2. Check Backend
     if (socket && socket.connected) {
@@ -162,9 +171,11 @@ export const verifyMediaAccess = async (id: string, providedKey?: string): Promi
 
 export const deleteMedia = async (id: string) => {
   try {
-    // Only delete from User Cache (Permanent)
-    const userCache = await caches.open('gchat-media-user-v1');
-    await userCache.delete(`/media/${id}`);
+    if (typeof caches !== 'undefined') {
+      // Only delete from User Cache (Permanent)
+      const userCache = await caches.open('gchat-media-user-v1');
+      await userCache.delete(`/media/${id}`);
+    }
 
     // Call backend delete (which only deletes from local/user storage)
     if (socket && socket.connected) {
@@ -177,10 +188,12 @@ export const deleteMedia = async (id: string) => {
 
 export const clearMediaCache = async () => {
   try {
-    // Only delete the TEMP cache
-    await caches.delete('gchat-media-cache-v1');
-    // Legacy cleanup (optional, one-time)
-    await caches.delete('gchat-media-v1');
+    if (typeof caches !== 'undefined') {
+      // Only delete the TEMP cache
+      await caches.delete('gchat-media-cache-v1');
+      // Legacy cleanup (optional, one-time)
+      await caches.delete('gchat-media-v1');
+    }
   } catch (e) {
     console.error("Failed to clear media cache", e);
   }
