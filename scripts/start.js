@@ -1,7 +1,7 @@
 import { spawn, execSync } from 'child_process';
 import path from 'path';
 import dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ override: true });
 
 const NODE_ROLE = process.env.NODE_ROLE || 'MASTER';
 
