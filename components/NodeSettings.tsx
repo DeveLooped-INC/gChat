@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Server, Save, Loader2, QrCode, LayoutDashboard, UserCog, Settings as SettingsIcon, SaveAll } from 'lucide-react';
 import { UserProfile, NodePeer, ToastMessage, LogEntry, AvailablePeer, PrivacySettings, StorageStats, Post, Message, Contact, NotificationCategory, MediaSettings } from '../types';
-import { networkService, TorStats } from '../services/networkService';
+import { networkService, TorStats, MASTER_IP, API_PORT } from '../services/networkService';
 import IdentityModal from './IdentityModal';
 import QRScanner from './QRScanner';
 import { createMigrationPackage } from '../services/migrationService';
@@ -411,7 +411,7 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
                 )}
 
                 {/* Modals */}
-                {showNodeIdentity && user.isAdmin && <IdentityModal type="node" data={{ id: user.homeNodeOnion || 'offline', name: "My Local Node" }} onClose={() => setShowNodeIdentity(false)} />}
+                {showNodeIdentity && user.isAdmin && <IdentityModal type="node" data={{ id: user.homeNodeOnion || 'offline', name: user.displayName, privateOnion: networkService.privateOnionAddress || undefined, masterIp: MASTER_IP, apiPort: API_PORT }} onClose={() => setShowNodeIdentity(false)} />}
                 {showScanner && <QRScanner onScan={parseDeepLink} onClose={() => setShowScanner(false)} />}
                 {nodeInfoTarget && <NodeInfoModal target={nodeInfoTarget} onClose={() => setNodeInfoTarget(null)} onConnect={onAddPeer} onForget={onRemovePeer} onBlock={onBlockPeer} onSync={handleSyncPeer} />}
 
