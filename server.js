@@ -16,7 +16,7 @@ import readline from 'readline';
 import net from 'net';
 import { loadPlugins, registerSocketHooks } from './pluginLoader.js';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +81,22 @@ const io = new Server(httpServer, {
 // --- GLOBAL STATE ---
 let isShuttingDown = false;
 
+// --- CENTRALIZED LOGGING STATE ---
+let isMasterDebugEnabled = false;
+
+if (NODE_ROLE !== 'MASTER') {
+    // Slaves periodically sync debug status from Master
+    setInterval(async () => {
+        try {
+            const masterUrl = `http://${MASTER_IP}:${PORT}/api/admin/debug-status`;
+            const res = await axios.get(masterUrl, { timeout: 2000 });
+            isMasterDebugEnabled = res.data?.enabled === true || res.data?.enabled === 'true';
+        } catch (e) {
+            // Keep previous state if unreachable
+        }
+    }, 10000); // Check every 10s
+}
+
 // --- LOGGING HELPER ---
 function broadcastLog(level, area, message, details = null) {
     if (isShuttingDown && (level === 'WARN' || level === 'ERROR') && area === 'NETWORK') {
@@ -94,6 +110,16 @@ function broadcastLog(level, area, message, details = null) {
         message,
         details
     };
+
+    // Forward to master if we are a slave and debug is enabled
+    if (NODE_ROLE !== 'MASTER' && isMasterDebugEnabled && !message.includes('[REMOTE]')) {
+        const masterUrl = `http://${MASTER_IP}:${PORT}/api/admin/remote-log`;
+        axios.post(masterUrl, {
+            entry,
+            nodeRole: NODE_ROLE
+        }, { timeout: 2000 }).catch(() => { });
+    }
+
     try {
         io.emit('debug-log', entry);
     } catch (e) { }
@@ -218,6 +244,38 @@ app.use((err, req, res, next) => {
 app.get('/gchat/health', (req, res) => {
     res.status(200).send({ status: 'online', nodeId: myOnionAddress });
 });
+
+// --- CENTRALIZED LOGGING ADMIN ENDPOINTS ---
+app.get('/api/admin/debug-status', async (req, res) => {
+    try {
+        if (NODE_ROLE === 'MASTER') {
+            const val = await db.kvGet('gchat_debug_enabled');
+            res.json({ enabled: val === 'true' || val === true });
+        } else {
+            res.status(403).json({ error: 'Not Master Node' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/admin/remote-log', (req, res) => {
+    if (NODE_ROLE !== 'MASTER') return res.status(403).send('Not Master');
+    const { entry, nodeRole } = req.body;
+    if (entry) {
+        entry.message = `[${nodeRole}] ${entry.message}`;
+        try { io.emit('debug-log', entry); } catch (e) { }
+
+        const color = entry.level === 'ERROR' ? '\x1b[31m' : entry.level === 'WARN' ? '\x1b[33m' : '\x1b[36m';
+        const msg = `[REMOTE][${entry.level}] [${entry.area}] ${entry.message}`;
+        console.log(`${color}${msg}\x1b[0m`);
+        try {
+            fs.appendFileSync(path.join(APP_DATA_ROOT, 'debug_backend.log'), `${new Date().toISOString()} ${msg}\n`);
+        } catch (e) { }
+    }
+    res.sendStatus(200);
+});
+// ------------------------------------------
 
 app.post('/gchat/packet', (req, res) => {
     // ECHO CANCELLATION: Drop packets from ourselves
