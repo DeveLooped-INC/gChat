@@ -523,6 +523,7 @@ async function start() {
     }
 
     console.log("\n🧪 Testing Mesh Network Connections...");
+    let hasFailures = false;
 
     for (const task of deploymentPlan) {
         let isUp = false;
@@ -574,7 +575,7 @@ async function start() {
     } else {
         console.log("\n🎉 All deployments finished successfully!");
         console.log("\n🖥️  You can access the gChat UI at:");
-        for (const task of deploymentTasks) {
+        for (const task of deploymentPlan) {
             if (task.role === 'SLAVE_FRONTEND' || task.role === 'MICRO_SITE' || (task.role === 'MASTER' && task.forceUi)) {
                 console.log(`    ➔ http://${task.ip}:${task.frontendPort}`);
             }
