@@ -587,8 +587,14 @@ async function start() {
         console.log("\n🖥️  You can access the gChat UI at:");
         for (const task of deploymentPlan) {
             if (task.role === 'SLAVE_FRONTEND' || task.role === 'MICRO_SITE' || (task.role === 'MASTER' && task.forceUi)) {
-                console.log(`    ➔ http://${task.ip}:${task.frontendPort}`);
+                const displayIp = task.ip === '127.0.0.1' ? LOCAL_LAN_IP : task.ip;
+                console.log(`    ➔ http://${displayIp}:${task.frontendPort}`);
             }
+        }
+        const masterTask = deploymentPlan.find(t => t.role === 'MASTER');
+        if (masterTask) {
+            const masterDisplayIp = masterTask.ip === '127.0.0.1' ? LOCAL_LAN_IP : masterTask.ip;
+            console.log(`\n📡 Master Backend API: http://${masterDisplayIp}:${masterTask.apiPort}`);
         }
         console.log("\n💡 Note: It may take up to 2 minutes for Tor to fully bootstrap and connect to the mesh.\n");
         process.exit(0);
