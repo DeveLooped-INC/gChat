@@ -95,17 +95,47 @@ npm run deploy
 ```
 *The `deploy` wizard will ping your local network, ask for SSH passwords, automatically detect the Master IP, and install gChat to your other devices as Headless Masters, Storage Slaves, or Frontend interfaces, fully configured as PM2 system services.*
 
-### 📱 Mobile (Android via Termux)
+> **Auto-Frontend**: If no dedicated `SLAVE_FRONTEND` device is in the deployment plan, the wizard automatically enables the UI on the Master node so you always have browser access.
+
+### 📱 Mobile — Standalone (Android via Termux)
+Run gChat as a full standalone node on your phone:
 ```bash
 # In Termux:
 pkg update
-pkg install nodejs git python make build-essential tor
+pkg install nodejs git tor
 
 git clone https://github.com/DeveLooped-INC/gChat.git
 cd gChat
 npm install
 npm start
 ```
+> **Note**: Native dependencies (`sqlite3`, `ssh2`) are optional and will be skipped automatically on Termux. The database falls back to a pure-JS JSON store.
+
+### 📱 Mobile — Frontend-Only (Connect to Existing Node)
+If you already have a gChat Master running on your network (e.g., a Raspberry Pi or desktop), you can run **only the frontend** on your phone and link it to the existing backend:
+```bash
+# In Termux:
+pkg update
+pkg install nodejs git
+
+git clone https://github.com/DeveLooped-INC/gChat.git
+cd gChat
+npm install
+
+# Create a minimal .env:
+echo "NODE_ROLE=SLAVE_FRONTEND" > .env
+npm start
+```
+
+**Linking to your Master Node:**
+1. On your phone, open the browser to `http://localhost:3000`.
+2. On the onboarding screen, tap **"Link to Existing Node"**.
+3. On your desktop Master, go to **Settings → Node QR** and show the QR code.
+4. Scan the QR code with your phone's camera.
+5. Enter your **12-word secret phrase** to verify your identity.
+6. Your phone connects to the Master over LAN — you're in! 🎉
+
+> **Requirement**: Both devices must be on the **same WiFi network** for LAN linking.
 
 ---
 
