@@ -487,7 +487,7 @@ async function start() {
             if (task.appDataRoot) {
                 envVars += `APP_DATA_ROOT=${task.appDataRoot}\n`;
             }
-            await runSSHCommand(client, `echo "${envVars}" > ~/gChat/.env`);
+            await runSSHCommand(client, `cat << 'GCHAT_EOF' > ~/gChat/.env\n${envVars}\nGCHAT_EOF`);
 
             console.log(`[${task.ip}] Syncing uncommitted local patches...`);
             const filesToSync = ['server.js', 'database.js', 'pluginLoader.js', 'vite.config.ts'];
@@ -500,8 +500,11 @@ async function start() {
                 const filePath = path.join(process.cwd(), file);
                 if (fs.existsSync(filePath)) {
                     const content = fs.readFileSync(filePath, 'utf8');
+                    const b64 = Buffer.from(content).toString('base64');
+                    // Chunk to 76 characters per line for base64 standards and to avoid long lines in shell
+                    const chunkedB64 = b64.match(/.{1,76}/g).join('\n');
                     const remoteDir = file.includes('/') ? `mkdir -p ~/gChat/${path.dirname(file)} && ` : '';
-                    await runSSHCommand(client, `${remoteDir}echo "${Buffer.from(content).toString('base64')}" | base64 -d > ~/gChat/${file}`);
+                    await runSSHCommand(client, `${remoteDir}cat << 'GCHAT_EOF' | base64 -d > ~/gChat/${file}\n${chunkedB64}\nGCHAT_EOF`);
                 }
             }
 
@@ -563,6 +566,16 @@ async function start() {
         } else {
             console.log(" ❌ OFFLINE or UNREACHABLE");
             console.log(`\n     ⚠️ TIP: You can manually check logs via SSH: pm2 logs gchat\n`);
+            try {
+                const entry = sshClients[task.ip];
+                const c = entry ? entry.client : 'local';
+                const logs = await runSSHCommand(c, 'pm2 logs gchat --lines 30 --nostream || true', 15000);
+                console.log(`     📜 Recent PM2 Logs from ${task.ip}:\n`);
+                console.log(logs.split('\n').map(l => `       ${l}`).join('\n'));
+                console.log('\n');
+            } catch (err) {
+                console.log(`       (Failed to fetch logs: ${err.message})`);
+            }
         }
     }
 
