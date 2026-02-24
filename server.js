@@ -168,28 +168,31 @@ function cleanupAndExit() {
     }, 100);
 }
 
+// Interactive terminal controls — only active when running with a real TTY (not PM2/daemon)
 if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
-}
-readline.emitKeypressEvents(process.stdin);
+    readline.emitKeypressEvents(process.stdin);
 
-process.stdin.on('keypress', (str, key) => {
-    if (key.ctrl && key.name === 'q') {
-        broadcastLog('WARN', 'BACKEND', 'Shutdown Sequence Initiated via Terminal...');
-        const connectedClients = io.engine.clientsCount;
-        if (connectedClients > 0) {
-            io.emit('system-shutdown-request');
-            setTimeout(() => {
+    process.stdin.on('keypress', (str, key) => {
+        if (key.ctrl && key.name === 'q') {
+            broadcastLog('WARN', 'BACKEND', 'Shutdown Sequence Initiated via Terminal...');
+            const connectedClients = io.engine.clientsCount;
+            if (connectedClients > 0) {
+                io.emit('system-shutdown-request');
+                setTimeout(() => {
+                    cleanupAndExit();
+                }, 8000);
+            } else {
                 cleanupAndExit();
-            }, 8000);
-        } else {
+            }
+        }
+        if (key.ctrl && key.name === 'c') {
             cleanupAndExit();
         }
-    }
-    if (key.ctrl && key.name === 'c') {
-        cleanupAndExit();
-    }
-});
+    });
+} else {
+    broadcastLog('INFO', 'BACKEND', 'Non-interactive mode detected (PM2/Daemon). Keyboard shortcuts disabled.');
+}
 
 // --- EXPRESS ---
 app.use(helmet()); // Secure Headers
