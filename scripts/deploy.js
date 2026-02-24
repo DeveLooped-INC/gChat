@@ -489,24 +489,7 @@ async function start() {
             }
             await runSSHCommand(client, `cat << 'GCHAT_EOF' > ~/gChat/.env\n${envVars}\nGCHAT_EOF`);
 
-            console.log(`[${task.ip}] Syncing uncommitted local patches...`);
-            const filesToSync = ['server.js', 'database.js', 'pluginLoader.js', 'vite.config.ts', 'package.json'];
-            // Also sync start.js which contains the lsof fix
-            const startJsPath = path.join(process.cwd(), 'scripts', 'start.js');
-            if (fs.existsSync(startJsPath)) {
-                filesToSync.push('scripts/start.js');
-            }
-            for (const file of filesToSync) {
-                const filePath = path.join(process.cwd(), file);
-                if (fs.existsSync(filePath)) {
-                    const content = fs.readFileSync(filePath, 'utf8');
-                    const b64 = Buffer.from(content).toString('base64');
-                    // Chunk to 76 characters per line for base64 standards and to avoid long lines in shell
-                    const chunkedB64 = b64.match(/.{1,76}/g).join('\n');
-                    const remoteDir = file.includes('/') ? `mkdir -p ~/gChat/${path.dirname(file)} && ` : '';
-                    await runSSHCommand(client, `${remoteDir}cat << 'GCHAT_EOF' | base64 -d > ~/gChat/${file}\n${chunkedB64}\nGCHAT_EOF`);
-                }
-            }
+
 
             console.log(`[${task.ip}] Installing dependencies (This may take a minute) & Node.js if missing...`);
             // Quick check for node — use extended timeout for package installs
