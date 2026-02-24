@@ -1,6 +1,7 @@
 import { spawn, execSync } from 'child_process';
 import path from 'path';
 import dotenv from 'dotenv';
+import net from 'net';
 dotenv.config({ override: true });
 
 const NODE_ROLE = process.env.NODE_ROLE || 'MASTER';
@@ -13,40 +14,52 @@ console.log('--------------------------------------------------');
 // Check for Force Flag
 const FORCE_KILL = process.argv.includes('--force');
 
-// --- HELPER: KILL PORT HOGS ---
-const killPort = (port) => {
+// --- HELPER: SAFE PORT KILLER ---
+// Returns true if the port was successfully cleared or was already free. Returns false if occupied by a non-gchat app.
+const killPortSafely = (port) => {
     try {
         if (process.platform === 'win32') {
             const output = execSync(`netstat -ano | findstr :${port}`, { timeout: 3000 }).toString();
             const lines = output.trim().split('\n');
-            lines.forEach(line => {
+            for (let line of lines) {
                 const parts = line.trim().split(/\s+/);
                 const pid = parts[parts.length - 1];
                 if (pid && pid !== '0') {
-                    if (FORCE_KILL) {
-                        try {
-                            execSync(`taskkill /PID ${pid} /F`, { timeout: 3000 });
-                            console.log(`[Cleaner] Killed PID ${pid} on port ${port}`);
-                        } catch (e) { }
+                    // Check if it's our process before killing
+                    const cmdOutput = execSync(`wmic process where processid=${pid} get commandline`, { timeout: 3000 }).toString().toLowerCase();
+                    const isOurs = FORCE_KILL || cmdOutput.includes('gchat') || cmdOutput.includes('vite') || cmdOutput.includes('node server.js');
+                    if (isOurs) {
+                        try { execSync(`taskkill /PID ${pid} /F`, { timeout: 3000 }); console.log(`[Cleaner] Killed orphaned gChat PID ${pid} on port ${port}`); } catch (e) { }
                     } else {
-                        console.warn(`[WARNING] Port ${port} is occupied by PID ${pid}. Use --force to auto-kill.`);
+                        console.log(`[Cleaner] Port ${port} is occupied by an external app (PID ${pid}). Leaving it alone.`);
+                        return false;
                     }
                 }
-            });
+            }
         } else {
-            // Linux/Mac: Use ss (faster & more reliable than lsof) with a timeout
+            // Linux/Mac: Use ss to find PID, then ps to check command
             try {
                 const output = execSync(`ss -tlnp 'sport = :${port}'`, { timeout: 3000 }).toString();
-                const inUse = output.trim().split('\n').length > 1; // Header + at least 1 result
+                const lines = output.trim().split('\n');
+                if (lines.length > 1) {
+                    // Extract PID using regex
+                    const match = output.match(/pid=(\d+)/);
+                    if (match && match[1]) {
+                        const pid = match[1];
+                        const cmdOutput = execSync(`ps -p ${pid} -o command=`, { timeout: 3000 }).toString().toLowerCase();
+                        const isOurs = FORCE_KILL || cmdOutput.includes('gchat') || cmdOutput.includes('vite') || cmdOutput.includes('server.js') || cmdOutput.includes('npm run web');
 
-                if (inUse) {
-                    if (FORCE_KILL) {
-                        try {
-                            execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore', timeout: 3000 });
-                            console.log(`[Cleaner] Cleared port ${port}`);
-                        } catch (e) { }
+                        if (isOurs) {
+                            try { execSync(`kill -9 ${pid}`, { timeout: 3000 }); console.log(`[Cleaner] Killed orphaned gChat PID ${pid} on port ${port}`); } catch (e) { }
+                        } else {
+                            console.log(`[Cleaner] Port ${port} is occupied by an external app (PID ${pid}). Leaving it alone.`);
+                            return false;
+                        }
+                    } else if (FORCE_KILL) {
+                        try { execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore', timeout: 3000 }); } catch (e) { }
                     } else {
-                        console.warn(`[WARNING] Port ${port} is in use. Run with --force to auto-kill, or free it manually.`);
+                        console.log(`[Cleaner] Port ${port} is occupied by an unknown app. Leaving it alone.`);
+                        return false;
                     }
                 }
             } catch (e) {
@@ -56,13 +69,54 @@ const killPort = (port) => {
     } catch (e) {
         // Ignore errors if no process was found
     }
+    return true;
 };
 
-// 1. PRE-FLIGHT CLEANUP
-console.log('[Launcher] Checking ports 3000, 3001, 3002...');
-killPort(3000); // Vite
-killPort(3001); // Backend Socket
-killPort(3002); // Alternative Vite
+// --- HELPER: FIND FREE PORT ---
+const isPortFree = (port) => {
+    return new Promise((resolve) => {
+        const srv = net.createServer();
+        srv.listen(port, () => {
+            srv.close(() => resolve(true));
+        });
+        srv.on('error', () => resolve(false));
+    });
+};
+
+const findFreePort = async (startPort) => {
+    let port = startPort;
+    while (true) {
+        if (await isPortFree(port)) return port;
+        port++;
+        if (port > 65535) throw new Error('No free ports available');
+    }
+};
+
+// 1. PRE-FLIGHT CLEANUP & PORT ALLOCATION
+// Wrap in top-level async IIFE (if commonJS was ever used, but we are modules so we can 'await' at top level technically, doing it directly)
+console.log('[Launcher] Checking expected ports and cleaning up orphans...');
+killPortSafely(3000); // Vite
+killPortSafely(3001); // Backend Socket
+killPortSafely(3456); // Public Tor Mesh Tunnel
+killPortSafely(3457); // Private Tor Mesh Tunnel
+
+// Compute definitive safe ports
+const TARGET_API_PORT = parseInt(process.env.API_PORT || '3001', 10);
+const TARGET_FRONTEND_PORT = parseInt(process.env.FRONTEND_PORT || '3000', 10);
+
+const safeApiPort = await findFreePort(TARGET_API_PORT);
+const safeFrontendPort = await findFreePort(Math.max(TARGET_FRONTEND_PORT, safeApiPort + 1));
+
+// Inject into environment before spawning
+process.env.API_PORT = safeApiPort;
+process.env.VITE_API_PORT = safeApiPort;
+process.env.FRONTEND_PORT = safeFrontendPort;
+
+if (safeApiPort !== TARGET_API_PORT || safeFrontendPort !== TARGET_FRONTEND_PORT) {
+    console.log(`[Launcher] Detected port collisions with non-gChat apps. Automatically shifted ports to: API=${safeApiPort}, UI=${safeFrontendPort}`);
+} else {
+    console.log(`[Launcher] Ports OK. Using API=${safeApiPort}, UI=${safeFrontendPort}`);
+}
 
 // GLOBAL EIO CATCHER (Final safeguard)
 process.on('uncaughtException', (err) => {
@@ -109,12 +163,12 @@ if (process.platform === 'android' || process.env.PREFIX?.includes('com.termux')
     console.log('📱 Android detected: Attempting to launch Chrome/Browser via Activity Manager...');
     setTimeout(() => {
         try {
-            // Force open port 3000
-            const cmd = 'am start -a android.intent.action.VIEW -d http://localhost:3000';
+            // Force open port
+            const cmd = `am start -a android.intent.action.VIEW -d http://localhost:${safeFrontendPort}`;
             const child = spawn(cmd, { shell: true, stdio: 'ignore' });
             child.unref();
         } catch (e) {
-            console.log('⚠️ Could not auto-launch browser. Please manually open http://localhost:3000');
+            console.log(`⚠️ Could not auto-launch browser. Please manually open http://localhost:${safeFrontendPort}`);
         }
     }, 4000); // Wait longer for Vite to boot on mobile
 }
