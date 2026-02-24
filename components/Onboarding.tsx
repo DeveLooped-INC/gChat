@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, ArrowRight, Lock, Server, Loader2, RefreshCw, Upload, UserPlus, LogIn, Key, Copy, Check, Trash2, AlertTriangle, Cpu, FileArchive, X, Users } from 'lucide-react';
+import { ShieldCheck, ArrowRight, Lock, Server, Loader2, RefreshCw, Upload, UserPlus, LogIn, Key, Copy, Check, Trash2, AlertTriangle, Cpu, FileArchive, X, Users, Smartphone } from 'lucide-react';
 import { UserProfile } from '../types';
 import { networkService } from '../services/networkService';
 import { generateMnemonic, validateMnemonic, keysFromMnemonic } from '../services/mnemonicService';
@@ -8,6 +8,7 @@ import { restoreMigrationPackage } from '../services/migrationService';
 import { storageService } from '../services/storage';
 import { kvService } from '../services/kv';
 import { clearMediaCache } from '../services/mediaStorage';
+import MobileLinkModal from './MobileLinkModal';
 
 interface OnboardingProps {
     onComplete: (profile: UserProfile) => void;
@@ -44,8 +45,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
     const importFileInputRef = useRef<HTMLInputElement>(null);
 
-    // Port Warning
-    const isCorrectPort = window.location.port === '3000';
+    // Frontend-only mode detection
+    const isFrontendOnly = (import.meta as any).env?.VITE_NODE_ROLE === 'SLAVE_FRONTEND' || localStorage.getItem('gchat_frontend_only') === 'true';
+    const [showLinkModal, setShowLinkModal] = useState(false);
+
+    // Port Warning - smarter: check VITE_FRONTEND_PORT instead of hardcoding 3000
+    const expectedPort = (import.meta as any).env?.VITE_FRONTEND_PORT || '3000';
+    const isCorrectPort = window.location.port === expectedPort || window.location.port === '' || isFrontendOnly;
 
 
 
@@ -68,7 +74,20 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
             }
         });
 
-        networkService.init('init');
+        // Frontend-only mode: skip Tor bootstrap, go straight to ready
+        if (isFrontendOnly) {
+            const masterIp = localStorage.getItem('gchat_master_ip');
+            if (masterIp) {
+                // Already configured — connect and go to auth menu
+                networkService.init('init');
+                setNodeStep('ready');
+            } else {
+                // Not yet linked — show auth menu with Link button
+                setNodeStep('ready');
+            }
+        } else {
+            networkService.init('init');
+        }
 
         return () => unsubscribe();
     }, []);
@@ -99,6 +118,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         const phrase = generateMnemonic(12);
         setMnemonic(phrase);
         setAuthMode('create');
+    };
+
+    const handleMobileLinked = async (linkData: any, keys: any, userId: string, tripcode: string) => {
+        setCalculatedTripcode(tripcode);
+        setNodeOnion(linkData.address || 'linked');
+        setShowLinkModal(false);
+        proceedWithLogin(keys, userId);
     };
 
     const handleLogin = async () => {
@@ -429,6 +455,17 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                             <span>Create New User</span>
                         </button>
 
+                        {/* Link to Existing Node (frontend-only) */}
+                        {isFrontendOnly && (
+                            <button
+                                onClick={() => setShowLinkModal(true)}
+                                className="w-full py-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-bold flex items-center justify-center space-x-2 transition-all"
+                            >
+                                <Smartphone size={20} />
+                                <span>Link to Existing Node</span>
+                            </button>
+                        )}
+
                         <div className="grid grid-cols-2 gap-3">
                             <button
                                 onClick={() => setAuthMode('login')}
@@ -468,6 +505,8 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                                 </button>
                             </div>
                         </div>
+
+                        {showLinkModal && <MobileLinkModal onLinked={handleMobileLinked} onClose={() => setShowLinkModal(false)} />}
                     </div>
                 )}
 
