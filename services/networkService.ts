@@ -6,9 +6,11 @@ import { getTransferConfig, arrayBufferToBase64, base64ToArrayBuffer } from '../
 import { kvService } from './kv'; // Import KV Service
 import { NetworkPacketSchema } from './packetSchema';
 
-const MASTER_IP = (import.meta as any).env?.VITE_MASTER_IP || '127.0.0.1';
-const API_PORT = (import.meta as any).env?.VITE_API_PORT || '3001';
-const BACKEND_URL = `http://${MASTER_IP}:${API_PORT}`;
+const MASTER_IP = localStorage.getItem('gchat_master_ip') || (import.meta as any).env?.VITE_MASTER_IP || '127.0.0.1';
+const API_PORT = localStorage.getItem('gchat_api_port') || (import.meta as any).env?.VITE_API_PORT || '3001';
+let BACKEND_URL = `http://${MASTER_IP}:${API_PORT}`;
+
+export { MASTER_IP, API_PORT };
 
 export interface PingResult {
     success: boolean;
@@ -107,6 +109,9 @@ export class NetworkService {
     public isDebugEnabled: boolean = false;
 
     private _myOnionAddress: string | null = null;
+    private _privateOnionAddress: string | null = null;
+
+    public get privateOnionAddress(): string | null { return this._privateOnionAddress; }
     private _knownPeers: Set<string> = new Set();
     private _trustedPeers: Set<string> = new Set(); // Explicitly connected/added peers
     private _activeDownloads: Map<string, ActiveDownload> = new Map();
@@ -987,6 +992,17 @@ export class NetworkService {
 
     // --- STANDARD METHODS (INIT, CONNECT, SEND) ---
 
+    // Dynamically reconfigure the backend URL and reconnect (for QR onboarding)
+    public reconfigure(masterIp: string, apiPort: string) {
+        localStorage.setItem('gchat_master_ip', masterIp);
+        localStorage.setItem('gchat_api_port', apiPort);
+        BACKEND_URL = `http://${masterIp}:${apiPort}`;
+        if (this.socket) {
+            this.socket.disconnect();
+            this.socket = null as any;
+        }
+    }
+
     public init(userId?: string) {
         if (this.socket) return;
 
@@ -1048,6 +1064,12 @@ export class NetworkService {
             if (address) {
                 this._myOnionAddress = address;
                 this.notifyStatus(true, address);
+            }
+        });
+
+        this.socket.on('dual-onion-addresses', (data: { public: string; private: string }) => {
+            if (data?.private) {
+                this._privateOnionAddress = data.private;
             }
         });
 
