@@ -70,19 +70,28 @@ async function scanNetwork(subnet) {
     return results.filter(ip => ip !== null);
 }
 
-function runSSHCommand(client, cmd) {
+function runSSHCommand(client, cmd, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
         if (client === 'local') {
-            exec(cmd, { shell: '/bin/bash', cwd: os.homedir(), timeout: 10000 }, (err, stdout, stderr) => {
+            exec(cmd, { shell: '/bin/bash', cwd: os.homedir(), timeout: timeoutMs }, (err, stdout, stderr) => {
                 if (err && (!stdout || stdout.trim() === '')) return reject(err);
                 resolve((stdout || '').trim());
             });
             return;
         }
+        let output = '';
+        let timedOut = false;
+        const timer = setTimeout(() => {
+            timedOut = true;
+            reject(new Error(`SSH command timed out after ${timeoutMs / 1000}s: ${cmd.substring(0, 80)}`));
+        }, timeoutMs);
+
         client.exec(cmd, (err, stream) => {
-            if (err) return reject(err);
-            let output = '';
-            stream.on('close', () => resolve(output.trim())).on('data', data => {
+            if (err) { clearTimeout(timer); return reject(err); }
+            stream.on('close', () => {
+                clearTimeout(timer);
+                if (!timedOut) resolve(output.trim());
+            }).on('data', data => {
                 output += data;
             }).stderr.on('data', data => {
                 // Ignore stderr to keep output clean unless needed
@@ -225,34 +234,46 @@ async function start() {
             continue;
         }
 
-        const { username, password } = await inquirer.prompt([
-            { type: 'input', name: 'username', message: `Username for ${ip}:`, default: process.env.USER || 'tomAnderson' },
-            { type: 'password', name: 'password', message: `SSH Password for ${ip}:` }
-        ]);
+        let connected = false;
+        while (!connected) {
+            const { username, password } = await inquirer.prompt([
+                { type: 'input', name: 'username', message: `Username for ${ip}:`, default: process.env.USER || 'tomAnderson' },
+                { type: 'password', name: 'password', message: `SSH Password for ${ip}:` }
+            ]);
 
-        let privateKey = null;
+            const client = new Client();
 
-        const client = new Client();
-
-        console.log(`... Connecting to ${ip} ...`);
-        try {
-            await new Promise((resolve, reject) => {
-                client.on('ready', resolve).on('error', reject).connect({
-                    host: ip,
-                    port: DEFAULT_PORT,
-                    username,
-                    password,
-                    readyTimeout: 10000
+            console.log(`... Connecting to ${ip} ...`);
+            try {
+                await new Promise((resolve, reject) => {
+                    client.on('ready', resolve).on('error', reject).connect({
+                        host: ip,
+                        port: DEFAULT_PORT,
+                        username,
+                        password,
+                        readyTimeout: 10000
+                    });
                 });
-            });
-            console.log(`✅ Connected to ${ip}`);
-            sshClients[ip] = { client, password }; // Store password for later sudo commands
+                console.log(`✅ Connected to ${ip}`);
+                sshClients[ip] = { client, password };
+                connected = true;
 
-            const info = await getHardwareInfo(client, ip);
-            deviceInfos.push({ ...info, username });
+                const info = await getHardwareInfo(client, ip);
+                deviceInfos.push({ ...info, username });
 
-        } catch (e) {
-            console.log(`❌ Connection to ${ip} failed: ${e.message}`);
+            } catch (e) {
+                console.log(`❌ Connection to ${ip} failed: ${e.message}`);
+                const { retry } = await inquirer.prompt([{
+                    type: 'confirm',
+                    name: 'retry',
+                    message: `Would you like to re-enter credentials for ${ip}?`,
+                    default: true
+                }]);
+                if (!retry) {
+                    console.log(`⏭️  Skipping ${ip}.`);
+                    break;
+                }
+            }
         }
     }
 
@@ -485,9 +506,9 @@ async function start() {
             }
 
             console.log(`[${task.ip}] Installing dependencies (This may take a minute) & Node.js if missing...`);
-            // Quick check for node
-            await runSSHCommand(client, `if ! command -v node &> /dev/null; then echo "${password}" | sudo -S apt-get update && echo "${password}" | sudo -S apt-get install -y nodejs npm; fi`);
-            await runSSHCommand(client, 'cd ~/gChat && npm install');
+            // Quick check for node — use extended timeout for package installs
+            await runSSHCommand(client, `if ! command -v node &> /dev/null; then echo "${password}" | sudo -S apt-get update && echo "${password}" | sudo -S apt-get install -y nodejs npm; fi`, 300000);
+            await runSSHCommand(client, 'cd ~/gChat && npm install', 300000);
 
             console.log(`[${task.ip}] Setting up PM2 System Service...`);
             await runSSHCommand(client, `if ! command -v pm2 &> /dev/null; then echo "${password}" | sudo -S env PATH=$PATH npm install -g pm2; fi`);
