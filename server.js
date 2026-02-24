@@ -519,7 +519,31 @@ function connectToControlPort() {
 async function startTor() {
     await killGhostTor();
 
-    if (!fs.existsSync(PUBLIC_HIDDEN_SERVICE_DIR)) fs.mkdirSync(PUBLIC_HIDDEN_SERVICE_DIR, { recursive: true });
+    const LEGACY_HIDDEN_SERVICE_DIR = path.join(APP_DATA_ROOT, 'tor', 'service');
+    const hasLegacyService = fs.existsSync(LEGACY_HIDDEN_SERVICE_DIR);
+    const hasNewPublicService = fs.existsSync(PUBLIC_HIDDEN_SERVICE_DIR);
+
+    // MIGRATION: Restore identity from old single-node 'service' directory
+    if (hasLegacyService && !hasNewPublicService) {
+        broadcastLog('INFO', 'TOR', 'Migrating legacy Tor identity keys to new multi-node structure...');
+        fs.mkdirSync(PUBLIC_HIDDEN_SERVICE_DIR, { recursive: true });
+
+        const keysToMigrate = ['hostname', 'hs_ed25519_secret_key', 'hs_ed25519_public_key'];
+        keysToMigrate.forEach(file => {
+            const oldPath = path.join(LEGACY_HIDDEN_SERVICE_DIR, file);
+            const newPath = path.join(PUBLIC_HIDDEN_SERVICE_DIR, file);
+            if (fs.existsSync(oldPath)) {
+                fs.copyFileSync(oldPath, newPath);
+                if (process.platform !== 'win32') {
+                    try { fs.chmodSync(newPath, 0o600); } catch (e) { }
+                }
+            }
+        });
+        broadcastLog('INFO', 'TOR', 'Legacy Tor keys successfully migrated.');
+    } else if (!hasNewPublicService) {
+        fs.mkdirSync(PUBLIC_HIDDEN_SERVICE_DIR, { recursive: true });
+    }
+
     if (!fs.existsSync(PRIVATE_HIDDEN_SERVICE_DIR)) fs.mkdirSync(PRIVATE_HIDDEN_SERVICE_DIR, { recursive: true });
     if (!fs.existsSync(TOR_DATA_DIR)) fs.mkdirSync(TOR_DATA_DIR, { recursive: true });
     if (process.platform !== 'win32') {
