@@ -32,12 +32,14 @@
     "socket.io": "^4.7.5",
     "socket.io-client": "^4.7.5",
     "socks-proxy-agent": "^8.0.3",
-    "sqlite3": "^5.1.7",
-    "ssh2": "^1.17.0",
     "tar": "^7.5.7",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "sqlite3": "^5.1.7",
+    "ssh2": "^1.17.0"
   },
   "overrides": {
     "tar": "^7.5.7",
