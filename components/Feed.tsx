@@ -12,6 +12,7 @@ import UserInfoModal, { UserInfoTarget } from './UserInfoModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ExternalLinkWarningModal from './ExternalLinkWarningModal';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface FeedProps {
     contentSettings?: { showDownvotedPosts: boolean; downvoteThreshold: number };
@@ -529,8 +530,8 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
                                 <span>{sharingPost ? 'Reshare Broadcast' : 'New Broadcast'}</span>
                             </h3>
                             <button onClick={() => { setShowBroadcastModal(false); resetPostForm(); }} className="text-slate-400 hover:text-white"><X size={24} /></button>
-                            <button onClick={() => {
-                                navigator.clipboard.writeText(JSON.stringify(sharingPost || { content, privacy, location: postLocation, media: attachedMedia, imageUrl: attachedImage }, null, 2));
+                            <button onClick={async () => {
+                                await copyToClipboard(JSON.stringify(sharingPost || { content, privacy, location: postLocation, media: attachedMedia, imageUrl: attachedImage }, null, 2));
                                 addToast("Copied", "Raw JSON copied to clipboard", "success", "admin");
                             }} className="text-slate-400 hover:text-white p-1"><FileJson size={14} /></button>
                         </div>
