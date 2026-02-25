@@ -1002,8 +1002,10 @@ export const useNetworkLayer = ({
         const unsubscribeStatus = networkService.subscribeToStatus((online, nodeId) => {
             setIsOnline(online);
             // Sync user.homeNodeOnion whenever the backend reports a (new) public address
-            if (online && nodeId && nodeId !== user.homeNodeOnion) {
-                onUpdateUser({ ...user, homeNodeOnion: nodeId });
+            // Use state.userRef.current to avoid stale closure (this effect depends on [state.isLoaded])
+            const currentUser = state.userRef.current;
+            if (online && nodeId && currentUser && nodeId !== currentUser.homeNodeOnion) {
+                onUpdateUser({ ...currentUser, homeNodeOnion: nodeId });
             }
         });
 
