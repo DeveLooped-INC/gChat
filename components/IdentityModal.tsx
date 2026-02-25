@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Copy, Check, Shield, Server } from 'lucide-react';
 import QRCode from 'qrcode';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface IdentityModalProps {
   type: 'user' | 'node';
@@ -31,10 +32,12 @@ const IdentityModal: React.FC<IdentityModalProps> = ({ type, data, onClose }) =>
       .catch(err => console.error(err));
   }, [deepLink]);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(deepLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(deepLink);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (
