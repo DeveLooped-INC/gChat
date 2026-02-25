@@ -15,13 +15,20 @@ interface MediaRecorderProps {
 }
 
 export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, onCancel, maxDuration }) => {
+    // Auto-detect non-secure context: navigator.mediaDevices and MediaRecorder are
+    // unavailable on http:// LAN IPs. Force native file input in these cases.
+    const canUseWebAPIs = typeof navigator !== 'undefined'
+        && typeof navigator.mediaDevices !== 'undefined'
+        && typeof navigator.mediaDevices.getUserMedia === 'function'
+        && typeof window.MediaRecorder !== 'undefined';
+
     const [isRecording, setIsRecording] = useState(false);
     const [isPaused, setIsPaused] = useState(false);
     const [duration, setDuration] = useState(0);
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-    const [useNativeFallback, setUseNativeFallback] = useState(false);
+    const [useNativeFallback, setUseNativeFallback] = useState(!canUseWebAPIs);
 
     const mediaRecorderRef = useRef<any>(null);
     const chunksRef = useRef<Blob[]>([]);
@@ -264,20 +271,44 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
             const url = URL.createObjectURL(file);
-            // Can't know exact duration without loading metadata, estimating 0 for now
-            onCapture(file, url, 0);
+
+            // Extract duration from video/audio files
+            if (file.type.startsWith('video/') || file.type.startsWith('audio/')) {
+                const el = document.createElement(file.type.startsWith('video/') ? 'video' : 'audio');
+                el.preload = 'metadata';
+                el.onloadedmetadata = () => {
+                    const dur = isFinite(el.duration) ? Math.round(el.duration) : 0;
+                    URL.revokeObjectURL(el.src);
+                    onCapture(file, url, dur);
+                };
+                el.onerror = () => {
+                    // Can't extract duration, proceed anyway
+                    onCapture(file, url, 0);
+                };
+                el.src = URL.createObjectURL(file);
+            } else {
+                onCapture(file, url, 0);
+            }
         }
     };
 
     if (useNativeFallback) {
         return (
             <div className="flex flex-col items-center bg-slate-900 rounded-xl p-6 w-full border border-slate-700 text-center min-w-[260px]">
-                <Video className="text-onion-500 mb-2" size={32} />
-                <h3 className="text-white font-bold mb-1">Native Camera</h3>
-                <p className="text-slate-400 text-xs mb-4">Using device camcorder app...</p>
-                <button onClick={() => nativeInputRef.current?.click()} className="bg-onion-600 px-6 py-3 rounded-xl text-white font-bold mb-2">
-                    Launch Recorder
-                </button>
+                {type === 'video' ? <Video className="text-onion-500 mb-2" size={32} /> : <Mic className="text-onion-500 mb-2" size={32} />}
+                <h3 className="text-white font-bold mb-1">{type === 'video' ? 'Record Video' : 'Record Audio'}</h3>
+                <p className="text-slate-400 text-xs mb-4">
+                    {!canUseWebAPIs ? 'In-browser recording is not available over HTTP. Use your device app instead.' : 'Using device app...'}
+                </p>
+                <div className="flex gap-2 mb-3">
+                    <button onClick={() => nativeInputRef.current?.click()} className="bg-onion-600 px-5 py-3 rounded-xl text-white font-bold text-sm">
+                        📹 Capture
+                    </button>
+                    <label className="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-xl text-white font-bold text-sm cursor-pointer">
+                        📁 Browse
+                        <input type="file" accept={type === 'video' ? "video/*" : "audio/*"} className="hidden" onChange={handleNativeFile} />
+                    </label>
+                </div>
                 <input
                     ref={nativeInputRef}
                     type="file"
@@ -286,7 +317,7 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
                     className="hidden"
                     onChange={handleNativeFile}
                 />
-                <button onClick={() => setUseNativeFallback(false)} className="text-slate-500 text-xs underline">Retry In-App Recorder</button>
+                {canUseWebAPIs && <button onClick={() => setUseNativeFallback(false)} className="text-slate-500 text-xs underline">Retry In-App Recorder</button>}
                 <button onClick={onCancel} className="mt-4 text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
         );
