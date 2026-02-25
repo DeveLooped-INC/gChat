@@ -138,6 +138,7 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       if (!file.type.startsWith('image/')) return;
+      if (file.size > 5 * 1024 * 1024) { addToast('Error', 'Avatar too large (max 5MB)', 'error'); return; }
 
       try {
         const reader = new FileReader();
