@@ -52,13 +52,38 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
                     audio: true,
                     video: {
                         facingMode: facingMode,
-                        // Relaxed constraints for better compatibility (S21/Tab S6)
                         width: { ideal: 1280 },
                         height: { ideal: 720 }
                     }
                 };
 
-            const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+            let mediaStream: MediaStream;
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (firstErr: any) {
+                // Progressive constraint relaxation: retry with minimal constraints
+                console.warn('[MediaRecorder] Initial constraints failed, retrying with minimal:', firstErr.message);
+                if (type === 'video') {
+                    // Try without resolution constraints
+                    try {
+                        mediaStream = await navigator.mediaDevices.getUserMedia({
+                            audio: true,
+                            video: { facingMode: facingMode }
+                        });
+                    } catch {
+                        // Try with just video: true
+                        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                    }
+                } else {
+                    // Audio: try with relaxed constraints
+                    try {
+                        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+                    } catch {
+                        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    }
+                }
+            }
+
             setStream(mediaStream);
             streamRef.current = mediaStream;
             setError(null);
@@ -74,6 +99,10 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
                 msg = "Permission denied. Check settings.";
             } else if (e.name === 'OverconstrainedError') {
                 msg = "Camera resolution not supported.";
+            } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+                msg = "No media device found.";
+            } else if (e.name === 'NotReadableError' || e.name === 'TrackStartError') {
+                msg = "Device is in use by another app.";
             }
 
             setError(msg);
@@ -99,35 +128,82 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
         durationRef.current = 0;
         setDuration(0);
 
-        // Improved MIME type selection for Android compatibility
-        let mimeType = 'video/webm';
+        // Comprehensive MIME type detection for cross-device/browser support
+        let mimeType = '';
         if (type === 'video') {
-            const types = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
-            for (const t of types) {
-                if (window.MediaRecorder.isTypeSupported(t)) {
+            const videoTypes = [
+                'video/webm;codecs=vp9,opus',
+                'video/webm;codecs=vp8,opus',
+                'video/webm;codecs=vp9',
+                'video/webm;codecs=vp8',
+                'video/webm',
+                'video/mp4;codecs=h264,aac',
+                'video/mp4',
+                ''  // Empty = browser default
+            ];
+            for (const t of videoTypes) {
+                if (!t || (typeof window.MediaRecorder !== 'undefined' && window.MediaRecorder.isTypeSupported(t))) {
                     mimeType = t;
                     break;
                 }
             }
         } else {
-            mimeType = 'audio/webm';
+            const audioTypes = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/ogg;codecs=opus',
+                'audio/ogg',
+                'audio/mp4;codecs=mp4a.40.2',
+                'audio/mp4',
+                'audio/aac',
+                ''  // Empty = browser default
+            ];
+            for (const t of audioTypes) {
+                if (!t || (typeof window.MediaRecorder !== 'undefined' && window.MediaRecorder.isTypeSupported(t))) {
+                    mimeType = t;
+                    break;
+                }
+            }
         }
 
+        console.log(`[MediaRecorder] Using MIME: "${mimeType || 'browser-default'}" for ${type}`);
+
         try {
-            const recorder = new window.MediaRecorder(stream, { mimeType });
+            const options: MediaRecorderOptions = {};
+            if (mimeType) options.mimeType = mimeType;
+
+            const recorder = new window.MediaRecorder(stream, options);
+            const effectiveMime = recorder.mimeType || mimeType || (type === 'video' ? 'video/webm' : 'audio/webm');
 
             recorder.ondataavailable = (e: BlobEvent) => {
-                if (e.data.size > 0) chunksRef.current.push(e.data);
+                if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
             };
 
             recorder.onstop = () => {
-                const blob = new Blob(chunksRef.current, { type: mimeType });
+                if (chunksRef.current.length === 0) {
+                    console.warn('[MediaRecorder] No data chunks captured');
+                    setError('No data was recorded. Try the native app.');
+                    return;
+                }
+                const blob = new Blob(chunksRef.current, { type: effectiveMime });
+                if (blob.size === 0) {
+                    console.warn('[MediaRecorder] Empty blob produced');
+                    setError('Recording produced no data. Try the native app.');
+                    return;
+                }
                 const url = URL.createObjectURL(blob);
                 onCapture(blob, url, durationRef.current);
             };
 
+            recorder.onerror = (event: any) => {
+                console.error('[MediaRecorder] Error:', event);
+                cleanup();
+                setIsRecording(false);
+                setError('Recording failed. Try the native app.');
+            };
+
             mediaRecorderRef.current = recorder;
-            recorder.start(1000);
+            recorder.start(1000); // 1s timeslice for progressive data capture
             setIsRecording(true);
 
             timerRef.current = window.setInterval(() => {
@@ -142,7 +218,9 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
                 });
             }, 1000);
         } catch (e: any) {
-            setError(`Recording failed: ${e.message}`);
+            console.error('[MediaRecorder] Failed to start:', e);
+            // Auto-switch to native fallback on MediaRecorder failure
+            setUseNativeFallback(true);
         }
     };
 
@@ -173,7 +251,9 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
     };
 
     const stopRecording = () => {
-        if (mediaRecorderRef.current) {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            // Request any remaining data before stopping
+            try { mediaRecorderRef.current.requestData(); } catch { /* may not be supported */ }
             mediaRecorderRef.current.stop();
             setIsRecording(false);
             cleanup();
