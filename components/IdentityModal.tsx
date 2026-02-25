@@ -67,7 +67,9 @@ const IdentityModal: React.FC<IdentityModalProps> = ({ type, data, onClose }) =>
               {copied ? 'Link Copied' : 'Copy Invite Link'}
             </button>
             <p className="text-[10px] text-slate-500 text-center">
-              Scan this with another gChat node to connect instantly.
+              {type === 'user'
+                ? 'Scan this with another gChat node to connect instantly.'
+                : '⚠️ NEVER share this publicly — it grants admin access to your node.'}
             </p>
           </div>
         </div>
