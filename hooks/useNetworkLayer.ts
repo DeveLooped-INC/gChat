@@ -999,7 +999,13 @@ export const useNetworkLayer = ({
 
     // Socket Listener
     useEffect(() => {
-        const unsubscribeStatus = networkService.subscribeToStatus((online) => setIsOnline(online));
+        const unsubscribeStatus = networkService.subscribeToStatus((online, nodeId) => {
+            setIsOnline(online);
+            // Sync user.homeNodeOnion whenever the backend reports a (new) public address
+            if (online && nodeId && nodeId !== user.homeNodeOnion) {
+                onUpdateUser({ ...user, homeNodeOnion: nodeId });
+            }
+        });
 
         networkService.onMessage = (packet, sender) => {
             if (packet.type !== 'USER_EXIT' && packet.type !== 'NODE_SHUTDOWN') {
