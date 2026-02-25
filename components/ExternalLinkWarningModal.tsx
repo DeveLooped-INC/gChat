@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Copy, X } from 'lucide-react';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface ExternalLinkWarningModalProps {
     isOpen: boolean;
@@ -13,12 +14,10 @@ const ExternalLinkWarningModal: React.FC<ExternalLinkWarningModalProps> = ({ isO
     if (!isOpen) return null;
 
     const handleCopy = async () => {
-        try {
-            await navigator.clipboard.writeText(link);
+        const ok = await copyToClipboard(link);
+        if (ok) {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
-        } catch (err) {
-            console.error('Failed to copy text: ', err);
         }
     };
 
