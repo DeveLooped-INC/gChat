@@ -184,13 +184,23 @@ const Chat: React.FC<ChatProps> = ({
 
   const handleMediaCapture = async (blob: Blob, previewUrl: string, duration: number) => {
     if (selectedChatId) {
+      // Infer type from blob MIME rather than relying on recordingMode state (which could be stale)
+      const blobMime = blob.type || (recordingMode === 'audio' ? 'audio/webm' : 'video/webm');
+      const mediaType: 'audio' | 'video' | 'image' | 'file' = blobMime.startsWith('video/')
+        ? 'video' : blobMime.startsWith('audio/')
+          ? 'audio' : blobMime.startsWith('image/')
+            ? 'image' : 'file';
+
       const mediaId = crypto.randomUUID();
       const accessKey = crypto.randomUUID();
-      await saveMedia(mediaId, blob, accessKey);
+
+      // Fire-and-forget: don't block attachment on the backend upload
+      saveMedia(mediaId, blob, accessKey).catch(e => console.error('[Media] Save failed:', e));
+
       const metadata: MediaMetadata = {
         id: mediaId,
-        type: recordingMode!,
-        mimeType: blob.type,
+        type: mediaType,
+        mimeType: blobMime,
         size: blob.size,
         duration: duration,
         chunkCount: Math.ceil(blob.size / getTransferConfig(blob.size).chunkSize),
