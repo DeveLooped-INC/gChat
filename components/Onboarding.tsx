@@ -9,6 +9,7 @@ import { storageService } from '../services/storage';
 import { kvService } from '../services/kv';
 import { clearMediaCache } from '../services/mediaStorage';
 import MobileLinkModal from './MobileLinkModal';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface OnboardingProps {
     onComplete: (profile: UserProfile) => void;
@@ -311,10 +312,14 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         }
     };
 
-    const copyMnemonic = () => {
-        navigator.clipboard.writeText(mnemonic.join(' '));
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+    const copyMnemonic = async () => {
+        const ok = await copyToClipboard(mnemonic.join(' '));
+        if (ok) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } else {
+            alert('Copy failed. Please select and copy manually:\n\n' + mnemonic.join(' '));
+        }
     };
 
     // --- RENDER ---
