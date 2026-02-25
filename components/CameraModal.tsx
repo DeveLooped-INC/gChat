@@ -12,11 +12,16 @@ const CameraModal: React.FC<CameraModalProps> = ({ isOpen, onClose, onCapture })
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nativeInputRef = useRef<HTMLInputElement>(null);
 
+  // Auto-detect non-secure context
+  const canUseCamera = typeof navigator !== 'undefined'
+    && typeof navigator.mediaDevices !== 'undefined'
+    && typeof navigator.mediaDevices.getUserMedia === 'function';
+
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
-  const [useNative, setUseNative] = useState(false);
+  const [useNative, setUseNative] = useState(!canUseCamera);
 
   // Zoom State
   const [zoom, setZoom] = useState(1);
@@ -36,15 +41,33 @@ const CameraModal: React.FC<CameraModalProps> = ({ isOpen, onClose, onCapture })
       stream.getTracks().forEach(track => track.stop());
     }
 
+    if (!canUseCamera) {
+      setUseNative(true);
+      return;
+    }
+
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: facingMode,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        audio: false
-      });
+      let mediaStream: MediaStream;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facingMode,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        });
+      } catch {
+        // Progressive constraint relaxation
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: facingMode },
+            audio: false
+          });
+        } catch {
+          mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+      }
 
       setStream(mediaStream);
       if (videoRef.current) {
@@ -53,7 +76,7 @@ const CameraModal: React.FC<CameraModalProps> = ({ isOpen, onClose, onCapture })
 
       // Get Zoom Capabilities
       const track = mediaStream.getVideoTracks()[0];
-      const capabilities = track.getCapabilities() as any; // Cast to any to access newer zoom property
+      const capabilities = track.getCapabilities() as any;
       if (capabilities.zoom) {
         setZoomCapability(capabilities.zoom);
       }
@@ -66,6 +89,8 @@ const CameraModal: React.FC<CameraModalProps> = ({ isOpen, onClose, onCapture })
         msg = "Permission denied. Check settings.";
       } else if (err.name === 'NotFoundError') {
         msg = "No camera found.";
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        msg = "Camera is in use by another app.";
       }
       setError(msg);
     }
@@ -144,10 +169,18 @@ const CameraModal: React.FC<CameraModalProps> = ({ isOpen, onClose, onCapture })
         <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
           {useNative ? (
             <div className="text-center p-6 space-y-4">
-              <p className="text-slate-400 text-sm">Using device camera app...</p>
-              <button onClick={() => nativeInputRef.current?.click()} className="bg-onion-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 mx-auto">
-                <Camera size={20} /> Open Camera
-              </button>
+              <p className="text-slate-400 text-sm">
+                {!canUseCamera ? 'Camera access requires HTTPS. Use your device app instead.' : 'Using device camera app...'}
+              </p>
+              <div className="flex gap-2 justify-center">
+                <button onClick={() => nativeInputRef.current?.click()} className="bg-onion-600 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2">
+                  <Camera size={20} /> Take Photo
+                </button>
+                <label className="bg-slate-700 hover:bg-slate-600 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 cursor-pointer">
+                  <ImageIcon size={20} /> Browse
+                  <input type="file" accept="image/*" className="hidden" onChange={handleNativeFile} />
+                </label>
+              </div>
               <input
                 ref={nativeInputRef}
                 type="file"
@@ -156,7 +189,7 @@ const CameraModal: React.FC<CameraModalProps> = ({ isOpen, onClose, onCapture })
                 className="hidden"
                 onChange={handleNativeFile}
               />
-              <button onClick={() => setUseNative(false)} className="text-slate-500 text-xs underline">Switch back to in-app camera</button>
+              {canUseCamera && <button onClick={() => setUseNative(false)} className="text-slate-500 text-xs underline">Switch back to in-app camera</button>}
             </div>
           ) : error ? (
             <div className="text-red-400 text-center p-6 max-w-xs">
