@@ -111,6 +111,7 @@ export class NetworkService {
     private _myOnionAddress: string | null = null;
     private _privateOnionAddress: string | null = null;
 
+    public get publicOnionAddress(): string | null { return this._myOnionAddress; }
     public get privateOnionAddress(): string | null { return this._privateOnionAddress; }
     private _knownPeers: Set<string> = new Set();
     private _trustedPeers: Set<string> = new Set(); // Explicitly connected/added peers
@@ -1073,6 +1074,10 @@ export class NetworkService {
         });
 
         this.socket.on('dual-onion-addresses', (data: { public: string; private: string }) => {
+            if (data?.public) {
+                this._myOnionAddress = data.public;
+                this.notifyStatus(true, data.public);
+            }
             if (data?.private) {
                 this._privateOnionAddress = data.private;
             }
