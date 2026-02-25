@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { X, UserPlus, MessageSquare, Shield, Globe, Users, UserCheck, Bell, LogOut, Power, Heart, BarChart3, ThumbsUp, Camera as CameraIcon } from 'lucide-react';
 import { UserProfile, Contact, Post } from '../types';
@@ -51,6 +50,7 @@ const UserInfoModal: React.FC<UserInfoModalProps> = ({
         if (e.target.files && e.target.files[0] && onUpdateUser) {
             const file = e.target.files[0];
             if (!file.type.startsWith('image/')) return;
+            if (file.size > 5 * 1024 * 1024) return;
 
             try {
                 // 1. Read file
