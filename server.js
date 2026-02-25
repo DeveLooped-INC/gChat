@@ -305,7 +305,7 @@ app.post('/gchat/packet', (req, res) => {
     // Only log INFO for critical packet types or specific debug needs
     // broadcastLog('INFO', 'NETWORK', `Packet received`, { type: req.body?.type });
 
-    io.emit('tor-packet', req.body);
+    emitToFrontends('tor-packet', req.body);
     res.status(200).send({ status: 'received' });
 });
 
@@ -647,9 +647,53 @@ function readOnionAddress() {
     }, 1000);
 }
 
+// --- SOCKET SESSION TRACKING ---
+// Maps socket.id → userId for targeted packet routing
+const socketSessions = new Map(); // socket.id -> { userId, socket }
+
+// Helper: Emit tor-packet to the correct frontend sockets (deduplicated per-user)
+function emitToFrontends(eventName, data) {
+    if (socketSessions.size === 0) {
+        // Fallback: no registered sessions, broadcast to all (backwards compat)
+        io.emit(eventName, data);
+        return;
+    }
+
+    const targetUserId = data?.targetUserId;
+    const emittedUsers = new Set();
+
+    socketSessions.forEach((session) => {
+        // If packet has a specific target user, only send to that user's socket(s)
+        if (targetUserId && session.userId !== targetUserId && session.userId !== 'frontend-init') {
+            return;
+        }
+
+        // Deduplicate: only send once per userId (prevents multi-tab duplicate processing)
+        if (emittedUsers.has(session.userId)) return;
+        emittedUsers.add(session.userId);
+
+        session.socket.emit(eventName, data);
+    });
+}
+
 io.on('connection', (socket) => {
     // Inject Plugins
     registerSocketHooks(socket, io);
+
+    // --- REGISTER-UI: Track which user this socket belongs to ---
+    socket.on('register-ui', (userId) => {
+        const uid = userId || 'frontend-init';
+        socketSessions.set(socket.id, { userId: uid, socket });
+        console.log(`[Session] Frontend registered: ${socket.id} → ${uid} (Total: ${socketSessions.size})`);
+    });
+
+    socket.on('disconnect', () => {
+        if (socketSessions.has(socket.id)) {
+            const session = socketSessions.get(socket.id);
+            socketSessions.delete(socket.id);
+            console.log(`[Session] Frontend disconnected: ${socket.id} → ${session.userId} (Total: ${socketSessions.size})`);
+        }
+    });
 
     if (myOnionAddress) {
         socket.emit('onion-address', myOnionAddress);
