@@ -211,7 +211,19 @@ export const useNetworkLayer = ({
             packet.type !== 'NODE_SHUTDOWN' &&
             packet.type !== 'USER_EXIT' &&
             packet.type !== 'INVENTORY_ANNOUNCE' &&
-            packet.type !== 'INVENTORY_SYNC_REQUEST'
+            packet.type !== 'INVENTORY_SYNC_REQUEST' &&
+            packet.type !== 'INVENTORY_SYNC_RESPONSE' &&
+            packet.type !== 'POST_DATA' &&
+            packet.type !== 'MEDIA_CHUNK' &&
+            packet.type !== 'MEDIA_PENDING' &&
+            packet.type !== 'MEDIA_RECOVERY_FOUND' &&
+            packet.type !== 'MEDIA_TRANSFER_ACK' &&
+            packet.type !== 'MEDIA_RELAY_REQUEST' &&
+            packet.type !== 'MEDIA_REQUEST' &&
+            packet.type !== 'NODE_SHUTDOWN_ACK' &&
+            packet.type !== 'USER_EXIT_ACK' &&
+            packet.type !== 'GROUP_SYNC' &&
+            packet.type !== 'GROUP_QUERY'
         ) {
             setPendingNodeRequests(prev => {
                 if (prev.includes(senderNodeId)) return prev;
@@ -576,9 +588,21 @@ export const useNetworkLayer = ({
                 }
 
                 const existingContact = state.contactsRef.current.find((c: any) => c.id === req.fromUserId);
-                if (existingContact) {
-                    // Update home node if changed?
-                    if (!existingContact.homeNodes.includes(req.fromHomeNode)) {
+
+                // FALLBACK: Also match by homeNode to prevent phantom pending requests
+                // when the same user reconnects from a different frontend instance
+                const existingByHomeNode = !existingContact
+                    ? state.contactsRef.current.find((c: any) => c.homeNodes?.includes(req.fromHomeNode))
+                    : null;
+
+                if (existingByHomeNode && !existingContact) {
+                    secureLog('WARN', `CONNECTION_REQUEST from known homeNode ${req.fromHomeNode} but userId mismatch. Expected: ${existingByHomeNode.id}, Got: ${req.fromUserId}. Treating as known contact.`);
+                }
+
+                const matchedContact = existingContact || existingByHomeNode;
+
+                if (matchedContact) {
+                    if (existingContact && !existingContact.homeNodes.includes(req.fromHomeNode)) {
                         state.setContacts(prev => prev.map(c => {
                             if (c.id === req.fromUserId) {
                                 const updated = { ...c, homeNodes: [req.fromHomeNode] };
@@ -588,9 +612,9 @@ export const useNetworkLayer = ({
                             return c;
                         }));
                     }
-                    if (existingContact.handshakeStatus === 'pending') {
+                    if (matchedContact.handshakeStatus === 'pending') {
                         state.setContacts(prev => prev.map(c => {
-                            if (c.id === req.fromUserId) {
+                            if (c.id === matchedContact.id) {
                                 const updated = { ...c, handshakeStatus: 'completed' as const };
                                 storageService.saveItem('contacts', updated, currentUser.id);
                                 return updated;
