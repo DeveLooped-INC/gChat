@@ -314,6 +314,7 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
                             <button
                                 onClick={() => setShowNodeIdentity(true)}
                                 className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg transition-colors text-sm"
+                                title="⚠️ NEVER share this address publicly — it grants admin access to your node"
                             >
                                 <QrCode size={16} /> Node QR
                             </button>
