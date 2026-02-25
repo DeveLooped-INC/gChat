@@ -3,6 +3,7 @@ import { Server, Save, Loader2, QrCode, LayoutDashboard, UserCog, Settings as Se
 import { UserProfile, NodePeer, ToastMessage, LogEntry, AvailablePeer, PrivacySettings, StorageStats, Post, Message, Contact, NotificationCategory, MediaSettings } from '../types';
 import { networkService, TorStats, MASTER_IP, API_PORT } from '../services/networkService';
 import IdentityModal from './IdentityModal';
+import { copyToClipboard } from '../utils/clipboard';
 import QRScanner from './QRScanner';
 import { createMigrationPackage } from '../services/migrationService';
 import NodeInfoModal, { NodeInfoTarget } from './NodeInfoModal';
@@ -278,7 +279,7 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
         }
     };
 
-    const copyPassword = () => { if (migrationPassword) { navigator.clipboard.writeText(migrationPassword); setPasswordCopied(true); setTimeout(() => setPasswordCopied(false), 2000); } };
+    const copyPassword = async () => { if (migrationPassword) { const ok = await copyToClipboard(migrationPassword); if (ok) { setPasswordCopied(true); setTimeout(() => setPasswordCopied(false), 2000); } } };
     const updatePrivacy = (key: keyof PrivacySettings, value: boolean) => { setPrivacySettings(prev => ({ ...prev, [key]: value })); };
 
     const TabButton = ({ id, label, icon: Icon }: { id: SettingsTab, label: string, icon: any }) => (
