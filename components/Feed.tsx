@@ -240,7 +240,32 @@ const Feed: React.FC<FeedProps> = ({ posts, contacts, onPost, onLike, onDislike,
 
     const resetPostForm = () => { setContent(''); setAttachedImage(null); setAttachedMedia(null); setPostLocation(''); setRecordingMode(null); setSharingPost(null); };
     const handleShareClick = (post: Post) => { setSharingPost(post); setPrivacy(post.privacy === 'public' ? 'public' : 'friends'); setShowBroadcastModal(true); };
-    const handleMediaCapture = async (blob: Blob, previewUrl: string, duration: number) => { const mediaId = crypto.randomUUID(); const accessKey = crypto.randomUUID(); await saveMedia(mediaId, blob, accessKey); setAttachedMedia({ id: mediaId, type: recordingMode!, mimeType: blob.type, size: blob.size, duration, chunkCount: Math.ceil(blob.size / getTransferConfig(blob.size).chunkSize), thumbnail: undefined, accessKey }); setRecordingMode(null); };
+    const handleMediaCapture = async (blob: Blob, previewUrl: string, duration: number) => {
+        // Infer type from blob MIME rather than relying on recordingMode state (which could be stale)
+        const blobMime = blob.type || (recordingMode === 'audio' ? 'audio/webm' : 'video/webm');
+        const mediaType: 'audio' | 'video' | 'image' | 'file' = blobMime.startsWith('video/')
+            ? 'video' : blobMime.startsWith('audio/')
+                ? 'audio' : blobMime.startsWith('image/')
+                    ? 'image' : 'file';
+
+        const mediaId = crypto.randomUUID();
+        const accessKey = crypto.randomUUID();
+
+        // Fire-and-forget: don't block attachment on the backend upload
+        saveMedia(mediaId, blob, accessKey).catch(e => console.error('[Media] Save failed:', e));
+
+        setAttachedMedia({
+            id: mediaId,
+            type: mediaType,
+            mimeType: blobMime,
+            size: blob.size,
+            duration,
+            chunkCount: Math.ceil(blob.size / getTransferConfig(blob.size).chunkSize),
+            thumbnail: undefined,
+            accessKey
+        });
+        setRecordingMode(null);
+    };
 
     const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
