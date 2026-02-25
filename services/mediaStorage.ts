@@ -4,8 +4,61 @@ import { Socket } from 'socket.io-client';
 
 let socket: Socket | null = null;
 
+// --- FAILED UPLOAD RETRY QUEUE ---
+const pendingUploads: Map<string, { blob: Blob, accessKey?: string, isCache: boolean }> = new Map();
+const MAX_UPLOAD_RETRIES = 2;
+const UPLOAD_RETRY_DELAY_MS = 2000;
+
 export const setMediaSocket = (s: Socket) => {
   socket = s;
+
+  // On reconnect, retry any pending uploads
+  s.on('connect', () => {
+    if (pendingUploads.size > 0) {
+      console.log(`[MediaStorage] Socket reconnected. Retrying ${pendingUploads.size} pending uploads...`);
+      const entries = Array.from(pendingUploads.entries());
+      pendingUploads.clear();
+      entries.forEach(([id, { blob, accessKey, isCache }]) => {
+        saveMedia(id, blob, accessKey, isCache).catch(e =>
+          console.error(`[MediaStorage] Reconnect retry failed for ${id}:`, e)
+        );
+      });
+    }
+  });
+};
+
+// Helper: Upload media buffer + metadata to backend with retries
+const uploadToBackend = async (id: string, buffer: ArrayBuffer, metadata: any, isCache: boolean, retries: number = MAX_UPLOAD_RETRIES): Promise<boolean> => {
+  if (!socket || !socket.connected) return false;
+
+  return new Promise<boolean>((resolve) => {
+    let resolved = false;
+    // Timeout safety (15s) — prevents hanging if socket event is lost
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        console.warn(`[MediaStorage] Upload timeout for ${id}`);
+        resolve(false);
+      }
+    }, 15000);
+
+    socket!.emit('media:upload', {
+      id,
+      data: buffer,
+      metadata,
+      isCache
+    }, (res: any) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeout);
+      if (res?.success) {
+        resolve(true);
+      } else {
+        console.error(`[MediaStorage] Upload failed for ${id}:`, res?.error);
+        resolve(false);
+      }
+    });
+  });
 };
 
 export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCache: boolean = false) => {
@@ -19,10 +72,8 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCa
       }));
     }
 
-
-    // 2. Upload to Backend (Persistence)
+    // 2. Upload to Backend (Persistence) with retry
     if (socket && socket.connected) {
-      // console.debug(`[MediaStorage] Uploading ${id} to Backend (isCache=${isCache})...`);
       const buffer = await blob.arrayBuffer();
 
       // Get owner ID for metadata
@@ -41,17 +92,24 @@ export const saveMedia = async (id: string, blob: Blob, accessKey?: string, isCa
         ownerId
       };
 
-      await new Promise<void>((resolve) => {
-        socket!.emit('media:upload', {
-          id,
-          data: buffer, // Send Raw Buffer
-          metadata,
-          isCache
-        }, (res: any) => {
-          if (!res?.success) console.error("Media upload failed:", res?.error);
-          resolve();
-        });
-      });
+      let success = false;
+      for (let attempt = 0; attempt <= MAX_UPLOAD_RETRIES; attempt++) {
+        success = await uploadToBackend(id, buffer, metadata, isCache);
+        if (success) break;
+        if (attempt < MAX_UPLOAD_RETRIES) {
+          console.warn(`[MediaStorage] Retry ${attempt + 1}/${MAX_UPLOAD_RETRIES} for ${id} in ${UPLOAD_RETRY_DELAY_MS}ms...`);
+          await new Promise(r => setTimeout(r, UPLOAD_RETRY_DELAY_MS));
+        }
+      }
+
+      if (!success) {
+        console.error(`[MediaStorage] All upload attempts failed for ${id}. Queuing for reconnect retry.`);
+        pendingUploads.set(id, { blob, accessKey, isCache });
+      }
+    } else {
+      // Socket not connected — queue for later
+      console.warn(`[MediaStorage] Socket disconnected. Queuing upload for ${id}.`);
+      pendingUploads.set(id, { blob, accessKey, isCache });
     }
   } catch (e) {
     console.error("Failed to save media", e);
