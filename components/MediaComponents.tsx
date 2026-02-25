@@ -274,18 +274,35 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
 
             // Extract duration from video/audio files
             if (file.type.startsWith('video/') || file.type.startsWith('audio/')) {
-                const el = document.createElement(file.type.startsWith('video/') ? 'video' : 'audio');
+                const isVideo = file.type.startsWith('video/');
+                const el = document.createElement(isVideo ? 'video' : 'audio');
+
+                let resolved = false;
+                const proceed = (dur: number) => {
+                    if (resolved) return;
+                    resolved = true;
+                    // Clean up
+                    el.onloadedmetadata = null;
+                    el.onerror = null;
+                    URL.revokeObjectURL(el.src);
+
+                    onCapture(file, url, dur);
+                };
+
                 el.preload = 'metadata';
                 el.onloadedmetadata = () => {
                     const dur = isFinite(el.duration) ? Math.round(el.duration) : 0;
-                    URL.revokeObjectURL(el.src);
-                    onCapture(file, url, dur);
+                    proceed(dur);
                 };
-                el.onerror = () => {
-                    // Can't extract duration, proceed anyway
-                    onCapture(file, url, 0);
-                };
+                el.onerror = () => proceed(0);
+
+                // Fallback timeout in case onloadedmetadata never fires (common in some Android WebViews)
+                setTimeout(() => proceed(0), 1500);
+
                 el.src = URL.createObjectURL(file);
+
+                // On some mobile browsers, detached media elements need load() to trigger metadata fetching
+                try { el.load(); } catch (err) { }
             } else {
                 onCapture(file, url, 0);
             }
@@ -296,18 +313,16 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
         return (
             <div className="flex flex-col items-center bg-slate-900 rounded-xl p-6 w-full border border-slate-700 text-center min-w-[260px]">
                 {type === 'video' ? <Video className="text-onion-500 mb-2" size={32} /> : <Mic className="text-onion-500 mb-2" size={32} />}
-                <h3 className="text-white font-bold mb-1">{type === 'video' ? 'Record Video' : 'Record Audio'}</h3>
+                <h3 className="text-white font-bold mb-1">{type === 'video' ? 'Attach Video' : 'Attach Audio'}</h3>
                 <p className="text-slate-400 text-xs mb-4">
-                    {!canUseWebAPIs ? 'In-browser recording is not available over HTTP. Use your device app instead.' : 'Using device app...'}
+                    {!canUseWebAPIs
+                        ? 'Camera requires HTTPS/Localhost. Please upload a file instead, or use a mobile device.'
+                        : 'Using device camera app...'}
                 </p>
-                <div className="flex gap-2 mb-3">
+                <div className="flex flex-wrap items-center justify-center gap-2 mb-3">
                     <button onClick={() => nativeInputRef.current?.click()} className="bg-onion-600 px-5 py-3 rounded-xl text-white font-bold text-sm">
-                        📹 Capture
+                        📹 Record / Upload
                     </button>
-                    <label className="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-xl text-white font-bold text-sm cursor-pointer">
-                        📁 Browse
-                        <input type="file" accept={type === 'video' ? "video/*" : "audio/*"} className="hidden" onChange={handleNativeFile} />
-                    </label>
                 </div>
                 <input
                     ref={nativeInputRef}
@@ -317,7 +332,7 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
                     className="hidden"
                     onChange={handleNativeFile}
                 />
-                {canUseWebAPIs && <button onClick={() => setUseNativeFallback(false)} className="text-slate-500 text-xs underline">Retry In-App Recorder</button>}
+                {canUseWebAPIs && <button onClick={() => setUseNativeFallback(false)} className="text-slate-500 text-xs underline mt-2 border border-slate-700 px-3 py-1 rounded">Retry In-App Recorder</button>}
                 <button onClick={onCancel} className="mt-4 text-slate-400 hover:text-white"><X size={20} /></button>
             </div>
         );
