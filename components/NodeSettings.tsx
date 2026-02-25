@@ -214,7 +214,7 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
     const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        if (file.size > 500000) { addToast('Error', 'Avatar too large (max 500KB)', 'error'); return; }
+        if (file.size > 5 * 1024 * 1024) { addToast('Error', 'Avatar too large (max 5MB)', 'error'); return; }
 
         const reader = new FileReader();
         reader.onload = (event) => {
