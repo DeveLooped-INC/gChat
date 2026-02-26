@@ -597,17 +597,7 @@ export const useNetworkLayer = ({
 
                 const existingContact = state.contactsRef.current.find((c: any) => c.id === req.fromUserId);
 
-                // FALLBACK: Also match by homeNode to prevent phantom pending requests
-                // when the same user reconnects from a different frontend instance
-                const existingByHomeNode = !existingContact
-                    ? state.contactsRef.current.find((c: any) => c.homeNodes?.includes(req.fromHomeNode))
-                    : null;
-
-                if (existingByHomeNode && !existingContact) {
-                    secureLog('WARN', `CONNECTION_REQUEST from known homeNode ${req.fromHomeNode} but userId mismatch. Expected: ${existingByHomeNode.id}, Got: ${req.fromUserId}. Treating as known contact.`);
-                }
-
-                const matchedContact = existingContact || existingByHomeNode;
+                const matchedContact = existingContact;
 
                 if (matchedContact) {
                     if (existingContact && !existingContact.homeNodes.includes(req.fromHomeNode)) {
