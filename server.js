@@ -90,7 +90,8 @@ const io = new Server(httpServer, {
         methods: ["GET", "POST"]
     },
     pingTimeout: 60000,
-    pingInterval: 25000
+    pingInterval: 25000,
+    maxHttpBufferSize: 1e8 // 100 MB limits for video uploads
 });
 
 // --- GLOBAL STATE ---
