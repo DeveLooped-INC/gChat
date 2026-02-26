@@ -1004,6 +1004,14 @@ export class NetworkService {
         }
     }
 
+    // Re-register with backend when actual userId becomes available
+    public registerUser(userId: string) {
+        if (this.socket && this.socket.connected && userId) {
+            this.log('INFO', 'NETWORK', `Re-registering with backend as userId: ${userId.substring(0, 12)}...`);
+            this.socket.emit('register-ui', userId);
+        }
+    }
+
     public init(userId?: string) {
         if (this.socket) return;
 
