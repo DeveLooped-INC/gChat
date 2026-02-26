@@ -3,6 +3,8 @@ import { MediaMetadata, AppRoute } from '../types';
 import { networkService } from '../services/networkService';
 import { hasMedia, saveMedia } from '../services/mediaStorage';
 
+const activeAutoDownloads = new Set<string>();
+
 export const useMediaTransfer = (state: any) => {
 
     const checkAndAutoDownload = useCallback(async (url: string | undefined, media: MediaMetadata | undefined, context: 'friends' | 'private', authorId: string, peerId: string) => {
@@ -25,27 +27,43 @@ export const useMediaTransfer = (state: any) => {
 
         try {
             if (media) {
+                if (activeAutoDownloads.has(media.id)) return;
                 if (media.size > maxBytes || await hasMedia(media.id)) return;
+                activeAutoDownloads.add(media.id);
                 console.log(`[AutoDownload] Mesh Download for ${media.id}`);
-                // Fire and forget
-                networkService.downloadMedia(peerId, media, () => { });
+
+                networkService.downloadMedia(peerId, media, () => {
+                    activeAutoDownloads.delete(media.id);
+                });
                 return;
             }
 
             if (url) {
                 const mediaId = url.split('/').pop();
-                if (mediaId && await hasMedia(mediaId)) return;
+                if (mediaId) {
+                    if (activeAutoDownloads.has(mediaId)) return;
+                    if (await hasMedia(mediaId)) return;
+                    activeAutoDownloads.add(mediaId);
+                }
 
-                const headRes = await fetch(url, { method: 'HEAD' });
-                if (!headRes.ok) return;
-                const size = parseInt(headRes.headers.get('content-length') || '0');
+                try {
+                    const headRes = await fetch(url, { method: 'HEAD' });
+                    if (!headRes.ok) {
+                        if (mediaId) activeAutoDownloads.delete(mediaId);
+                        return;
+                    }
+                    const size = parseInt(headRes.headers.get('content-length') || '0');
 
-                if (size > 0 && size <= maxBytes) {
-                    const res = await fetch(url);
-                    const blob = await res.blob();
-                    if (mediaId) await saveMedia(mediaId, blob, undefined, true);
+                    if (size > 0 && size <= maxBytes) {
+                        const res = await fetch(url);
+                        const blob = await res.blob();
+                        if (mediaId) await saveMedia(mediaId, blob, undefined, true);
+                    }
+                } finally {
+                    if (mediaId) activeAutoDownloads.delete(mediaId);
                 }
             }
+
         } catch (e) {
             console.error("[AutoDownload] Failed", e);
         }
