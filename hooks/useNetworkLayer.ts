@@ -106,6 +106,14 @@ export const useNetworkLayer = ({
         }
     }, [state.isLoaded]);
 
+    // --- SESSION REGISTRATION ---
+    // Ensure the backend knows our actual userId for targeted packet routing
+    useEffect(() => {
+        if (state.isLoaded && user && user.id) {
+            networkService.registerUser(user.id);
+        }
+    }, [state.isLoaded, user?.id]);
+
     // --- PACKET HANDLING LOGIC ---
     const handlePacketRef = useRef<(packet: NetworkPacket, senderNodeId: string, isReplay?: boolean) => Promise<void>>(async () => { });
 
