@@ -120,6 +120,10 @@ export const useActions = ({
     const handleAddUserContact = useCallback(async (pubKey: string, homeNode: string, name: string, encryptionKey?: string, initialHandshakeStatus: 'pending' | 'completed' = 'pending') => {
         const cleanNode = homeNode.trim().toLowerCase();
         const u = state.userRef.current;
+        if (pubKey === u.id) {
+            addNotification('Check Failed', "You cannot add yourself as a contact.", 'error', 'admin');
+            return;
+        }
         if (state.contactsRef.current.some(c => c.id === pubKey)) {
             if (encryptionKey) state.setContacts(prev => prev.map(c => c.id === pubKey ? { ...c, encryptionPublicKey: encryptionKey } : c));
             return;
