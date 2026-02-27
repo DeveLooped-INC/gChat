@@ -251,8 +251,13 @@ obfs4 85.31.186.98:443 011F2599C0E9B27EE74B353155E244813763C3E5 cert=VwEFPk9F/UN
         reader.readAsDataURL(file);
     };
 
-    const handleFactoryReset = () => {
+    const handleFactoryReset = async () => {
         if (window.confirm('FACTORY RESET: This will permanently delete ALL data including your identity, contacts, messages, and encryption keys. This cannot be undone. Continue?')) {
+            try {
+                await networkService.factoryReset();
+            } catch (e) {
+                console.error("Backend reset failed:", e);
+            }
             storageService.deleteEverything();
             clearMediaCache();
             localStorage.clear();
