@@ -128,6 +128,7 @@ export interface MediaMetadata {
   filename?: string;
   originNode?: string; // Hint for where to find the media (Onion Address)
   ownerId?: string; // The User ID (Public Key) of the media owner
+  isHLS?: boolean; // Flag to indicate if the video is stored as HLS segments
 }
 
 export interface NetworkPacket {
