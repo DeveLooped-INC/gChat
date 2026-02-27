@@ -31,6 +31,20 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     // Internal State
     const [recoveredKeys, setRecoveredKeys] = useState<any>(null);
     const [calculatedTripcode, setCalculatedTripcode] = useState<string>('');
+    const [existingNodeOwner, setExistingNodeOwner] = useState<string | null>(null);
+
+    // Initial check for existing node owner
+    useEffect(() => {
+        const checkOwner = async () => {
+            try {
+                const ownerId = await kvService.get<string>('gchat_node_owner');
+                if (ownerId) setExistingNodeOwner(ownerId);
+            } catch (e) {
+                console.error("Failed to check node owner:", e);
+            }
+        };
+        checkOwner();
+    }, []);
     const [isProcessing, setIsProcessing] = useState(false);
     const [copied, setCopied] = useState(false);
 
@@ -171,10 +185,19 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         const registry = await kvService.get<any>('gchat_profile_registry') || {};
         const storedMeta = registry[userId];
 
+        // Also check if we have the active profile in KV to grab avatar/bio
+        const existingProfile = await kvService.get<UserProfile>('gchat_user_profile');
+        const isOwnerProfile = existingProfile && existingProfile.id === userId;
+
         if (storedMeta) {
             // Known user on this device - restore immediately
             // Note: We use the stored displayName (Handle) and reconstruct the full unique username
-            await finalizeUser(keys, storedMeta.displayName, storedMeta.avatarUrl, storedMeta.bio);
+            const avatar = isOwnerProfile ? existingProfile.avatarUrl : storedMeta.avatarUrl;
+            const bio = isOwnerProfile ? existingProfile.bio : storedMeta.bio;
+            await finalizeUser(keys, storedMeta.displayName, avatar, bio);
+        } else if (isOwnerProfile) {
+            // Unrecognized on THIS device's registry (e.g. new LAN session) but they ARE the owner!
+            await finalizeUser(keys, existingProfile.displayName, existingProfile.avatarUrl, existingProfile.bio);
         } else {
             // Unknown user (new browser) - ask for details
             setRecoveredKeys(keys);
@@ -220,13 +243,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         }
     };
 
-    const handleResetOwner = async () => {
-        if (confirm("This will clear the 'Node Owner' lock. The next user to login will become the Admin. Do this only if you are locked out of settings.")) {
-            await kvService.del('gchat_node_owner');
-            alert("Owner lock cleared. Please login again.");
-            window.location.reload();
-        }
-    };
+
 
     const handleImportMigration = async () => {
         if (!importFile || !importPassword) return;
@@ -247,15 +264,16 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         try {
             const userId = keys.signing.publicKey;
             const tripcode = generateTripcode(userId);
-
-            // The "Username" is now the unique combination
             const uniqueUsername = `${chosenHandle}.${tripcode}`;
 
-            const bio = finalBio || 'Secured by Tor';
-
             // --- PROFILE PERSISTENCE ---
 
-            // --- PROFILE PERSISTENCE ---
+            // Attempt to merge existing profile data if we are logging into the main KV profile
+            const existingProfile = await kvService.get<UserProfile>('gchat_user_profile');
+            const isMergingOwner = existingProfile && existingProfile.id === userId;
+
+            const avatar = finalAvatar || (isMergingOwner ? existingProfile.avatarUrl : undefined);
+            const bio = finalBio || (isMergingOwner ? existingProfile.bio : 'Secured by Tor');
 
             // 1. Update Registry (Store handle, avatar, AND bio)
             const registry = await kvService.get<any>('gchat_profile_registry') || {};
@@ -265,7 +283,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                 ...existingEntry, // Preserve existing fields like isDiscoverable
                 displayName: chosenHandle,
                 username: uniqueUsername,
-                avatarUrl: finalAvatar,
+                avatarUrl: avatar,
                 bio: bio
             };
             await kvService.set('gchat_profile_registry', registry);
@@ -287,7 +305,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                 username: uniqueUsername, // Globally Unique ID
                 displayName: chosenHandle, // Human Readable Handle
                 bio: bio,
-                avatarUrl: finalAvatar,
+                avatarUrl: avatar,
                 keys,
                 isAdmin,
                 homeNodeOnion: nodeOnion || 'offline',
@@ -450,15 +468,19 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
                 {authMode === 'menu' && (
                     <div className="p-8 space-y-4 overflow-y-auto">
-                        <p className="text-slate-400 text-center mb-6">Your node is online. Login or create a user identity.</p>
+                        <p className="text-slate-400 text-center mb-6">
+                            {existingNodeOwner ? "This node is claimed. Please login with your seed phrase." : "Your node is online. Login or create a user identity."}
+                        </p>
 
-                        <button
-                            onClick={generateNewIdentity}
-                            className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center justify-center space-x-2 transition-all disabled:opacity-50"
-                        >
-                            <UserPlus size={20} />
-                            <span>Create New User</span>
-                        </button>
+                        {!existingNodeOwner && (
+                            <button
+                                onClick={generateNewIdentity}
+                                className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center justify-center space-x-2 transition-all disabled:opacity-50"
+                            >
+                                <UserPlus size={20} />
+                                <span>Create New User</span>
+                            </button>
+                        )}
 
                         {/* Link to Existing Node (frontend-only) */}
                         {isFrontendOnly && (
@@ -493,14 +515,6 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                             <span className="text-xs text-onion-400 font-mono">Node: {nodeOnion}</span>
 
                             <div className="flex gap-4">
-                                <button
-                                    onClick={handleResetOwner}
-                                    className="flex items-center gap-1 text-[10px] text-amber-500/70 hover:text-amber-500 transition-colors"
-                                >
-                                    <Cpu size={10} />
-                                    Clear Owner Lock
-                                </button>
-
                                 <button
                                     onClick={handleFactoryReset}
                                     className="flex items-center gap-1 text-[10px] text-red-500/70 hover:text-red-500 transition-colors"
