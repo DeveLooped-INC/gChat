@@ -4,6 +4,7 @@ import { formatDuration, formatBytes } from '../utils';
 import { MediaMetadata, ToastMessage } from '../types';
 import { networkService } from '../services/networkService';
 import { getMedia, saveMedia, deleteMedia } from '../services/mediaStorage';
+import Hls from 'hls.js';
 
 // --- RECORDER COMPONENTS ---
 
@@ -471,6 +472,115 @@ export const MediaRecorder: React.FC<MediaRecorderProps> = ({ type, onCapture, o
     );
 };
 
+// --- HLS VIDEO PLAYER COMPONENT ---
+interface HLSVideoPlayerProps {
+    media: MediaMetadata;
+    peerId?: string;
+    autoPlay?: boolean;
+}
+
+const HLSVideoPlayer: React.FC<HLSVideoPlayerProps> = ({ media, peerId, autoPlay }) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!videoRef.current) return;
+        const video = videoRef.current;
+
+        if (Hls.isSupported()) {
+            class CustomTorLoader extends Hls.DefaultConfig.loader {
+                constructor(config: any) {
+                    super(config);
+                    this.load = async (context: any, config: any, callbacks: any) => {
+                        try {
+                            // Extract filename from the URL hls.js is trying to fetch
+                            // URL looks like: http://localhost/mediaId/index.m3u8
+                            const parts = context.url.split('/');
+                            const filename = parts[parts.length - 1];
+
+                            const buffer = await networkService.downloadHLSChunk(media.id, filename, peerId);
+
+                            callbacks.onSuccess({
+                                url: context.url,
+                                data: buffer,
+                            }, {
+                                trequest: performance.now(),
+                                tfirst: performance.now(),
+                                tload: performance.now(),
+                            }, context);
+                        } catch (e: any) {
+                            callbacks.onError({
+                                code: 1, // NETWORK_ERROR
+                                text: e.message
+                            }, context, null);
+                        }
+                    };
+                }
+            }
+
+            const hls = new Hls({
+                pLoader: CustomTorLoader as any, // Playlist Loader
+                fLoader: CustomTorLoader as any, // Fragment Loader
+                maxBufferLength: 30, // seconds
+                // debug: true
+            });
+
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+                // Dummy URL, our CustomLoader intercepts it
+                hls.loadSource(`http://localhost/${media.id}/index.m3u8`);
+            });
+
+            hls.on(Hls.Events.ERROR, (event, data) => {
+                if (data.fatal) {
+                    switch (data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            console.error('fatal network error encountered, try to recover');
+                            hls.startLoad();
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            console.error('fatal media error encountered, try to recover');
+                            hls.recoverMediaError();
+                            break;
+                        default:
+                            hls.destroy();
+                            setError('HLS Streaming Failed');
+                            break;
+                    }
+                }
+            });
+
+            return () => {
+                hls.destroy();
+            };
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari Fallback (native HLS). This won't work out of the box with our proxy unless
+            // we expose a real HTTP proxy port on localhost, which we aren't doing in this architecture.
+            setError("Native HLS requires HTTP proxy (e.g., Safari)");
+        }
+    }, [media.id, peerId]);
+
+    return (
+        <div className="w-full min-w-[260px] sm:min-w-[300px] relative rounded-lg bg-black border border-slate-700 overflow-hidden">
+            {error ? (
+                <div className="p-4 text-red-500 text-center text-sm font-bold flex flex-col items-center">
+                    <AlertTriangle className="mb-2" size={24} />
+                    {error}
+                </div>
+            ) : (
+                <video
+                    ref={videoRef}
+                    controls
+                    autoPlay={autoPlay}
+                    className="w-full max-h-96"
+                />
+            )}
+            <div className="absolute top-2 right-2 bg-black/60 backdrop-blur text-[10px] text-white px-2 py-0.5 rounded border border-white/20 font-bold uppercase tracking-wider">
+                HLS Stream
+            </div>
+        </div>
+    );
+};
 
 // --- PLAYER COMPONENT ---
 
@@ -496,11 +606,20 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
     }, [media.id]);
 
     const checkLocal = async () => {
-        const blob = await getMedia(media.id);
-        if (blob && blob.size > 0) {
-            setBlobUrl(URL.createObjectURL(blob));
+        // HLS Videos are streamed, so no need to fetch entire Blob upfront if we can avoid it.
+        // We'll initialize HLS dynamically. But if it's already downloaded locally as a fallback, we can use it.
+        if (media.type !== 'video') {
+            const blob = await getMedia(media.id);
+            if (blob && blob.size > 0) {
+                setBlobUrl(URL.createObjectURL(blob));
+                return;
+            }
+        } else {
+            // For video, we trigger the HLS path instead of blob fetch, except if we want to fallback
+            startDownloadProcess();
             return;
         }
+
         const bgProgress = networkService.getDownloadProgress(media.id);
         if (bgProgress !== null && peerId) {
             if (IS_LARGE_FILE) {
@@ -515,8 +634,14 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
     };
 
     const startDownloadProcess = async () => {
-        // if(!peerId) return; // REMOVED: We now allow unknown peers via Mesh Recovery
         setError(null);
+
+        if (media.type === 'video') {
+            // Video Streaming (HLS) skips full-file download wait
+            setIsDownloading(false);
+            setBlobUrl('HLS_STREAMING'); // Flag to render HLS player
+            return;
+        }
 
         if (IS_LARGE_FILE) {
             setIsBackgroundSyncing(true);
@@ -528,8 +653,6 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
         }
 
         try {
-            // If peerId is provided, it's the Origin Node.
-            // If it's undefined, NetworkService will trigger Mesh Recovery (Safe mode)
             const blob = await networkService.downloadMedia(peerId, media, (progress) => {
                 if (progress === -1) {
                     setIsSearching(true);
@@ -570,9 +693,7 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
 
     if (blobUrl) {
         if (media.type === 'video') {
-            return (
-                <video src={blobUrl} controls autoPlay={autoPlay} className="w-full min-w-[260px] sm:min-w-[300px] max-h-96 rounded-lg bg-black border border-slate-700" onError={() => setError("Playback Error")} />
-            );
+            return <HLSVideoPlayer media={media} peerId={peerId} autoPlay={autoPlay} />;
         } else if (media.type === 'image') {
             return (
                 <div className="w-full min-w-[260px] sm:min-w-[300px] max-h-96 rounded-lg bg-black border border-slate-700 flex items-center justify-center overflow-hidden">
