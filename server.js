@@ -182,6 +182,17 @@ else {
     } catch (e) { }
 }
 
+// --- FFMPEG DETECTION (MANDATORY REQUIREMENT) ---
+let FFMPEG_CMD = 'ffmpeg';
+try {
+    execSync(`${FFMPEG_CMD} -version`, { stdio: 'ignore' });
+} catch (e) {
+    console.error("\x1b[31m[FATAL ERROR] ffmpeg is not installed or not in PATH.\x1b[0m");
+    console.error("gChat requires ffmpeg for server-side HLS video compression.");
+    console.error("Please install ffmpeg to continue (e.g., 'apt install ffmpeg' or 'pkg install ffmpeg').");
+    process.exit(1);
+}
+
 let torProcess = null;
 let myOnionAddress = null;
 let myPrivateOnionAddress = null;
@@ -778,6 +789,12 @@ io.on('connection', (socket) => {
             cb({ success: true });
         } catch (e) { cb({ success: false, error: e.message }); }
     });
+    socket.on('kv:wipe-all', async (cb) => {
+        try {
+            await db.kvWipeAll();
+            cb({ success: true });
+        } catch (e) { cb({ success: false, error: e.message }); }
+    });
 
     // OBJECT STORE
     socket.on('db:save', async (storeName, item, ownerId, cb) => {
@@ -847,6 +864,33 @@ io.on('connection', (socket) => {
             // SECURITY: Restrict file permissions to Owner Read/Write Only (600)
             fs.writeFileSync(filePath, buffer, { mode: 0o600 });
 
+            // Trigger FFMPEG HLS Translation for Videos
+            if (metadata.type && metadata.type.startsWith('video/')) {
+                const hlsDir = path.join(targetDir, `hls_${id}`);
+                if (!fs.existsSync(hlsDir)) {
+                    fs.mkdirSync(hlsDir, { recursive: true });
+                }
+                const hlsPlaylist = path.join(hlsDir, 'index.m3u8');
+                // Spawn ffmpeg asynchronously
+                const ffmpeg = spawn(FFMPEG_CMD, [
+                    '-i', filePath,
+                    '-profile:v', 'baseline', // Ensures compatibility
+                    '-level', '3.0',
+                    '-start_number', '0',
+                    '-hls_time', '2', // 2 second chunks
+                    '-hls_list_size', '0', // Full playlist
+                    '-hls_playlist_type', 'vod',
+                    '-f', 'hls',
+                    hlsPlaylist
+                ]);
+                ffmpeg.on('close', (code) => {
+                    broadcastLog('INFO', 'BACKEND', `HLS Transcode complete for ${id} (Code ${code})`);
+                });
+                ffmpeg.on('error', (err) => {
+                    broadcastLog('ERROR', 'BACKEND', `HLS Transcode failed for ${id}: ${err.message}`);
+                });
+            }
+
             await db.saveMediaMetadata(metadata);
             if (typeof cb === 'function') cb({ success: true });
         } catch (e) {
@@ -865,19 +909,43 @@ io.on('connection', (socket) => {
             console.log(`[MediaDownload] Request for ${id}`);
 
             // Check Local First
-            let filePath = path.join(MEDIA_LOCAL_DIR, id);
-            if (!fs.existsSync(filePath)) {
+            let finalPath = path.join(MEDIA_LOCAL_DIR, id);
+            if (!fs.existsSync(finalPath)) {
                 // Check Cache
-                filePath = path.join(MEDIA_CACHE_DIR, id);
-                if (!fs.existsSync(filePath)) {
+                finalPath = path.join(MEDIA_CACHE_DIR, id);
+                if (!fs.existsSync(finalPath)) {
                     cb({ success: false, error: 'Not Found' });
                     return;
                 }
             }
-            const buffer = fs.readFileSync(filePath);
+            const buffer = fs.readFileSync(finalPath);
             const metadata = await db.getMediaMetadata(id);
             // Send raw buffer for efficiency
             cb({ success: true, buffer, metadata });
+        } catch (e) { cb({ success: false, error: e.message }); }
+    });
+
+    socket.on('media:download-hls', async ({ id, file }, cb) => {
+        try {
+            if (!isValidMediaId(id) || !file || file.includes('..')) {
+                cb({ success: false, error: 'Invalid Request' });
+                return;
+            }
+
+            const hlsDirLocal = path.join(MEDIA_LOCAL_DIR, `hls_${id}`);
+            const hlsDirCache = path.join(MEDIA_CACHE_DIR, `hls_${id}`);
+
+            let finalHlsPath = path.join(hlsDirLocal, file);
+            if (!fs.existsSync(finalHlsPath)) {
+                finalHlsPath = path.join(hlsDirCache, file);
+                if (!fs.existsSync(finalHlsPath)) {
+                    cb({ success: false, error: 'Not Found' });
+                    return;
+                }
+            }
+
+            const buffer = fs.readFileSync(finalHlsPath);
+            cb({ success: true, buffer });
         } catch (e) { cb({ success: false, error: e.message }); }
     });
 
@@ -948,6 +1016,9 @@ io.on('connection', (socket) => {
     socket.on('factory-reset', async (cb) => {
         try {
             broadcastLog('WARN', 'BACKEND', '⚠️ FACTORY RESET INITIATED ⚠️');
+
+            // explicitly wipe the KV store entries
+            try { await db.kvWipeAll(); } catch (e) { }
 
             // 1. Kill Tor
             if (torProcess) torProcess.kill();
