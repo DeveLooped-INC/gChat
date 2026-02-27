@@ -14,6 +14,18 @@ export interface MigrationPackage {
     iterations?: number;
 }
 
+const waitForSocket = async (): Promise<any> => {
+    if (networkService.socket?.connected) return networkService.socket;
+    return new Promise((resolve) => {
+        const check = setInterval(() => {
+            if (networkService.socket?.connected) {
+                clearInterval(check);
+                resolve(networkService.socket);
+            }
+        }, 100);
+    });
+};
+
 interface DecryptedPayload {
     kvData: {
         userProfile: UserProfile | null;
@@ -113,6 +125,46 @@ export const createMigrationPackage = async (): Promise<{ blob: Blob; password: 
     const zip = new JSZip();
     zip.file("gchat_migration_v3.json", JSON.stringify(migrationData, null, 2));
 
+    // 9. Fetch and Embed Media Blobs
+    const mediaFolder = zip.folder("media");
+    if (mediaFolder) {
+        const socket = await waitForSocket();
+
+        // Find all media hashes (mostly from Posts and Messages)
+        const allMediaIds = new Set<string>();
+
+        idbData.posts.forEach(p => { if (p.media?.id) allMediaIds.add(p.media.id); });
+        idbData.messages.forEach(m => {
+            if (m.media?.id) allMediaIds.add(m.media.id);
+            if (m.attachmentUrl) {
+                // If attachment is a data URI, ignore. If it's a blob, we can't export it this way.
+            }
+        });
+
+        for (const mid of allMediaIds) {
+            try {
+                const mediaBlob = await new Promise<Blob>((resolve, reject) => {
+                    socket.emit('media:download', { id: mid }, (response: any) => {
+                        if (response?.success && response.data) {
+                            try {
+                                // Extract from base64 string or ArrayBuffer
+                                let buffer;
+                                if (response.data instanceof ArrayBuffer) buffer = response.data;
+                                else buffer = Uint8Array.from(atob(response.data.split(',')[1] || response.data), c => c.charCodeAt(0));
+                                resolve(new Blob([buffer]));
+                            } catch (e) { reject(e); }
+                        } else {
+                            reject(new Error("Media not found"));
+                        }
+                    });
+                });
+                mediaFolder.file(mid, mediaBlob);
+            } catch (e) {
+                console.warn(`Failed to export media ${mid}:`, e);
+            }
+        }
+    }
+
     const zipBlob = await zip.generateAsync({ type: "blob" });
 
     return { blob: zipBlob, password };
@@ -200,6 +252,37 @@ export const restoreMigrationPackage = async (file: File, password: string): Pro
         if (payload.torKeys && Object.keys(payload.torKeys).length > 0) {
             if (typeof networkService.restoreTorKeys === 'function') {
                 await networkService.restoreTorKeys(payload.torKeys);
+            }
+        }
+
+        // 7. Restore Media Blobs
+        const mediaFolder = unzipped.folder("media");
+        if (mediaFolder) {
+            const socket = await waitForSocket();
+            const mediaFiles = Object.keys(mediaFolder.files).filter(k => k.startsWith('media/') && !mediaFolder.files[k].dir);
+
+            for (const mediaPath of mediaFiles) {
+                try {
+                    const mid = mediaPath.split('/')[1];
+                    const blob = await unzipped.file(mediaPath)?.async('blob');
+                    if (!blob || !mid) continue;
+
+                    // Convert Blob to Base64 to upload via Socket
+                    const reader = new FileReader();
+                    const b64Promise = new Promise<string>((res, rej) => {
+                        reader.onloadend = () => res(reader.result as string);
+                        reader.onerror = rej;
+                    });
+                    reader.readAsDataURL(blob);
+                    const base64data = await b64Promise;
+
+                    // Upload it back
+                    await new Promise((resolve) => {
+                        socket.emit('media:upload', { id: mid, data: base64data.split(',')[1], isBase64: true }, resolve);
+                    });
+                } catch (e) {
+                    console.warn(`Failed to restore media ${mediaPath}:`, e);
+                }
             }
         }
 
