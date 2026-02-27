@@ -1012,6 +1012,18 @@ export class NetworkService {
         }
     }
 
+    // --- HLS STREAMING ---
+    public async downloadHLSChunk(mediaId: string, filename: string, targetOnion?: string): Promise<ArrayBuffer> {
+        return new Promise((resolve, reject) => {
+            if (!this.socket.connected) return reject(new Error('Offline'));
+
+            this.socket.emit('media:download-hls', { id: mediaId, file: filename }, (res: any) => {
+                if (res && res.success) resolve(res.buffer);
+                else reject(new Error(res?.error || 'Failed to fetch HLS chunks'));
+            });
+        });
+    }
+
     public init(userId?: string) {
         if (this.socket) return;
 
