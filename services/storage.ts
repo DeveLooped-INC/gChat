@@ -91,10 +91,22 @@ class StorageService {
   public async deleteEverything(): Promise<void> {
     // This is handled by factory reset on backend mostly, but if we need a call:
     // We can just clear all stores.
-    const stores: StoreName[] = ['posts', 'messages', 'contacts', 'groups', 'notifications', 'requests'];
+    const stores: StoreName[] = ['posts', 'messages', 'contacts', 'groups', 'notifications', 'requests', 'offline_packets'];
     for (const s of stores) {
       try { await this.clearStore(s); } catch (e) { console.warn(`Failed to clear store ${s}:`, e); }
     }
+
+    await this.wipeAllKV();
+  }
+
+  public async wipeAllKV(): Promise<void> {
+    const socket = await waitForSocket();
+    return new Promise((resolve) => {
+      socket.emit('kv:wipe-all', (response: any) => {
+        if (!response?.success) console.warn("Failed to wipe KV:", response?.error);
+        resolve();
+      });
+    });
   }
 }
 
