@@ -35,7 +35,7 @@ class SqliteDatabase {
             `CREATE INDEX IF NOT EXISTS idx_store_items_owner ON store_items (store_name, owner_id)`,
             `CREATE INDEX IF NOT EXISTS idx_store_items_name_id ON store_items (store_name, id)`,
             `CREATE INDEX IF NOT EXISTS idx_store_items_created ON store_items (created_at)`,
-            `CREATE TABLE IF NOT EXISTS media_files (id TEXT PRIMARY KEY, mime_type TEXT, size INTEGER, filename TEXT, access_key TEXT, owner_id TEXT, created_at INTEGER)`,
+            `CREATE TABLE IF NOT EXISTS media_files (id TEXT PRIMARY KEY, mime_type TEXT, size INTEGER, filename TEXT, access_key TEXT, owner_id TEXT, created_at INTEGER, is_hls BOOLEAN DEFAULT 0)`,
             `CREATE INDEX IF NOT EXISTS idx_media_owner ON media_files (owner_id)`,
             `CREATE INDEX IF NOT EXISTS idx_media_created ON media_files (created_at)`
         ];
@@ -57,6 +57,14 @@ class SqliteDatabase {
         return new Promise((resolve, reject) => {
             this.db.get("SELECT value FROM kv_store WHERE key = ?", [key], (err, row) => {
                 if (err) reject(err); else resolve(row ? JSON.parse(row.value) : null);
+            });
+        });
+    }
+
+    async kvWipeAll() {
+        return new Promise((resolve, reject) => {
+            this.db.run("DELETE FROM kv_store", [], (err) => {
+                if (err) reject(err); else resolve();
             });
         });
     }
@@ -130,8 +138,8 @@ class SqliteDatabase {
 
     async saveMediaMetadata(meta) {
         return new Promise((resolve, reject) => {
-            this.db.run(`INSERT OR REPLACE INTO media_files (id, mime_type, size, filename, access_key, owner_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [meta.id, meta.mimeType, meta.size, meta.filename, meta.accessKey, meta.ownerId, Date.now()], (err) => { if (err) reject(err); else resolve(); });
+            this.db.run(`INSERT OR REPLACE INTO media_files (id, mime_type, size, filename, access_key, owner_id, created_at, is_hls) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [meta.id, meta.mimeType, meta.size, meta.filename, meta.accessKey, meta.ownerId, Date.now(), meta.isHLS ? 1 : 0], (err) => { if (err) reject(err); else resolve(); });
         });
     }
 
@@ -153,7 +161,8 @@ class SqliteDatabase {
                         filename: row.filename,
                         accessKey: row.access_key,
                         ownerId: row.owner_id,
-                        createdAt: row.created_at
+                        createdAt: row.created_at,
+                        isHLS: Boolean(row.is_hls)
                     });
                 } else resolve(null);
             });
@@ -208,6 +217,7 @@ class JsonDatabase {
     async kvGet(key) { return this.kv[key] || null; }
     async kvSet(key, value) { this.kv[key] = value; await this._persist('kv'); }
     async kvDel(key) { delete this.kv[key]; await this._persist('kv'); }
+    async kvWipeAll() { this.kv = {}; await this._persist('kv'); }
 
     async saveItem(storeName, item, ownerId) {
         const idx = this.store.findIndex(i => i.id === item.id && i.storeName === storeName);
@@ -293,6 +303,8 @@ export class Database {
     async kvGet(k) { return this.backend.kvGet(k); }
     async kvSet(k, v) { return this.backend.kvSet(k, v); }
     async kvDel(k) { return this.backend.kvDel(k); }
+    async kvWipeAll() { return this.backend.kvWipeAll(); }
+    async kvWipeAll() { return this.backend.kvWipeAll(); }
     async saveItem(s, i, o) { return this.backend.saveItem(s, i, o); }
     async syncItems(s, i, o) { return this.backend.syncItems(s, i, o); }
     async getItems(s, o) { return this.backend.getItems(s, o); }
