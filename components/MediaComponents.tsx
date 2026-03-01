@@ -498,7 +498,7 @@ const HLSVideoPlayer: React.FC<HLSVideoPlayerProps> = ({ media, peerId, autoPlay
                             const parts = context.url.split('/');
                             const filename = parts[parts.length - 1];
 
-                            const buffer = await networkService.downloadHLSChunk(media.id, filename, peerId);
+                            const buffer = await networkService.downloadHLSChunk(media.id, filename, peerId, media.accessKey);
 
                             callbacks.onSuccess({
                                 url: context.url,
@@ -606,6 +606,19 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
     }, [media.id]);
 
     const checkLocal = async () => {
+        // For videos, we always use HLS streaming (unified mechanism).
+        // The download button overlay will show, user clicks it -> HLS player renders.
+        if (media.type === 'video') {
+            // Don't auto-download. Let the user click the download button.
+            // (Unless there's an active background download already tracked)
+            const bgProgress = networkService.getDownloadProgress(media.id);
+            if (bgProgress !== null && peerId) {
+                startDownloadProcess();
+            }
+            return;
+        }
+
+        // Non-video: check blob cache as usual
         const blob = await getMedia(media.id);
         if (blob && blob.size > 0) {
             setBlobUrl(URL.createObjectURL(blob));
@@ -628,20 +641,10 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
     const startDownloadProcess = async () => {
         setError(null);
 
-        // For videos, first check if HLS segments are available locally on this backend.
-        // If they are (i.e., WE own this video), use HLS streaming.
-        // Otherwise, fall back to the standard blob download (daisy chain relay).
+        // For videos, always use HLS streaming via the daisy chain
         if (media.type === 'video') {
-            try {
-                const probe = await networkService.downloadHLSChunk(media.id, 'index.m3u8');
-                if (probe) {
-                    // HLS segments exist locally — use the HLS player
-                    setBlobUrl('HLS_STREAMING');
-                    return;
-                }
-            } catch (e) {
-                // HLS not available locally, fall through to standard download
-            }
+            setBlobUrl('HLS_STREAMING');
+            return;
         }
 
         if (IS_LARGE_FILE) {
@@ -693,12 +696,9 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
     };
 
     if (blobUrl) {
-        if (media.type === 'video' && blobUrl === 'HLS_STREAMING') {
+        if (media.type === 'video') {
+            // Unified: ALL videos use HLS streaming via the daisy chain
             return <HLSVideoPlayer media={media} peerId={peerId} autoPlay={autoPlay} />;
-        } else if (media.type === 'video') {
-            return (
-                <video src={blobUrl} controls autoPlay={autoPlay} className="w-full min-w-[260px] sm:min-w-[300px] max-h-96 rounded-lg bg-black border border-slate-700" onError={() => setError("Playback Error")} />
-            );
         } else if (media.type === 'image') {
             return (
                 <div className="w-full min-w-[260px] sm:min-w-[300px] max-h-96 rounded-lg bg-black border border-slate-700 flex items-center justify-center overflow-hidden">
