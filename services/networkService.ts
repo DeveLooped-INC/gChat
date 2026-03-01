@@ -125,6 +125,7 @@ export class NetworkService {
     private _contactDirectory: Map<string, string> = new Map(); // OwnerID -> HomeNodeOnion
     private _mediaSettings: MediaSettings = { enabled: true, maxFileSizeMB: 10, autoDownloadFriends: true, autoDownloadPrivate: true, cacheRelayedMedia: false };
     private _isShuttingDown: boolean = false;
+    private _hlsResponseHandlers: Map<string, (packet: any) => void> = new Map(); // HLS chunk response callbacks
 
     constructor() {
         // Sliding Window Monitor for Downloads
@@ -360,10 +361,10 @@ export class NetworkService {
 
     // --- MEDIA METHODS ---
 
-    public async handleMediaRequest(senderId: string, payload: { mediaId: string; chunkIndex: number; chunkSize: number; accessKey?: string }) {
+    public async handleMediaRequest(senderId: string, payload: { mediaId: string; chunkIndex: number; chunkSize: number; accessKey?: string; hlsFile?: string }) {
         if (this._isShuttingDown) return;
 
-        const { mediaId, chunkIndex, chunkSize, accessKey } = payload;
+        const { mediaId, chunkIndex, chunkSize, accessKey, hlsFile } = payload;
 
         // PROXY-SECURITY-FIX: Verify Access Key
         // 1. Check RAM (Ephemeral Relay / Active Download)
@@ -467,7 +468,7 @@ export class NetworkService {
                 this.log('INFO', 'NETWORK', `Relay: Registered ${senderId} as chunk listener for ${mediaId}`);
             }
 
-            this.log('INFO', 'NETWORK', `Relay: Forwarding Chunk ${chunkIndex} request for ${mediaId} to ${relayState.sourceNode}`);
+            this.log('INFO', 'NETWORK', `Relay: Forwarding ${hlsFile ? `HLS file '${hlsFile}'` : `Chunk ${chunkIndex}`} request for ${mediaId} to ${relayState.sourceNode}`);
 
             // Forward the exact request to the source node we found during RECOVERY_FOUND
             this.sendMessage(relayState.sourceNode, {
@@ -477,14 +478,38 @@ export class NetworkService {
                     mediaId,
                     chunkIndex,
                     chunkSize,
-                    accessKey: relayState.metadata.accessKey
+                    accessKey: relayState.metadata.accessKey,
+                    hlsFile
                 }
             }, `media_stream_${mediaId}`);
             return;
         }
         // --------------------------------
 
-        // PATH 4: No active download — serve from disk / session cache
+        // PATH 4a: HLS File Request — serve individual HLS file from backend
+        if (hlsFile) {
+            this.log('INFO', 'NETWORK', `Serving HLS file '${hlsFile}' for ${mediaId} to ${senderId}`);
+            try {
+                const hlsBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+                    if (!this.socket || !this.socket.connected) return reject(new Error('Offline'));
+                    this.socket.emit('media:download-hls', { id: mediaId, file: hlsFile }, (res: any) => {
+                        if (res && res.success) resolve(res.buffer);
+                        else reject(new Error(res?.error || 'HLS file not found'));
+                    });
+                });
+                const base64Data = arrayBufferToBase64(hlsBuffer);
+                this.sendMessage(senderId, {
+                    type: 'MEDIA_CHUNK',
+                    senderId: this._myOnionAddress || 'system',
+                    payload: { mediaId, chunkIndex: 0, totalChunks: 1, data: base64Data }
+                }, `media_stream_${mediaId}`);
+            } catch (e: any) {
+                this.log('WARN', 'NETWORK', `HLS file '${hlsFile}' not found for ${mediaId}: ${e.message}`);
+            }
+            return;
+        }
+
+        // PATH 4b: No active download — serve from disk / session cache (standard blob chunking)
         let blob: Blob | null = null;
         const session = this._mediaSessions.get(mediaId);
 
@@ -561,6 +586,16 @@ export class NetworkService {
 
             // Note: Caching the chunk to disk while streaming could be added here in the future.
             if (isPureRelay) return;
+        }
+
+        // --- HLS RESPONSE DISPATCH ---
+        // If this is a single-chunk HLS response (totalChunks === 1), check if any
+        // downloadHLSChunk() promise is waiting for it.
+        if (totalChunks === 1 && this._hlsResponseHandlers.size > 0) {
+            // Try all registered handlers (may match on mediaId)
+            this._hlsResponseHandlers.forEach((handler) => {
+                handler({ type: 'MEDIA_CHUNK', payload: { mediaId, chunkIndex, totalChunks, data } });
+            });
         }
 
         if (!download) return;
@@ -1013,14 +1048,74 @@ export class NetworkService {
     }
 
     // --- HLS STREAMING ---
-    public async downloadHLSChunk(mediaId: string, filename: string, targetOnion?: string): Promise<ArrayBuffer> {
-        return new Promise((resolve, reject) => {
-            if (!this.socket.connected) return reject(new Error('Offline'));
-
-            this.socket.emit('media:download-hls', { id: mediaId, file: filename }, (res: any) => {
-                if (res && res.success) resolve(res.buffer);
-                else reject(new Error(res?.error || 'Failed to fetch HLS chunks'));
+    public async downloadHLSChunk(mediaId: string, filename: string, targetOnion?: string, accessKey?: string): Promise<ArrayBuffer> {
+        // First, try fetching directly from local backend (owner's node)
+        try {
+            const localResult = await new Promise<ArrayBuffer | null>((resolve) => {
+                if (!this.socket || !this.socket.connected) return resolve(null);
+                this.socket.emit('media:download-hls', { id: mediaId, file: filename }, (res: any) => {
+                    if (res && res.success) resolve(res.buffer);
+                    else resolve(null);
+                });
             });
+            if (localResult) return localResult;
+        } catch (e) {
+            // Not available locally, will try mesh
+        }
+
+        // Not available locally — request through the Tor mesh (daisy chain relay)
+        if (!targetOnion && !this._myOnionAddress) {
+            throw new Error('No target peer for HLS chunk');
+        }
+
+        const peerOnion = targetOnion || this._myOnionAddress || '';
+
+        return new Promise<ArrayBuffer>((resolve, reject) => {
+            const timeoutMs = 60000; // 60s timeout for Tor
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error(`HLS chunk timeout: ${filename}`));
+            }, timeoutMs);
+
+            // Listen for the MEDIA_CHUNK response that carries our HLS file
+            const hlsResponseKey = `hls_response_${mediaId}_${filename}`;
+            const handler = (packet: any) => {
+                if (packet.type === 'MEDIA_CHUNK' &&
+                    packet.payload?.mediaId === mediaId &&
+                    packet.payload?.totalChunks === 1) {
+                    cleanup();
+                    const data = packet.payload.data;
+                    if (typeof data === 'string') {
+                        // Base64 decode
+                        const binary = atob(data);
+                        const bytes = new Uint8Array(binary.length);
+                        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                        resolve(bytes.buffer as ArrayBuffer);
+                    } else {
+                        resolve(data);
+                    }
+                }
+            };
+
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                this._hlsResponseHandlers.delete(hlsResponseKey);
+            };
+
+            this._hlsResponseHandlers.set(hlsResponseKey, handler);
+
+            // Send MEDIA_REQUEST with hlsFile through the mesh
+            this.sendMessage(peerOnion, {
+                type: 'MEDIA_REQUEST',
+                senderId: this._myOnionAddress || 'unknown',
+                payload: {
+                    mediaId,
+                    chunkIndex: 0,
+                    chunkSize: 0,
+                    accessKey: accessKey,
+                    hlsFile: filename
+                }
+            }, `media_stream_${mediaId}`);
         });
     }
 
