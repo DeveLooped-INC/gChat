@@ -606,17 +606,9 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
     }, [media.id]);
 
     const checkLocal = async () => {
-        // HLS Videos are streamed, so no need to fetch entire Blob upfront if we can avoid it.
-        // We'll initialize HLS dynamically. But if it's already downloaded locally as a fallback, we can use it.
-        if (media.type !== 'video') {
-            const blob = await getMedia(media.id);
-            if (blob && blob.size > 0) {
-                setBlobUrl(URL.createObjectURL(blob));
-                return;
-            }
-        } else {
-            // For video, we trigger the HLS path instead of blob fetch, except if we want to fallback
-            startDownloadProcess();
+        const blob = await getMedia(media.id);
+        if (blob && blob.size > 0) {
+            setBlobUrl(URL.createObjectURL(blob));
             return;
         }
 
@@ -636,11 +628,20 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
     const startDownloadProcess = async () => {
         setError(null);
 
+        // For videos, first check if HLS segments are available locally on this backend.
+        // If they are (i.e., WE own this video), use HLS streaming.
+        // Otherwise, fall back to the standard blob download (daisy chain relay).
         if (media.type === 'video') {
-            // Video Streaming (HLS) skips full-file download wait
-            setIsDownloading(false);
-            setBlobUrl('HLS_STREAMING'); // Flag to render HLS player
-            return;
+            try {
+                const probe = await networkService.downloadHLSChunk(media.id, 'index.m3u8');
+                if (probe) {
+                    // HLS segments exist locally — use the HLS player
+                    setBlobUrl('HLS_STREAMING');
+                    return;
+                }
+            } catch (e) {
+                // HLS not available locally, fall through to standard download
+            }
         }
 
         if (IS_LARGE_FILE) {
@@ -692,8 +693,12 @@ export const MediaPlayer: React.FC<MediaPlayerProps> = ({ media, peerId, autoPla
     };
 
     if (blobUrl) {
-        if (media.type === 'video') {
+        if (media.type === 'video' && blobUrl === 'HLS_STREAMING') {
             return <HLSVideoPlayer media={media} peerId={peerId} autoPlay={autoPlay} />;
+        } else if (media.type === 'video') {
+            return (
+                <video src={blobUrl} controls autoPlay={autoPlay} className="w-full min-w-[260px] sm:min-w-[300px] max-h-96 rounded-lg bg-black border border-slate-700" onError={() => setError("Playback Error")} />
+            );
         } else if (media.type === 'image') {
             return (
                 <div className="w-full min-w-[260px] sm:min-w-[300px] max-h-96 rounded-lg bg-black border border-slate-700 flex items-center justify-center overflow-hidden">
