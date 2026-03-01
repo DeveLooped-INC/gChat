@@ -251,7 +251,7 @@ const PacketTypes = {
     }),
     MEDIA_REQUEST: BasePacket.extend({
         type: z.literal('MEDIA_REQUEST'),
-        payload: z.object({ mediaId: z.string(), chunkIndex: z.number(), chunkSize: z.number(), accessKey: z.string().optional() })
+        payload: z.object({ mediaId: z.string(), chunkIndex: z.number(), chunkSize: z.number(), accessKey: z.string().optional(), hlsFile: z.string().optional() })
     }),
     MEDIA_CHUNK: BasePacket.extend({
         type: z.literal('MEDIA_CHUNK'),
